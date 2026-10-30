@@ -1,0 +1,50 @@
+# Local project controls
+/AGENTS.md
+/DECISIONS.md
+/docs/frozen/
+
+# Local agent and credential directories
+/.agents/
+/.codex/
+/.aws/
+
+# Python environments and generated files
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Editor and operating-system files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets and settings
+.env
+.env.*
+!.env.example
+*.local.toml
+
+# Local R state; analysis code and renv.lock remain trackable
+.Rhistory
+.RData
+.Rproj.user/
+/analysis/renv/library/
+/analysis/renv/staging/
+
+# Downloaded models, raw sources, and generated runs
+/.cache/
+/models/
+/corpus/raw/
+/corpus/derived/
+/artifacts/
+/runs/
