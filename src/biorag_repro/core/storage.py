@@ -5,6 +5,9 @@ import os
 import tempfile
 from collections.abc import Callable, Mapping
 from pathlib import Path
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from biorag_repro.core.hashing import (
     HashMismatchError,
@@ -14,24 +17,37 @@ from biorag_repro.core.hashing import (
 )
 from biorag_repro.core.manifest import BuildManifest
 
+ModelT = TypeVar("ModelT", bound=BaseModel)
+
+
+def serialize_project_json(value: ModelT, model_type: type[ModelT]) -> bytes:
+    """Store a revalidated persistent model in the project's exact JSON format."""
+    validated = model_type.model_validate(
+        value.model_dump(mode="python", warnings="error"), strict=True
+    )
+    return (
+        json.dumps(
+            validated.model_dump(mode="json"),
+            ensure_ascii=False,
+            sort_keys=True,
+            indent=2,
+            allow_nan=False,
+        )
+        + "\n"
+    ).encode("utf-8")
+
 
 def serialize_manifest(manifest: BuildManifest) -> bytes:
     """Encode a validated manifest as deterministic, human-readable project JSON."""
-    validated = BuildManifest.model_validate(
-        manifest.model_dump(mode="python", warnings="error"), strict=True
-    )
-    data = validated.model_dump(mode="python")
-    return (
-        json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n"
-    ).encode("utf-8")
+    return serialize_project_json(manifest, BuildManifest)
 
 
 def _reject_nonfinite(value: str) -> None:
     raise ValueError(f"nonfinite JSON value: {value}")
 
 
-def read_manifest(path: Path, expected_sha256: str) -> BuildManifest:
-    """Check exact stored bytes and validate a persisted build manifest."""
+def read_project_json(path: Path, expected_sha256: str, model_type: type[ModelT]) -> ModelT:
+    """Check exact stored bytes and validate a persisted project model."""
     validate_sha256(expected_sha256)
     content = path.read_bytes()
     actual_sha256 = sha256_bytes(content)
@@ -40,7 +56,12 @@ def read_manifest(path: Path, expected_sha256: str) -> BuildManifest:
             f"SHA-256 mismatch for {path}: expected {expected_sha256}, got {actual_sha256}"
         )
     data = json.loads(content.decode("utf-8"), parse_constant=_reject_nonfinite)
-    return BuildManifest.model_validate(data, strict=True)
+    return model_type.model_validate(data, strict=True)
+
+
+def read_manifest(path: Path, expected_sha256: str) -> BuildManifest:
+    """Check exact stored bytes and validate a persisted build manifest."""
+    return read_project_json(path, expected_sha256, BuildManifest)
 
 
 def publish_bytes(
