@@ -1,0 +1,155 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "BuildInput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "artifact"
+      ],
+      "title": "BuildInput",
+      "type": "object"
+    },
+    "DerivedOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "artifact_kind": {
+          "minLength": 1,
+          "title": "Artifact Kind",
+          "type": "string"
+        },
+        "identity_version": {
+          "minLength": 1,
+          "title": "Identity Version",
+          "type": "string"
+        },
+        "output_format": {
+          "minLength": 1,
+          "title": "Output Format",
+          "type": "string"
+        },
+        "serialization_version": {
+          "minLength": 1,
+          "title": "Serialization Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "artifact_kind",
+        "output_format",
+        "serialization_version",
+        "identity_version"
+      ],
+      "title": "DerivedOutput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "failure_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Failure Reason"
+    },
+    "inputs": {
+      "items": {
+        "$ref": "#/$defs/BuildInput"
+      },
+      "minItems": 1,
+      "title": "Inputs",
+      "type": "array"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/DerivedOutput"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "complete",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "transformation_id": {
+      "minLength": 1,
+      "title": "Transformation Id",
+      "type": "string"
+    },
+    "transformation_settings_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Transformation Settings Sha256"
+    }
+  },
+  "required": [
+    "schema_version",
+    "inputs",
+    "transformation_id",
+    "outputs",
+    "status"
+  ],
+  "title": "BuildManifest",
+  "type": "object"
+}
