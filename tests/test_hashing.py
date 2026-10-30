@@ -2,7 +2,13 @@ import struct
 
 import pytest
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, sha256_file
+from biorag_repro.core.hashing import (
+    HashMismatchError,
+    canonical_json_bytes,
+    sha256_bytes,
+    sha256_file,
+    verify_file_sha256,
+)
 
 
 def test_rfc_8785_sample_canonical_bytes():
@@ -67,3 +73,36 @@ def test_sha256_file_hashes_exact_bytes(tmp_path):
     assert sha256_file(path) == sha256_bytes(b"abc")
     path.write_bytes(b"abc\n")
     assert sha256_file(path) == sha256_bytes(b"abc\n")
+
+
+@pytest.mark.parametrize("content", [b"abc", b""])
+def test_verify_file_sha256_accepts_exact_bytes(tmp_path, content):
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(content)
+    assert verify_file_sha256(path, sha256_bytes(content)) is None
+
+
+def test_verify_file_sha256_reports_missing_file(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        verify_file_sha256(tmp_path / "missing.bin", sha256_bytes(b"abc"))
+
+
+@pytest.mark.parametrize("digest", ["abc", "A" * 64, "aA" * 32, "g" * 64])
+def test_verify_file_sha256_rejects_malformed_expected_digest(tmp_path, digest):
+    with pytest.raises(ValueError, match="SHA-256"):
+        verify_file_sha256(tmp_path / "missing.bin", digest)
+
+
+def test_verify_file_sha256_reports_mismatch_and_changed_bytes(tmp_path):
+    path = tmp_path / "artifact.bin"
+    expected = sha256_bytes(b"abc")
+    path.write_bytes(b"other")
+    with pytest.raises(HashMismatchError):
+        verify_file_sha256(path, expected)
+    assert path.read_bytes() == b"other"
+
+    path.write_bytes(b"abc")
+    verify_file_sha256(path, expected)
+    path.write_bytes(b"abc\n")
+    with pytest.raises(HashMismatchError):
+        verify_file_sha256(path, expected)
