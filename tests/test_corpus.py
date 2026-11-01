@@ -114,6 +114,13 @@ def test_valid_synthetic_corpus_and_sources(tmp_path):
             verify_source_bytes(manifest.papers[0], kind, path)
 
 
+def test_unqualified_jats_publication_date_has_explicit_year_basis():
+    row = paper(3)
+    row["publication_year_basis"] = "unqualified_source_date"
+    manifest = CorpusManifest(papers=[PaperRecord.model_validate(row)])
+    assert parse_csv(serialize_csv(manifest)) == manifest
+
+
 @pytest.mark.parametrize(
     "path,value",
     [
@@ -369,6 +376,47 @@ def test_validation_report_and_release_record_are_typed():
         for f in bad_report.findings
     )
     assert b'"csv_sha256"' in serialize_project_json(release, ReleaseRecord)
+
+
+def test_release_records_require_explicit_path_and_hash(tmp_path):
+    from biorag_repro.core.hashing import HashMismatchError, sha256_bytes
+
+    fields = {
+        "record_schema_version": "1",
+        "corpus_version": "corpus_v1",
+        "manifest_revision": "1",
+        "schema_version": "1",
+        "corpus_content_sha256": "a" * 64,
+        "manifest_semantic_sha256": "b" * 64,
+        "csv_sha256": "c" * 64,
+        "manifest_artifact": {
+            "artifact_id": "manifest_csv",
+            "logical_ref": "corpus_manifest.csv",
+            "sha256": "c" * 64,
+        },
+        "validation_report_artifact": {
+            "artifact_id": "validation_report",
+            "logical_ref": "validation_report.json",
+            "sha256": "d" * 64,
+        },
+    }
+    old = ReleaseRecord.model_validate({**fields, "git_sha": "e" * 40})
+    final = ReleaseRecord.model_validate({**fields, "git_sha": "f" * 40})
+    old_path = tmp_path / "release_record.json"
+    final_path = tmp_path / "release_record_phase2h_final.json"
+    old_bytes = serialize_project_json(old, ReleaseRecord)
+    final_bytes = serialize_project_json(final, ReleaseRecord)
+    old_path.write_bytes(old_bytes)
+    final_path.write_bytes(final_bytes)
+    old_hash = sha256_bytes(old_bytes)
+    final_hash = sha256_bytes(final_bytes)
+
+    assert read_project_json(final_path, final_hash, ReleaseRecord) == final
+    assert read_project_json(old_path, old_hash, ReleaseRecord) == old
+    with pytest.raises(HashMismatchError):
+        read_project_json(old_path, final_hash, ReleaseRecord)
+    with pytest.raises(HashMismatchError):
+        read_project_json(final_path, old_hash, ReleaseRecord)
 
 
 def test_persistent_json_exact_hash_readback(tmp_path):

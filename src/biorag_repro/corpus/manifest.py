@@ -158,7 +158,7 @@ class PaperRecord(StrictRecord):
     title: str
     venue: str
     publication_year: int
-    publication_year_basis: Literal["online", "issue", "preprint_posted"]
+    publication_year_basis: Literal["online", "issue", "preprint_posted", "unqualified_source_date"]
     publication_state: Literal["final_journal_article", "preprint"]
     version_label: str | None
     doi: str | None

@@ -65,6 +65,22 @@ def derived_artifact_id(
     return "drv_" + sha256_bytes(canonical_json_bytes(payload))
 
 
+def raw_source_artifact_id(*, paper_id: str, representation: str, sha256: str) -> str:
+    """Identify accepted source bytes within one paper and manifestation."""
+    if not isinstance(paper_id, str) or not paper_id:
+        raise ValueError("paper_id must be a nonempty string")
+    if representation not in {"JATS", "PDF"}:
+        raise ValueError("representation must be JATS or PDF")
+    validate_sha256(sha256)
+    payload = {
+        "identity_version": "1",
+        "paper_id": paper_id,
+        "representation": representation,
+        "sha256": sha256,
+    }
+    return "raw_" + sha256_bytes(canonical_json_bytes(payload))
+
+
 def observation_key(
     *,
     phase: str,
