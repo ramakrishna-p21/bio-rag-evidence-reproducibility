@@ -8,7 +8,41 @@ from biorag_repro.core.identity import (
     new_attempt_id,
     new_run_id,
     observation_key,
+    raw_source_artifact_id,
 )
+
+
+def test_raw_source_identity_is_canonical_and_sensitive_to_all_identity_fields():
+    from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+
+    payload = {
+        "identity_version": "1",
+        "paper_id": "P001",
+        "representation": "JATS",
+        "sha256": "a" * 64,
+    }
+    expected = "raw_" + sha256_bytes(canonical_json_bytes(payload))
+    assert (
+        raw_source_artifact_id(paper_id="P001", representation="JATS", sha256="a" * 64) == expected
+    )
+    assert (
+        raw_source_artifact_id(paper_id="P001", representation="JATS", sha256="a" * 64) == expected
+    )
+    assert (
+        raw_source_artifact_id(paper_id="P001", representation="PDF", sha256="a" * 64) != expected
+    )
+    assert (
+        raw_source_artifact_id(paper_id="P001", representation="JATS", sha256="b" * 64) != expected
+    )
+    assert (
+        raw_source_artifact_id(paper_id="P002", representation="JATS", sha256="a" * 64) != expected
+    )
+
+
+@pytest.mark.parametrize("representation,sha256", [("XML", "a" * 64), ("JATS", "A" * 64)])
+def test_raw_source_identity_rejects_invalid_inputs(representation, sha256):
+    with pytest.raises(ValueError):
+        raw_source_artifact_id(paper_id="P001", representation=representation, sha256=sha256)
 
 
 def artifact_args():

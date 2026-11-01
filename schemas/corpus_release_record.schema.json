@@ -1,0 +1,85 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "corpus_content_sha256": {
+      "title": "Corpus Content Sha256",
+      "type": "string"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "csv_sha256": {
+      "title": "Csv Sha256",
+      "type": "string"
+    },
+    "git_sha": {
+      "title": "Git Sha",
+      "type": "string"
+    },
+    "manifest_artifact": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "manifest_revision": {
+      "title": "Manifest Revision",
+      "type": "string"
+    },
+    "manifest_semantic_sha256": {
+      "title": "Manifest Semantic Sha256",
+      "type": "string"
+    },
+    "record_schema_version": {
+      "title": "Record Schema Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "validation_report_artifact": {
+      "$ref": "#/$defs/ArtifactRef"
+    }
+  },
+  "required": [
+    "record_schema_version",
+    "corpus_version",
+    "manifest_revision",
+    "schema_version",
+    "corpus_content_sha256",
+    "manifest_semantic_sha256",
+    "csv_sha256",
+    "manifest_artifact",
+    "validation_report_artifact",
+    "git_sha"
+  ],
+  "title": "ReleaseRecord",
+  "type": "object"
+}
