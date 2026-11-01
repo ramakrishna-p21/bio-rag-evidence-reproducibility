@@ -1,0 +1,109 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "audit": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "benchmark_version": {
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "corpus_content_sha256": {
+      "title": "Corpus Content Sha256",
+      "type": "string"
+    },
+    "corpus_release": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "decisions": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "development_paper_count": {
+      "title": "Development Paper Count",
+      "type": "integer"
+    },
+    "final_test_paper_count": {
+      "title": "Final Test Paper Count",
+      "type": "integer"
+    },
+    "implementation_git_sha": {
+      "title": "Implementation Git Sha",
+      "type": "string"
+    },
+    "item_count": {
+      "title": "Item Count",
+      "type": "integer"
+    },
+    "items": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "relatedness": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed_registry": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "split": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "validation_report": {
+      "$ref": "#/$defs/ArtifactRef"
+    }
+  },
+  "required": [
+    "benchmark_version",
+    "corpus_version",
+    "corpus_content_sha256",
+    "corpus_release",
+    "implementation_git_sha",
+    "seed_registry",
+    "relatedness",
+    "split",
+    "items",
+    "decisions",
+    "audit",
+    "validation_report",
+    "item_count",
+    "development_paper_count",
+    "final_test_paper_count"
+  ],
+  "title": "BenchmarkRelease",
+  "type": "object"
+}

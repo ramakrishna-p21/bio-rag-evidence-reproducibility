@@ -1,0 +1,161 @@
+{
+  "$defs": {
+    "PaperGroup": {
+      "additionalProperties": false,
+      "properties": {
+        "basis": {
+          "title": "Basis",
+          "type": "string"
+        },
+        "paper_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Paper Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "paper_ids",
+        "basis"
+      ],
+      "title": "PaperGroup",
+      "type": "object"
+    },
+    "PaperMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "primary_domain": {
+          "title": "Primary Domain",
+          "type": "string"
+        }
+      },
+      "required": [
+        "paper_id",
+        "primary_domain"
+      ],
+      "title": "PaperMeta",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "algorithm": {
+      "default": "python_random_shuffle_dp_v1",
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "corpus_content_sha256": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Corpus Content Sha256"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "development_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 10,
+      "minItems": 10,
+      "title": "Development Ids",
+      "type": "array"
+    },
+    "final_test_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 40,
+      "minItems": 40,
+      "title": "Final Test Ids",
+      "type": "array"
+    },
+    "ordered_groups": {
+      "items": {
+        "$ref": "#/$defs/PaperGroup"
+      },
+      "title": "Ordered Groups",
+      "type": "array"
+    },
+    "papers": {
+      "items": {
+        "$ref": "#/$defs/PaperMeta"
+      },
+      "title": "Papers",
+      "type": "array"
+    },
+    "preprint_assignments": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Preprint Assignments",
+      "type": "object"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "represented_domains": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Represented Domains",
+      "type": "array"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "seed_name": {
+      "default": "paper_split",
+      "title": "Seed Name",
+      "type": "string"
+    },
+    "selected_shuffled_positions": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Selected Shuffled Positions",
+      "type": "array"
+    },
+    "shuffled_groups": {
+      "items": {
+        "$ref": "#/$defs/PaperGroup"
+      },
+      "title": "Shuffled Groups",
+      "type": "array"
+    }
+  },
+  "required": [
+    "corpus_version",
+    "seed",
+    "python_version",
+    "papers",
+    "ordered_groups",
+    "shuffled_groups",
+    "selected_shuffled_positions",
+    "development_ids",
+    "final_test_ids",
+    "represented_domains"
+  ],
+  "title": "PaperSplit",
+  "type": "object"
+}
