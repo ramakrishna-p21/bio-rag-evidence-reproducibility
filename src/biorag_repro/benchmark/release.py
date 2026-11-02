@@ -22,6 +22,8 @@ class BenchmarkRelease(Record):
     split: ArtifactRef
     items: ArtifactRef
     decisions: ArtifactRef
+    dispositions: ArtifactRef
+    pre_audit_population: ArtifactRef
     audit: ArtifactRef
     validation_report: ArtifactRef
     item_count: int

@@ -421,7 +421,7 @@
         },
         "members": {
           "items": {
-            "$ref": "#/$defs/EntityGold"
+            "$ref": "#/$defs/SetMember"
           },
           "minItems": 1,
           "title": "Members",
@@ -432,6 +432,37 @@
         "members"
       ],
       "title": "SetGold",
+      "type": "object"
+    },
+    "SetMember": {
+      "additionalProperties": false,
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        },
+        "answer_class": {
+          "enum": [
+            "biological_entity",
+            "dataset_cohort",
+            "feature_or_process"
+          ],
+          "title": "Answer Class",
+          "type": "string"
+        },
+        "canonical": {
+          "title": "Canonical",
+          "type": "string"
+        }
+      },
+      "required": [
+        "answer_class",
+        "canonical"
+      ],
+      "title": "SetMember",
       "type": "object"
     }
   },

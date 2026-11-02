@@ -7,7 +7,7 @@ from difflib import SequenceMatcher
 from pydantic import Field
 
 from biorag_repro.benchmark.discovery import CandidateLead
-from biorag_repro.benchmark.models import BenchmarkItem, EntityGold, QuantityGold, Record
+from biorag_repro.benchmark.models import BenchmarkItem, EntityGold, QuantityGold, Record, SetGold
 from biorag_repro.benchmark.split import PaperGroup
 
 
@@ -66,15 +66,18 @@ def flag_items(
         for paper_id in group.paper_ids
     }
     for item in items:
-        answer = (
-            item.gold.value
+        answers = (
+            [item.gold.value]
             if isinstance(item.gold, QuantityGold)
-            else item.gold.canonical
+            else [item.gold.canonical]
             if isinstance(item.gold, EntityGold)
-            else None
+            else [member.canonical for member in item.gold.members]
+            if isinstance(item.gold, SetGold)
+            else []
         )
-        if answer and re.search(
-            rf"(?<!\w){re.escape(answer.casefold())}(?!\w)", item.question.casefold()
+        if any(
+            re.search(rf"(?<!\w){re.escape(answer.casefold())}(?!\w)", item.question.casefold())
+            for answer in answers
         ):
             flags.append(
                 ReviewFlag(

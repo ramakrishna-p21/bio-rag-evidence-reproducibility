@@ -1,9 +1,9 @@
 """Explicit scientific review events and paper-grouped worksheet rows."""
 
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from biorag_repro.benchmark.discovery import CandidateLead
 from biorag_repro.benchmark.flags import ReviewFlag
@@ -41,6 +41,49 @@ class DecisionEvent(Record):
         if not value.strip():
             raise ValueError("review event fields must be nonblank")
         return value
+
+
+class FlagDisposition(Record):
+    schema_version: Literal["1"] = "1"
+    disposition_id: str
+    code: Literal["near_duplicate_question"]
+    item_ids: list[str] = Field(min_length=2, max_length=2)
+    reviewer: str
+    at_utc: str
+    disposition: Literal["retain_distinct_conditional", "retain_distinct"]
+    reason: str
+    condition: str | None = None
+    evidence: str
+
+    @field_validator("at_utc")
+    @classmethod
+    def utc_time(cls, value: str) -> str:
+        if not value.endswith("Z") or datetime.fromisoformat(value).utcoffset() != timedelta(0):
+            raise ValueError("review timestamp must be UTC with Z suffix")
+        return value
+
+    @field_validator("item_ids")
+    @classmethod
+    def ordered_pair(cls, value: list[str]) -> list[str]:
+        if value != sorted(set(value)):
+            raise ValueError("flag item IDs must be distinct and sorted")
+        return value
+
+    @field_validator("disposition_id", "reviewer", "reason", "evidence")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("flag disposition fields must be nonblank")
+        return value
+
+    @model_validator(mode="after")
+    def condition_matches_status(self) -> Self:
+        if self.disposition == "retain_distinct_conditional":
+            if self.condition is None or not self.condition.strip():
+                raise ValueError("conditional disposition requires a condition")
+        elif self.condition is not None:
+            raise ValueError("final disposition cannot retain a condition")
+        return self
 
 
 def validate_history(

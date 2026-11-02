@@ -13,6 +13,7 @@ from biorag_repro.benchmark.models import (
     PdfRef,
     QuantityGold,
     SetGold,
+    SetMember,
 )
 from biorag_repro.benchmark.storage import decode_jsonl, encode_jsonl
 
@@ -132,6 +133,70 @@ def test_quantity_approved_numeric_equivalent_is_explicit_and_typed() -> None:
         QuantityGold(value="2.725e-4", comparator="eq", approved_equivalents=["NaN"])
     with pytest.raises(ValidationError):
         QuantityGold(value="2.725e-4", comparator="eq", approved_equivalents=["2.725e-4"])
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        [
+            {
+                "answer_class": "biological_entity",
+                "canonical": "BRCA1",
+                "aliases": ["breast cancer 1"],
+            },
+            {"answer_class": "biological_entity", "canonical": "BRCA2"},
+        ],
+        [
+            {"answer_class": "dataset_cohort", "canonical": "UK Biobank", "aliases": ["UKB"]},
+            {"answer_class": "biological_entity", "canonical": "BRCA1"},
+        ],
+        [
+            {"answer_class": "biological_entity", "canonical": "fibronectin"},
+            {"answer_class": "feature_or_process", "canonical": "vascularisation"},
+        ],
+    ],
+)
+def test_bounded_set_member_kinds_and_aliases_round_trip(members: list[dict[str, object]]) -> None:
+    gold = SetGold.model_validate({"members": members}, strict=True)
+    original = item(gold)
+    encoded = encode_jsonl([original])
+    assert decode_jsonl(encoded, BenchmarkItem) == [original]
+    assert encode_jsonl(decode_jsonl(encoded, BenchmarkItem)) == encoded
+    assert [member.canonical for member in gold.members] == [
+        member["canonical"] for member in members
+    ]
+    assert gold.members[0].aliases == members[0].get("aliases", [])
+    if gold.members[0].aliases:
+        assert gold.resolve_member(gold.members[0].aliases[0]) == gold.members[0].canonical
+    assert gold.resolve_member("unapproved member") is None
+
+
+def test_bounded_set_rejects_unsupported_member_kind_and_duplicate_alias() -> None:
+    with pytest.raises(ValidationError):
+        SetMember(answer_class="unknown", canonical="vascularisation")
+    with pytest.raises(ValidationError):
+        SetMember(
+            answer_class="feature_or_process",
+            canonical="vascularisation",
+            aliases=["Vascularisation"],
+        )
+    with pytest.raises(ValidationError):
+        SetGold(
+            members=[
+                SetMember(
+                    answer_class="biological_entity", canonical="fibronectin", aliases=["FN1"]
+                ),
+                SetMember(
+                    answer_class="feature_or_process", canonical="vascularisation", aliases=["fn1"]
+                ),
+            ]
+        )
+
+
+def test_previously_accepted_bounded_set_bytes_still_validate() -> None:
+    prior = item(SetGold(members=[EntityGold(answer_class="biological_entity", canonical="BRCA1")]))
+    content = encode_jsonl([prior])
+    assert decode_jsonl(content, BenchmarkItem)[0].gold == prior.gold
 
 
 def test_evidence_requires_complete_core() -> None:

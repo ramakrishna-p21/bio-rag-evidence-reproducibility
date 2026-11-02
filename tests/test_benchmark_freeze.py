@@ -26,6 +26,8 @@ def release() -> BenchmarkRelease:
         split=ref("split"),
         items=ref("items"),
         decisions=ref("decisions"),
+        dispositions=ref("dispositions"),
+        pre_audit_population=ref("pre_audit_population"),
         audit=ref("audit"),
         validation_report=ref("validation"),
         item_count=5,
@@ -42,6 +44,18 @@ def test_release_round_trip_and_counts() -> None:
     )
     with pytest.raises(ValidationError):
         BenchmarkRelease.model_validate({**record.model_dump(), "development_paper_count": 9})
+    with pytest.raises(ValidationError):
+        BenchmarkRelease.model_validate(
+            {key: value for key, value in record.model_dump().items() if key != "dispositions"}
+        )
+    with pytest.raises(ValidationError):
+        BenchmarkRelease.model_validate(
+            {
+                key: value
+                for key, value in record.model_dump().items()
+                if key != "pre_audit_population"
+            }
+        )
 
 
 def test_release_reference_cannot_leave_root(tmp_path: Path) -> None:

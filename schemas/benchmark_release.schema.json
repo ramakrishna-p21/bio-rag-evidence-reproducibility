@@ -54,6 +54,9 @@
       "title": "Development Paper Count",
       "type": "integer"
     },
+    "dispositions": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
     "final_test_paper_count": {
       "title": "Final Test Paper Count",
       "type": "integer"
@@ -67,6 +70,9 @@
       "type": "integer"
     },
     "items": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "pre_audit_population": {
       "$ref": "#/$defs/ArtifactRef"
     },
     "relatedness": {
@@ -98,6 +104,8 @@
     "split",
     "items",
     "decisions",
+    "dispositions",
+    "pre_audit_population",
     "audit",
     "validation_report",
     "item_count",

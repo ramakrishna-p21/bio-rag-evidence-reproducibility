@@ -67,8 +67,8 @@ class QuantityGold(Record):
         return self
 
 
-class EntityGold(Record):
-    answer_class: Literal["biological_entity", "dataset_cohort"]
+class SetMember(Record):
+    answer_class: Literal["biological_entity", "dataset_cohort", "feature_or_process"]
     canonical: str
     aliases: list[str] = Field(default_factory=list)
 
@@ -82,16 +82,29 @@ class EntityGold(Record):
         return self
 
 
+class EntityGold(SetMember):
+    answer_class: Literal["biological_entity", "dataset_cohort"]
+
+
 class SetGold(Record):
     answer_class: Literal["bounded_entity_set"] = "bounded_entity_set"
-    members: list[EntityGold] = Field(min_length=1)
+    members: list[SetMember] = Field(min_length=1)
     inclusion_criterion: str | None = None
 
     @model_validator(mode="after")
     def distinct_members(self) -> Self:
-        if len({item.canonical.casefold() for item in self.members}) != len(self.members):
-            raise ValueError("bounded set members must be distinct")
+        names = [
+            name.casefold() for item in self.members for name in [item.canonical, *item.aliases]
+        ]
+        if len(set(names)) != len(names):
+            raise ValueError("bounded set member names and aliases must be distinct")
         return self
+
+    def resolve_member(self, name: str) -> str | None:
+        for member in self.members:
+            if name == member.canonical or name in member.aliases:
+                return member.canonical
+        return None
 
 
 class ConclusionGold(Record):

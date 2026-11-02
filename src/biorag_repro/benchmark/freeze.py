@@ -6,7 +6,7 @@ from pathlib import Path
 from biorag_repro.benchmark.audit import AuditReport
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.release import BenchmarkRelease
-from biorag_repro.benchmark.review import DecisionEvent
+from biorag_repro.benchmark.review import DecisionEvent, FlagDisposition
 from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperMeta, PaperSplit, RelatednessRecord, make_split
 from biorag_repro.benchmark.storage import read_jsonl
@@ -74,6 +74,14 @@ def verify_release_inputs(record: BenchmarkRelease, data_root: Path) -> None:
     decisions = read_jsonl(
         _path(data_root, record.decisions), record.decisions.sha256, DecisionEvent
     )
+    dispositions = read_jsonl(
+        _path(data_root, record.dispositions), record.dispositions.sha256, FlagDisposition
+    )
+    pre_audit_items = read_jsonl(
+        _path(data_root, record.pre_audit_population),
+        record.pre_audit_population.sha256,
+        BenchmarkItem,
+    )
     audit = read_project_json(_path(data_root, record.audit), record.audit.sha256, AuditReport)
     saved_validation = read_project_json(
         _path(data_root, record.validation_report),
@@ -109,6 +117,8 @@ def verify_release_inputs(record: BenchmarkRelease, data_root: Path) -> None:
         raise ValueError("split or audit seed differs from prospective registry")
     if len(items) != record.item_count or saved_validation.hard_errors:
         raise ValueError("item count or saved validation does not pass")
+    if [item.item_id for item in pre_audit_items] != audit.proposed_item_ids:
+        raise ValueError("pre-audit population differs from recorded audit population")
     if (
         saved_validation.item_count != record.item_count
         or saved_validation.items_sha256 != record.items.sha256
@@ -142,9 +152,10 @@ def verify_release_inputs(record: BenchmarkRelease, data_root: Path) -> None:
         data_root=data_root,
         split=split,
         events=decisions,
+        dispositions=dispositions,
     )
-    if report.hard_errors:
-        raise ValueError("final benchmark validation has hard errors")
+    if report.hard_errors or report.review_warnings:
+        raise ValueError("final benchmark validation has open findings")
 
 
 def publish_benchmark_release(

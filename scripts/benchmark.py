@@ -11,7 +11,12 @@ from biorag_repro.benchmark.discovery import CandidateLead, discover_jats
 from biorag_repro.benchmark.flags import flag_leads
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.pdf import locate_pdf
-from biorag_repro.benchmark.review import DecisionEvent, review_queue, worksheet_rows
+from biorag_repro.benchmark.review import (
+    DecisionEvent,
+    FlagDisposition,
+    review_queue,
+    worksheet_rows,
+)
 from biorag_repro.benchmark.split import PaperMeta, PaperSplit, RelatednessRecord, make_split
 from biorag_repro.benchmark.storage import encode_jsonl, read_jsonl
 from biorag_repro.benchmark.validation import validate_items
@@ -83,6 +88,8 @@ def main() -> int:
     validation.add_argument("--accepted-only", action="store_true")
     validation.add_argument("--decisions", type=Path)
     validation.add_argument("--decisions-sha256")
+    validation.add_argument("--dispositions", type=Path)
+    validation.add_argument("--dispositions-sha256")
     args = parser.parse_args()
     release, manifest = load_corpus(args.data_root, args.corpus_release, args.corpus_release_sha256)
     by_id = {paper.paper_id: paper for paper in manifest.papers}
@@ -110,8 +117,8 @@ def main() -> int:
         print(f"preprints={result.preprint_assignments}")
     elif args.command == "discover":
         split_record = read_project_json(args.split, args.split_sha256, PaperSplit)
-        if args.paper_id not in split_record.development_ids:
-            raise ValueError("Pass A pilot requires development paper")
+        if args.paper_id not in split_record.development_ids + split_record.final_test_ids:
+            raise ValueError("discovery paper must belong to frozen split")
         paper = by_id[args.paper_id]
         source_path = args.data_root / "corpus/raw" / paper.jats.logical_ref
         verify_source_bytes(paper, "jats", source_path)
@@ -178,6 +185,13 @@ def main() -> int:
             if args.decisions
             else None
         )
+        if bool(args.dispositions) != bool(args.dispositions_sha256):
+            raise ValueError("disposition path and hash must be supplied together")
+        dispositions = (
+            read_jsonl(args.dispositions, args.dispositions_sha256, FlagDisposition)
+            if args.dispositions
+            else None
+        )
         report = validate_items(
             items,
             paper_ids=set(by_id),
@@ -187,6 +201,7 @@ def main() -> int:
             data_root=args.data_root,
             split=split_record,
             events=events,
+            dispositions=dispositions,
         )
         publish_json(args.output, report)
         print(f"hard_errors={report.hard_errors} review_warnings={report.review_warnings}")

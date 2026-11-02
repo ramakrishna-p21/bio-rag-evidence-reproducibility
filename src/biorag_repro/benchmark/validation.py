@@ -9,7 +9,12 @@ from pydantic import Field
 
 from biorag_repro.benchmark.flags import flag_items
 from biorag_repro.benchmark.models import BenchmarkItem, Record
-from biorag_repro.benchmark.review import CandidateState, DecisionEvent, validate_history
+from biorag_repro.benchmark.review import (
+    CandidateState,
+    DecisionEvent,
+    FlagDisposition,
+    validate_history,
+)
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import jsonl_sha256
 from biorag_repro.core.hashing import sha256_bytes
@@ -68,6 +73,7 @@ def validate_items(
     data_root: Path | None = None,
     split: PaperSplit | None = None,
     events: list[DecisionEvent] | None = None,
+    dispositions: list[FlagDisposition] | None = None,
 ) -> ValidationReport:
     findings: list[Finding] = []
 
@@ -187,13 +193,22 @@ def validate_items(
     related = (
         [group for group in split.ordered_groups if len(group.paper_ids) > 1] if split else None
     )
+    final_pairs = {
+        (record.code, tuple(record.item_ids))
+        for record in dispositions or []
+        if record.disposition == "retain_distinct"
+    }
     for flag in flag_items(items, related):
+        if (flag.code, tuple(sorted(flag.item_ids))) in final_pairs:
+            continue
         for item_id in flag.item_ids:
             resolved = any(
                 flag.code in event.resolved_flags for event in events_by_item.get(item_id, [])
             )
+            if resolved:
+                continue
             severity: Literal["hard_error", "review_warning"] = (
-                "hard_error" if events is not None and not resolved else "review_warning"
+                "hard_error" if events is not None else "review_warning"
             )
             findings.append(
                 Finding(severity=severity, rule=flag.code, item_id=item_id, detail=flag.detail)

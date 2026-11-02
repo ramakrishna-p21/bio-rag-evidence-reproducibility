@@ -1,0 +1,77 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "at_utc": {
+      "title": "At Utc",
+      "type": "string"
+    },
+    "code": {
+      "const": "near_duplicate_question",
+      "title": "Code",
+      "type": "string"
+    },
+    "condition": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Condition"
+    },
+    "disposition": {
+      "enum": [
+        "retain_distinct_conditional",
+        "retain_distinct"
+      ],
+      "title": "Disposition",
+      "type": "string"
+    },
+    "disposition_id": {
+      "title": "Disposition Id",
+      "type": "string"
+    },
+    "evidence": {
+      "title": "Evidence",
+      "type": "string"
+    },
+    "item_ids": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Item Ids",
+      "type": "array"
+    },
+    "reason": {
+      "title": "Reason",
+      "type": "string"
+    },
+    "reviewer": {
+      "title": "Reviewer",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "disposition_id",
+    "code",
+    "item_ids",
+    "reviewer",
+    "at_utc",
+    "disposition",
+    "reason",
+    "evidence"
+  ],
+  "title": "FlagDisposition",
+  "type": "object"
+}

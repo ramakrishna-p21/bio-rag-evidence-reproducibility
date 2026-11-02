@@ -12,7 +12,7 @@ from biorag_repro.benchmark.flags import ReviewFlag
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.pdf import PdfHit
 from biorag_repro.benchmark.release import BenchmarkRelease
-from biorag_repro.benchmark.review import DecisionEvent, WorksheetRow
+from biorag_repro.benchmark.review import DecisionEvent, FlagDisposition, WorksheetRow
 from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperSplit, RelatednessRecord
 from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValidationReport
@@ -24,6 +24,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "benchmark_item.schema.json": BenchmarkItem,
     "benchmark_split.schema.json": PaperSplit,
     "benchmark_decision.schema.json": DecisionEvent,
+    "benchmark_flag_disposition.schema.json": FlagDisposition,
     "benchmark_worksheet.schema.json": WorksheetRow,
     "benchmark_audit_draw.schema.json": AuditDraw,
     "benchmark_audit_report.schema.json": AuditReport,
