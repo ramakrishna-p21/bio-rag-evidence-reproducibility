@@ -1,0 +1,182 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "column_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Column Label"
+    },
+    "decision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision"
+    },
+    "decision_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Reason"
+    },
+    "flags": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
+    "jats_section": {
+      "title": "Jats Section",
+      "type": "string"
+    },
+    "jats_text": {
+      "title": "Jats Text",
+      "type": "string"
+    },
+    "jats_xml_path": {
+      "title": "Jats Xml Path",
+      "type": "string"
+    },
+    "lead_id": {
+      "title": "Lead Id",
+      "type": "string"
+    },
+    "minimum_evidence": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Minimum Evidence"
+    },
+    "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "pdf_hits": {
+      "items": {
+        "additionalProperties": true,
+        "type": "object"
+      },
+      "title": "Pdf Hits",
+      "type": "array"
+    },
+    "pdf_search_terms": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Pdf Search Terms",
+      "type": "array"
+    },
+    "proposed_gold": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Proposed Gold"
+    },
+    "proposed_question": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Proposed Question"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "row_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Row Label"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_equivalence": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Equivalence"
+    },
+    "table_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Table Id"
+    }
+  },
+  "required": [
+    "lead_id",
+    "paper_id",
+    "jats_xml_path",
+    "jats_section",
+    "jats_text",
+    "table_id",
+    "row_label",
+    "column_label",
+    "pdf_search_terms"
+  ],
+  "title": "WorksheetRow",
+  "type": "object"
+}

@@ -11,6 +11,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 
 [project.optional-dependencies]
+benchmark = ["PyMuPDF==1.26.5"]
 dev = ["build>=1,<2", "mypy>=1,<2", "pytest>=8,<10", "ruff>=0.8,<1"]
 
 [tool.setuptools.packages.find]

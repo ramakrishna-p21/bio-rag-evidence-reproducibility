@@ -4,11 +4,37 @@ import argparse
 import json
 from pathlib import Path
 
+from pydantic import BaseModel
+
+from biorag_repro.benchmark.audit import AuditDraw, AuditReport
+from biorag_repro.benchmark.discovery import CandidateLead
+from biorag_repro.benchmark.flags import ReviewFlag
+from biorag_repro.benchmark.models import BenchmarkItem
+from biorag_repro.benchmark.pdf import PdfHit
+from biorag_repro.benchmark.release import BenchmarkRelease
+from biorag_repro.benchmark.review import DecisionEvent, FlagDisposition, WorksheetRow
+from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
+from biorag_repro.benchmark.split import PaperSplit, RelatednessRecord
+from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValidationReport
 from biorag_repro.core.manifest import BuildManifest
 from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
-SCHEMAS = {
+SCHEMAS: dict[str, type[BaseModel]] = {
+    "benchmark_item.schema.json": BenchmarkItem,
+    "benchmark_split.schema.json": PaperSplit,
+    "benchmark_decision.schema.json": DecisionEvent,
+    "benchmark_flag_disposition.schema.json": FlagDisposition,
+    "benchmark_worksheet.schema.json": WorksheetRow,
+    "benchmark_audit_draw.schema.json": AuditDraw,
+    "benchmark_audit_report.schema.json": AuditReport,
+    "benchmark_validation_report.schema.json": BenchmarkValidationReport,
+    "benchmark_release.schema.json": BenchmarkRelease,
+    "benchmark_seed_registry.schema.json": BenchmarkSeedRegistry,
+    "benchmark_relatedness.schema.json": RelatednessRecord,
+    "benchmark_candidate_lead.schema.json": CandidateLead,
+    "benchmark_review_flag.schema.json": ReviewFlag,
+    "benchmark_pdf_hit.schema.json": PdfHit,
     "build_manifest.schema.json": BuildManifest,
     "corpus_validation_report.schema.json": ValidationReport,
     "corpus_release_record.schema.json": ReleaseRecord,
@@ -16,7 +42,7 @@ SCHEMAS = {
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 
 
-def schema_bytes(model: type = BuildManifest) -> bytes:
+def schema_bytes(model: type[BaseModel] = BuildManifest) -> bytes:
     return (
         json.dumps(model.model_json_schema(), ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     ).encode("utf-8")

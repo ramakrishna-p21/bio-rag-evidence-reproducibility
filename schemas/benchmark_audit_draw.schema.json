@@ -1,0 +1,51 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "algorithm": {
+      "default": "python_random_sample_v1",
+      "title": "Algorithm",
+      "type": "string"
+    },
+    "eligible_count": {
+      "title": "Eligible Count",
+      "type": "integer"
+    },
+    "eligible_ids_sha256": {
+      "title": "Eligible Ids Sha256",
+      "type": "string"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seed": {
+      "title": "Seed",
+      "type": "integer"
+    },
+    "seed_name": {
+      "default": "benchmark_audit",
+      "title": "Seed Name",
+      "type": "string"
+    },
+    "selected_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Selected Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "seed",
+    "python_version",
+    "eligible_count",
+    "eligible_ids_sha256"
+  ],
+  "title": "AuditDraw",
+  "type": "object"
+}
