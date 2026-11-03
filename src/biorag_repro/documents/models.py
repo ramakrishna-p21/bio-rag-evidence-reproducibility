@@ -10,6 +10,8 @@ from biorag_repro.core.manifest import ArtifactRef
 MappingState = Literal[
     "exact_native", "derived", "approximate", "unavailable", "ambiguous", "parser_damaged", "failed"
 ]
+RelationState = Literal["present", "absent", "unavailable", "ambiguous", "parser_damaged"]
+CharspanState = Literal["meaningful", "placeholder", "unavailable", "ambiguous", "parser_damaged"]
 ContentState = Literal["present", "marker_only", "missing", "unsupported"]
 NodeKind = Literal[
     "article",
@@ -35,7 +37,9 @@ NodeKind = Literal[
 
 
 class Record(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
+    model_config = ConfigDict(
+        strict=True, extra="forbid", validate_default=True, allow_inf_nan=False
+    )
 
 
 class JatsConfiguration(Record):
@@ -44,11 +48,66 @@ class JatsConfiguration(Record):
     source_faithful: Literal[True] = True
 
 
+class NativeBBox(Record):
+    l: float
+    t: float
+    r: float
+    b: float
+    coord_origin: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def valid_coordinates(self) -> Self:
+        if self.l > self.r:
+            raise ValueError("bbox left exceeds right")
+        return self
+
+
+class NativeProvenance(Record):
+    ordinal: int = Field(ge=0)
+    page_no: int | None = Field(default=None, ge=1)
+    bbox: NativeBBox | None = None
+    charspan: list[int] | None = Field(default=None, min_length=2, max_length=2)
+    charspan_state: CharspanState
+    state: MappingState
+
+    @model_validator(mode="after")
+    def valid_location(self) -> Self:
+        if self.charspan is None and self.charspan_state not in {"unavailable", "parser_damaged"}:
+            raise ValueError("missing charspan requires unavailable or damaged state")
+        if self.charspan is not None:
+            start, end = self.charspan
+            if start < 0 or end < start:
+                raise ValueError("invalid native charspan")
+            if self.charspan == [0, 0] and self.charspan_state == "meaningful":
+                raise ValueError("placeholder charspan cannot be exact")
+        return self
+
+
 class SourceMapping(Record):
+    kind: Literal["jats", "docling"]
     state: MappingState
     source_artifact_id: str = Field(min_length=1)
-    path: str = Field(min_length=1)
+    path: str | None = None
     segment_ordinal: int | None = Field(default=None, ge=0)
+    native_artifact: ArtifactRef | None = None
+    native_ref: str | None = None
+    provenance: list[NativeProvenance] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def valid_arm(self) -> Self:
+        if self.kind == "jats":
+            if not self.path or self.native_artifact or self.native_ref or self.provenance:
+                raise ValueError("JATS mapping requires XML path and no PDF provenance")
+        elif (
+            self.path is not None
+            or self.segment_ordinal is not None
+            or self.native_artifact is None
+            or not self.native_ref
+        ):
+            raise ValueError("Docling mapping requires saved native artifact and object ref")
+        if [p.ordinal for p in self.provenance] != list(range(len(self.provenance))):
+            raise ValueError("native provenance ordinals must follow native order")
+        return self
 
 
 class TextSegment(Record):
@@ -72,11 +131,39 @@ class TableData(Record):
     row_count: int = Field(ge=0)
     column_count: int = Field(ge=0)
     cells: list[TableCell]
+    grid_cell_node_ids: list[list[str | None]] = Field(default_factory=list)
     caption_node_ids: list[str] = Field(default_factory=list)
     footnote_node_ids: list[str] = Field(default_factory=list)
+    caption_relation_state: RelationState = "absent"
+    footnote_relation_state: RelationState = "absent"
 
     @model_validator(mode="after")
     def valid_grid(self) -> Self:
+        cell_ids = {cell.node_id for cell in self.cells}
+        if any(
+            cell_id is not None and cell_id not in cell_ids
+            for row in self.grid_cell_node_ids
+            for cell_id in row
+        ):
+            raise ValueError("grid references unknown table cell")
+        if (
+            self.grid_cell_node_ids
+            and self.structure_state == "exact_native"
+            and (
+                len(self.grid_cell_node_ids) != self.row_count
+                or any(
+                    len(row) != self.column_count or any(cell is None for cell in row)
+                    for row in self.grid_cell_node_ids
+                )
+            )
+        ):
+            raise ValueError("exact native grid is incomplete")
+        for ids, state in (
+            (self.caption_node_ids, self.caption_relation_state),
+            (self.footnote_node_ids, self.footnote_relation_state),
+        ):
+            if (state == "present") != bool(ids):
+                raise ValueError("relation IDs inconsistent with state")
         occupied: set[tuple[int, int]] = set()
         for cell in self.cells:
             if (
@@ -105,6 +192,8 @@ class CanonicalNode(Record):
     order: int = Field(ge=0)
     kind: NodeKind
     source_tag: str
+    native_label: str | None = None
+    interpretation_state: MappingState | None = None
     source_id: str | None = None
     attributes: dict[str, str] = Field(default_factory=dict)
     segments: list[TextSegment] = Field(default_factory=list)
@@ -118,7 +207,7 @@ class CanonicalNode(Record):
 
 
 class CanonicalDocument(Record):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     paper_id: str
     representation: Literal["JATS", "PDF_DOCLING"]
     source: ArtifactRef
@@ -152,6 +241,13 @@ class CanonicalDocument(Record):
         for node in self.nodes:
             if node.mapping.source_artifact_id != self.source.artifact_id:
                 raise ValueError("node source differs from document source")
+            if self.representation == "JATS" and node.mapping.kind != "jats":
+                raise ValueError("JATS node requires XML mapping")
+            if self.representation == "PDF_DOCLING" and (
+                node.mapping.kind != "docling"
+                or node.mapping.native_artifact != self.native_artifact
+            ):
+                raise ValueError("PDF node requires this saved native artifact")
             if node.parent_node_id is not None and node.parent_node_id not in ids:
                 raise ValueError("unresolved canonical parent")
             if any(target not in ids for target in node.target_node_ids):
@@ -159,6 +255,11 @@ class CanonicalDocument(Record):
             for segment in node.segments:
                 if segment.mapping.source_artifact_id != self.source.artifact_id:
                     raise ValueError("segment source differs from document source")
+                if self.representation == "PDF_DOCLING" and (
+                    segment.mapping.kind != "docling"
+                    or segment.mapping.native_artifact != self.native_artifact
+                ):
+                    raise ValueError("PDF segment requires this native artifact")
             if node.table:
                 for cell in node.table.cells:
                     if (
@@ -166,6 +267,11 @@ class CanonicalDocument(Record):
                         or cell.mapping.source_artifact_id != self.source.artifact_id
                     ):
                         raise ValueError("unresolved table cell")
+                    if self.representation == "PDF_DOCLING" and (
+                        cell.mapping.kind != "docling"
+                        or cell.mapping.native_artifact != self.native_artifact
+                    ):
+                        raise ValueError("PDF table cell requires this native artifact")
                 if not set(node.table.caption_node_ids + node.table.footnote_node_ids) <= ids:
                     raise ValueError("unresolved table relation")
         return self

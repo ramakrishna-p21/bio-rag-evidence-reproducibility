@@ -54,7 +54,7 @@ def test_schema_matches_authoritative_model_and_stored_bytes():
     path = Path(__file__).resolve().parents[1] / "schemas" / "canonical_document.schema.json"
     assert path.read_bytes() == schema_bytes(CanonicalDocument)
     schema = json.loads(path.read_text())
-    assert schema["properties"]["schema_version"]["const"] == "1"
+    assert schema["properties"]["schema_version"]["const"] == "2"
     doc = document()
     encoded = serialize_project_json(doc, CanonicalDocument)
     assert CanonicalDocument.model_validate_json(encoded) == doc
@@ -71,7 +71,9 @@ def test_jats_configuration_is_resolved_not_raw_toml_identity():
 def test_table_model_rejects_overlapping_cells():
     from biorag_repro.documents.models import SourceMapping, TableCell
 
-    mapping = SourceMapping(state="exact_native", source_artifact_id="source", path="/cell[1]")
+    mapping = SourceMapping(
+        kind="jats", state="exact_native", source_artifact_id="source", path="/cell[1]"
+    )
     cell = TableCell(
         node_id="n1",
         row=0,

@@ -19,6 +19,8 @@ from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValid
 from biorag_repro.core.manifest import BuildManifest
 from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
 from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
+from biorag_repro.documents.pdf import PdfConfiguration
+from biorag_repro.documents.pdf_ingest import ConversionAttempt
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
@@ -41,6 +43,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "corpus_release_record.schema.json": ReleaseRecord,
     "canonical_document.schema.json": CanonicalDocument,
     "jats_configuration.schema.json": JatsConfiguration,
+    "pdf_configuration.schema.json": PdfConfiguration,
+    "pdf_conversion_attempt.schema.json": ConversionAttempt,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

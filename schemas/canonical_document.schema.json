@@ -47,6 +47,27 @@
           "title": "Content State",
           "type": "string"
         },
+        "interpretation_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact_native",
+                "derived",
+                "approximate",
+                "unavailable",
+                "ambiguous",
+                "parser_damaged",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Interpretation State"
+        },
         "kind": {
           "enum": [
             "article",
@@ -74,6 +95,18 @@
         },
         "mapping": {
           "$ref": "#/$defs/SourceMapping"
+        },
+        "native_label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Label"
         },
         "node_id": {
           "minLength": 1,
@@ -194,13 +227,175 @@
       "title": "CanonicalNode",
       "type": "object"
     },
+    "NativeBBox": {
+      "additionalProperties": false,
+      "properties": {
+        "b": {
+          "title": "B",
+          "type": "number"
+        },
+        "coord_origin": {
+          "minLength": 1,
+          "title": "Coord Origin",
+          "type": "string"
+        },
+        "l": {
+          "title": "L",
+          "type": "number"
+        },
+        "r": {
+          "title": "R",
+          "type": "number"
+        },
+        "t": {
+          "title": "T",
+          "type": "number"
+        }
+      },
+      "required": [
+        "l",
+        "t",
+        "r",
+        "b",
+        "coord_origin"
+      ],
+      "title": "NativeBBox",
+      "type": "object"
+    },
+    "NativeProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeBBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "charspan": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charspan"
+        },
+        "charspan_state": {
+          "enum": [
+            "meaningful",
+            "placeholder",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged"
+          ],
+          "title": "Charspan State",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "page_no": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page No"
+        },
+        "state": {
+          "enum": [
+            "exact_native",
+            "derived",
+            "approximate",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ordinal",
+        "charspan_state",
+        "state"
+      ],
+      "title": "NativeProvenance",
+      "type": "object"
+    },
     "SourceMapping": {
       "additionalProperties": false,
       "properties": {
-        "path": {
-          "minLength": 1,
-          "title": "Path",
+        "kind": {
+          "enum": [
+            "jats",
+            "docling"
+          ],
+          "title": "Kind",
           "type": "string"
+        },
+        "native_artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "native_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Ref"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/NativeProvenance"
+          },
+          "title": "Provenance",
+          "type": "array"
         },
         "segment_ordinal": {
           "anyOf": [
@@ -235,9 +430,9 @@
         }
       },
       "required": [
+        "kind",
         "state",
-        "source_artifact_id",
-        "path"
+        "source_artifact_id"
       ],
       "title": "SourceMapping",
       "type": "object"
@@ -305,6 +500,18 @@
           "title": "Caption Node Ids",
           "type": "array"
         },
+        "caption_relation_state": {
+          "default": "absent",
+          "enum": [
+            "present",
+            "absent",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged"
+          ],
+          "title": "Caption Relation State",
+          "type": "string"
+        },
         "cells": {
           "items": {
             "$ref": "#/$defs/TableCell"
@@ -322,6 +529,35 @@
             "type": "string"
           },
           "title": "Footnote Node Ids",
+          "type": "array"
+        },
+        "footnote_relation_state": {
+          "default": "absent",
+          "enum": [
+            "present",
+            "absent",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged"
+          ],
+          "title": "Footnote Relation State",
+          "type": "string"
+        },
+        "grid_cell_node_ids": {
+          "items": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "title": "Grid Cell Node Ids",
           "type": "array"
         },
         "row_count": {
@@ -408,8 +644,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1",
-      "default": "1",
+      "const": "2",
+      "default": "2",
       "title": "Schema Version",
       "type": "string"
     },

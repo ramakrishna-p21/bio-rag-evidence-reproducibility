@@ -19,7 +19,7 @@ from biorag_repro.documents.models import (
     TextSegment,
 )
 
-TRANSFORMATION_ID = "jats_adapter_v1"
+TRANSFORMATION_ID = "jats_adapter_v2"
 MAX_XML_BYTES = 64 * 1024 * 1024
 _ENTITY = re.compile(rb"<!\s*ENTITY\b", re.IGNORECASE)
 _DOCTYPE = re.compile(rb"<!\s*DOCTYPE\b", re.IGNORECASE)
@@ -57,7 +57,7 @@ def _node_id(source_id: str, path: str) -> str:
     payload = {
         "source_artifact_id": source_id,
         "transformation_id": TRANSFORMATION_ID,
-        "schema_version": "1",
+        "schema_version": "2",
         "path": path,
     }
     return "node_" + sha256_bytes(canonical_json_bytes(payload))
@@ -88,6 +88,7 @@ def _segments(
                 TextSegment(
                     text=text,
                     mapping=SourceMapping(
+                        kind="jats",
                         state="exact_native",
                         source_artifact_id=source_id,
                         path=f"{paths[owner]}/{slot}",
@@ -151,7 +152,10 @@ def _table(
                     text="".join(part.text for part in _segments(child, paths, source_id)),
                     is_header=_local(child.tag) == "th",
                     mapping=SourceMapping(
-                        state="exact_native", source_artifact_id=source_id, path=paths[child]
+                        kind="jats",
+                        state="exact_native",
+                        source_artifact_id=source_id,
+                        path=paths[child],
                     ),
                 )
             )
@@ -167,6 +171,8 @@ def _table(
         cells=cells,
         caption_node_ids=captions,
         footnote_node_ids=footnotes,
+        caption_relation_state="present" if captions else "absent",
+        footnote_relation_state="present" if footnotes else "absent",
     )
 
 
@@ -240,7 +246,10 @@ def ingest_jats(
                     else []
                 ),
                 mapping=SourceMapping(
-                    state="exact_native", source_artifact_id=source_artifact_id, path=path
+                    kind="jats",
+                    state="exact_native",
+                    source_artifact_id=source_artifact_id,
+                    path=path,
                 ),
                 content_state=content_state,
                 rid=rid,

@@ -12,6 +12,7 @@ dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 
 [project.optional-dependencies]
 benchmark = ["PyMuPDF==1.26.5"]
+pdf = ["docling-slim==2.145.0", "docling-core==2.105.0", "docling-parse==7.24.2", "docling-ibm-models==4.0.4", "torch==2.15.0"]
 dev = ["build>=1,<2", "mypy>=1,<2", "pytest>=8,<10", "ruff>=0.8,<1"]
 
 [tool.setuptools.packages.find]
@@ -27,3 +28,7 @@ line-length = 100
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+[[tool.mypy.overrides]]
+module = ["docling.*", "docling_core.*", "torch.*"]
+ignore_missing_imports = true
