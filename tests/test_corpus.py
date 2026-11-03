@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.identity import raw_source_artifact_id
 from biorag_repro.core.storage import read_project_json, serialize_project_json
 from biorag_repro.corpus.manifest import (
     CorpusManifest,
@@ -28,9 +29,12 @@ from biorag_repro.corpus.manifest import (
 
 def source(paper_id: str, kind: str) -> dict:
     content = b"<article/>" if kind == "jats" else b"%PDF-1.4\n%%EOF\n"
+    digest = sha256_bytes(content)
     return {
-        "artifact_id": f"test_{kind}_{paper_id}",
-        "sha256": sha256_bytes(content),
+        "artifact_id": raw_source_artifact_id(
+            paper_id=paper_id, representation=kind.upper(), sha256=digest
+        ),
+        "sha256": digest,
         "provider": "synthetic provider",
         "acquisition_reference": "fixture-only",
         "acquired_at_utc": None,
@@ -95,7 +99,10 @@ def paper(i: int) -> dict:
 
 
 def corpus() -> CorpusManifest:
-    return CorpusManifest(papers=[PaperRecord.model_validate(paper(i)) for i in range(1, 51)])
+    rows = [paper(i) for i in range(1, 51)]
+    for row in rows:
+        row["corpus_version"] = "corpus_v1"
+    return CorpusManifest(papers=[PaperRecord.model_validate(row) for row in rows])
 
 
 def codes(report: ValidationReport, severity: str = "hard_error") -> set[str]:
@@ -224,6 +231,62 @@ def test_counts_versions_and_identity_collisions():
     assert "analysis_access" in codes(validate_corpus(CorpusManifest(papers=altered)))
 
 
+def test_frozen_paper_universe_and_version_scope():
+    baseline = corpus()
+    assert not codes(validate_corpus(baseline))
+    replaced = deepcopy(baseline)
+    replaced.papers[-1].paper_id = "P051"
+    for representation, source in (
+        ("JATS", replaced.papers[-1].jats),
+        ("PDF", replaced.papers[-1].pdf),
+    ):
+        source.artifact_id = raw_source_artifact_id(
+            paper_id="P051", representation=representation, sha256=source.sha256
+        )
+    assert {"paper_id_missing", "paper_id_unexpected"} <= codes(validate_corpus(replaced))
+    assert "paper_id_missing" in codes(validate_corpus(CorpusManifest(papers=baseline.papers[:-1])))
+    extra = deepcopy(baseline)
+    extra.papers.append(deepcopy(replaced.papers[-1]))
+    assert "paper_id_unexpected" in codes(validate_corpus(extra))
+    duplicate = deepcopy(baseline)
+    duplicate.papers[-1] = deepcopy(duplicate.papers[-2])
+    assert "paper_id_unique" in codes(validate_corpus(duplicate))
+    mixed = deepcopy(baseline)
+    mixed.papers[-1].corpus_version = "other"
+    assert "version_consistency" in codes(validate_corpus(mixed))
+    substituted = deepcopy(baseline)
+    for item in substituted.papers:
+        item.corpus_version = "other"
+    assert "corpus_version" in codes(validate_corpus(substituted))
+    generic = validate_corpus(substituted, expected_corpus_version=None)
+    assert not codes(generic)
+    assert "unverified_corpus_version" in codes(generic, "review_warning")
+    with pytest.raises(ValueError, match="unsupported frozen corpus version"):
+        validate_corpus(substituted, expected_corpus_version="other")
+
+
+def test_raw_source_id_must_bind_paper_representation_and_sha():
+    baseline = corpus()
+    assert "raw_artifact_id_mismatch" not in codes(validate_corpus(baseline))
+    source = baseline.papers[0].jats
+    for wrong_id in (
+        "raw_" + "f" * 64,
+        raw_source_artifact_id(paper_id="P002", representation="JATS", sha256=source.sha256),
+        raw_source_artifact_id(paper_id="P001", representation="PDF", sha256=source.sha256),
+        raw_source_artifact_id(paper_id="P001", representation="JATS", sha256="a" * 64),
+    ):
+        altered = deepcopy(baseline)
+        altered.papers[0].jats.artifact_id = wrong_id
+        assert any(
+            finding.rule == "raw_artifact_id_mismatch"
+            and finding.severity == "hard_error"
+            and finding.paper_id == "P001"
+            and finding.representation == "JATS"
+            and finding.artifact_id == wrong_id
+            for finding in validate_corpus(altered).findings
+        )
+
+
 def test_preprint_and_identifier_collision_rules():
     altered = deepcopy(corpus().papers)
     altered[2].publication_state = "preprint"
@@ -313,8 +376,8 @@ def test_content_hash_matches_independent_one_paper_oracle():
             {
                 "paper_id": "P001",
                 "representations": {
-                    "JATS": {"artifact_id": "test_jats_P001", "sha256": item.jats.sha256},
-                    "PDF": {"artifact_id": "test_pdf_P001", "sha256": item.pdf.sha256},
+                    "JATS": {"artifact_id": item.jats.artifact_id, "sha256": item.jats.sha256},
+                    "PDF": {"artifact_id": item.pdf.artifact_id, "sha256": item.pdf.sha256},
                 },
             }
         ],
