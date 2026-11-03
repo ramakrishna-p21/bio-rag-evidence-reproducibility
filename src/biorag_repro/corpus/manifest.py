@@ -18,6 +18,7 @@ from biorag_repro.core.hashing import (
     validate_sha256,
     verify_file_sha256,
 )
+from biorag_repro.core.identity import raw_source_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
 
 Status = Literal["known", "unknown", "unavailable", "not_applicable", "not_checked"]
@@ -42,6 +43,7 @@ Basis = Literal[
     "prior_audit_record",
 ]
 Representation = Literal["JATS", "PDF"]
+CORPUS_V1_PAPER_IDS = frozenset(f"P{i:03d}" for i in range(1, 51))
 
 
 class StrictRecord(BaseModel):
@@ -419,7 +421,10 @@ def _normalized_title(value: str) -> str:
     return "".join(char for char in value if char.isalnum())
 
 
-def validate_corpus(manifest: CorpusManifest) -> ValidationReport:
+def validate_corpus(
+    manifest: CorpusManifest, *, expected_corpus_version: Literal["corpus_v1"] | None = "corpus_v1"
+) -> ValidationReport:
+    """Validate the frozen corpus by default; None reports only generic validation."""
     findings: list[Finding] = []
 
     def add(
@@ -440,6 +445,22 @@ def validate_corpus(manifest: CorpusManifest) -> ValidationReport:
         )
 
     papers = manifest.papers
+    if expected_corpus_version not in ("corpus_v1", None):
+        raise ValueError("unsupported frozen corpus version")
+    if expected_corpus_version is None:
+        add("unverified_corpus_version", "review_warning")
+    elif any(p.corpus_version != expected_corpus_version for p in papers):
+        add("corpus_version", "hard_error")
+    if expected_corpus_version == "corpus_v1":
+        actual_ids = {p.paper_id for p in papers}
+        for paper_id in sorted(CORPUS_V1_PAPER_IDS - actual_ids):
+            findings.append(
+                Finding(rule="paper_id_missing", severity="hard_error", paper_id=paper_id)
+            )
+        for paper_id in sorted(actual_ids - CORPUS_V1_PAPER_IDS):
+            findings.append(
+                Finding(rule="paper_id_unexpected", severity="hard_error", paper_id=paper_id)
+            )
     if len(papers) != 50:
         add("paper_count", "hard_error")
     if len({p.paper_id for p in papers}) != len(papers):
@@ -492,6 +513,16 @@ def validate_corpus(manifest: CorpusManifest) -> ValidationReport:
             ("PDF", paper.pdf),
         )
         for representation, source in sources:
+            if source.artifact_id != raw_source_artifact_id(
+                paper_id=paper.paper_id, representation=representation, sha256=source.sha256
+            ):
+                add(
+                    "raw_artifact_id_mismatch",
+                    "hard_error",
+                    paper,
+                    representation,
+                    source.artifact_id,
+                )
             if source.analysis_access != "available":
                 add("analysis_access", "hard_error", paper, representation, source.artifact_id)
             if source.acquired_at_status in {"unknown", "unavailable", "not_checked"}:
