@@ -18,6 +18,7 @@ from biorag_repro.benchmark.split import PaperSplit, RelatednessRecord
 from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValidationReport
 from biorag_repro.core.manifest import BuildManifest
 from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
+from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
@@ -38,6 +39,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "build_manifest.schema.json": BuildManifest,
     "corpus_validation_report.schema.json": ValidationReport,
     "corpus_release_record.schema.json": ReleaseRecord,
+    "canonical_document.schema.json": CanonicalDocument,
+    "jats_configuration.schema.json": JatsConfiguration,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 
