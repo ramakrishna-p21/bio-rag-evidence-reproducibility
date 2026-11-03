@@ -162,14 +162,18 @@ def verify_environment() -> dict[str, str]:
         distribution.metadata["Name"].lower().replace("_", "-"): distribution.version
         for distribution in metadata.distributions(path=[str(site)])
     }
-    packages.pop("rfc8785", None)
-    packages.pop("biorag-repro", None)
+    canonicalizer_version = packages.pop("rfc8785", None)
+    project_version = packages.pop("biorag-repro", None)
     rows = sorted(f"{name}=={value}" for name, value in packages.items())
     if sha256_bytes(("\n".join(rows) + "\n").encode()) != QUALIFIED_INVENTORY_CANONICAL_SHA256:
         raise ValueError("qualified installed package inventory drift")
-    if metadata.version("rfc8785") != "0.1.4":
-        raise ValueError("project JSON canonicalizer version drift")
-    return packages | {"rfc8785": "0.1.4"}
+    if canonicalizer_version != "0.1.4" or metadata.version("rfc8785") != "0.1.4":
+        raise ValueError("self-contained JSON canonicalizer version drift")
+    inventory = packages | {"rfc8785": "0.1.4"}
+    if project_version != "0.1.0":
+        raise ValueError("self-contained project runtime is required")
+    inventory["biorag-repro"] = project_version
+    return inventory
 
 
 def _label(item: Any) -> str:

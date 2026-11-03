@@ -21,6 +21,7 @@ from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
 from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt
+from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
@@ -45,6 +46,9 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "jats_configuration.schema.json": JatsConfiguration,
     "pdf_configuration.schema.json": PdfConfiguration,
     "pdf_conversion_attempt.schema.json": ConversionAttempt,
+    "phase4_jats_build.schema.json": JatsBuild,
+    "phase4_validation.schema.json": Phase4Validation,
+    "phase4_gate_index.schema.json": Phase4GateIndex,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

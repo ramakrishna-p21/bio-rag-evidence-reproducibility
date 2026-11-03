@@ -4,8 +4,9 @@ from types import SimpleNamespace as Item
 
 import pytest
 
+import biorag_repro.documents.pdf as pdf_module
 from biorag_repro.core.config import resolve_config
-from biorag_repro.core.hashing import HashMismatchError
+from biorag_repro.core.hashing import HashMismatchError, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.documents.pdf import (
     ASSETS,
@@ -177,3 +178,23 @@ def test_qualified_lock_rejects_wrong_bytes(tmp_path):
 def test_effective_option_drift_is_rejected():
     with pytest.raises(ValueError, match="qualified pipeline option drift"):
         verify_effective_options({"artifacts_path": "/cache"}, {}, PdfConfiguration())
+
+
+def test_verified_runtime_inventory_retains_installed_project(monkeypatch):
+    packages = dict(pdf_module.VERSIONS)
+    rows = sorted(f"{name}=={version}" for name, version in packages.items())
+    monkeypatch.setattr(
+        pdf_module,
+        "QUALIFIED_INVENTORY_CANONICAL_SHA256",
+        sha256_bytes(("\n".join(rows) + "\n").encode()),
+    )
+    installed = packages | {"rfc8785": "0.1.4", "biorag-repro": "0.1.0"}
+    monkeypatch.setattr(pdf_module.metadata, "version", lambda name: installed[name])
+    monkeypatch.setattr(
+        pdf_module.metadata,
+        "distributions",
+        lambda **_: [
+            Item(metadata={"Name": name}, version=version) for name, version in installed.items()
+        ],
+    )
+    assert pdf_module.verify_environment()["biorag-repro"] == "0.1.0"
