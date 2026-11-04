@@ -54,7 +54,7 @@ def test_schema_matches_authoritative_model_and_stored_bytes():
     path = Path(__file__).resolve().parents[1] / "schemas" / "canonical_document.schema.json"
     assert path.read_bytes() == schema_bytes(CanonicalDocument)
     schema = json.loads(path.read_text())
-    assert schema["properties"]["schema_version"]["const"] == "3"
+    assert schema["properties"]["schema_version"]["const"] == "4"
     doc = document()
     encoded = serialize_project_json(doc, CanonicalDocument)
     assert CanonicalDocument.model_validate_json(encoded) == doc

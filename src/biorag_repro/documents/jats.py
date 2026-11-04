@@ -19,7 +19,7 @@ from biorag_repro.documents.models import (
     TextSegment,
 )
 
-TRANSFORMATION_ID = "jats_adapter_v3"
+TRANSFORMATION_ID = "jats_adapter_v4"
 MAX_XML_BYTES = 64 * 1024 * 1024
 _ENTITY = re.compile(rb"<!\s*ENTITY\b", re.IGNORECASE)
 _DOCTYPE = re.compile(rb"<!\s*DOCTYPE\b", re.IGNORECASE)
@@ -57,7 +57,7 @@ def _node_id(source_id: str, path: str) -> str:
     payload = {
         "source_artifact_id": source_id,
         "transformation_id": TRANSFORMATION_ID,
-        "schema_version": "3",
+        "schema_version": "4",
         "path": path,
     }
     return "node_" + sha256_bytes(canonical_json_bytes(payload))

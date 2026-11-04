@@ -125,14 +125,32 @@ class TableCell(Record):
     row_span: int = Field(ge=1)
     column_span: int = Field(ge=1)
     text: str
-    is_header: bool
+    is_header: bool | None
+    native_row_header: bool | None = None
+    native_column_header: bool | None = None
+    native_row_section: bool | None = None
+    native_fillable: bool | None = None
     mapping: SourceMapping
+
+    @model_validator(mode="after")
+    def valid_header(self) -> Self:
+        roles = (self.native_row_header, self.native_column_header)
+        if self.mapping.kind == "jats":
+            if type(self.is_header) is not bool or any(
+                value is not None
+                for value in (*roles, self.native_row_section, self.native_fillable)
+            ):
+                raise ValueError("JATS cell cannot claim Docling table fields")
+        elif self.is_header != (any(roles) if all(value is not None for value in roles) else None):
+            raise ValueError("derived header differs from native roles")
+        return self
 
 
 class TableData(Record):
     structure_state: MappingState
     row_count: int = Field(ge=0)
     column_count: int = Field(ge=0)
+    native_orientation: Literal["rot_0", "rot_90", "rot_180", "rot_270"] | None = None
     cells: list[TableCell]
     grid_cell_node_ids: list[list[str | None]] = Field(default_factory=list)
     caption_node_ids: list[str] = Field(default_factory=list)
@@ -222,7 +240,7 @@ class CanonicalNode(Record):
 
 
 class CanonicalDocument(Record):
-    schema_version: Literal["3"] = "3"
+    schema_version: Literal["4"] = "4"
     paper_id: str
     representation: Literal["JATS", "PDF_DOCLING"]
     source: ArtifactRef

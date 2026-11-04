@@ -725,6 +725,12 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                 raise ValueError("native table dimensions differ")
             if node.table.caption_node_ids != [by_ref[target].node_id for target in captions]:
                 raise ValueError("native table captions differ")
+            if node.table.caption_relation_state != ("present" if captions else "unavailable"):
+                raise ValueError("native table caption state differs")
+            if node.table.footnote_node_ids or node.table.footnote_relation_state != "unavailable":
+                raise ValueError("native table footnote relation was inferred")
+            if node.table.native_orientation != table.get("orientation"):
+                raise ValueError("native table orientation differs")
             expected_cells = {
                 f"{ref}/data/table_cells/{i}": cell
                 for i, cell in enumerate(table.get("table_cells", []))
@@ -739,14 +745,45 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                 raise ValueError("native table cell coverage differs")
             for cell_ref, native_cell in expected_cells.items():
                 cell = actual_cells[cell_ref]
+                row_header = native_cell.get("row_header")
+                column_header = native_cell.get("column_header")
+                expected_header = (
+                    bool(row_header or column_header)
+                    if row_header is not None and column_header is not None
+                    else None
+                )
                 if (
                     cell.text != native_cell.get("text")
                     or cell.row != native_cell.get("start_row_offset_idx")
                     or cell.column != native_cell.get("start_col_offset_idx")
                     or cell.row_span != native_cell.get("row_span")
                     or cell.column_span != native_cell.get("col_span")
+                    or cell.native_row_header != row_header
+                    or cell.native_column_header != column_header
+                    or cell.native_row_section != native_cell.get("row_section")
+                    or cell.native_fillable != native_cell.get("fillable")
+                    or cell.is_header != expected_header
                 ):
                     raise ValueError("native table cell differs")
+                if (
+                    native_cell.get("end_row_offset_idx") != cell.row + cell.row_span
+                    or native_cell.get("end_col_offset_idx") != cell.column + cell.column_span
+                ):
+                    raise ValueError("native table end offsets differ")
+                expected_bbox = native_cell.get("bbox")
+                provenance = cell.mapping.provenance
+                if expected_bbox is None:
+                    if provenance:
+                        raise ValueError("invented native table cell provenance")
+                elif (
+                    len(provenance) != 1
+                    or provenance[0].bbox is None
+                    or provenance[0].bbox.model_dump() != expected_bbox
+                    or provenance[0].page_no is not None
+                    or provenance[0].charspan is not None
+                    or provenance[0].state != "ambiguous"
+                ):
+                    raise ValueError("native table cell provenance differs")
             grid = table.get("grid", [])
             if len(grid) != len(node.table.grid_cell_node_ids):
                 raise ValueError("native table grid differs")
@@ -754,16 +791,17 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                 if len(row) != len(canonical_row):
                     raise ValueError("native table grid differs")
                 for native_cell, cell_id in zip(row, canonical_row, strict=True):
-                    if native_cell is None and cell_id is not None:
-                        raise ValueError("invented native grid cell")
-                    if native_cell is not None and (
-                        cell_id is None
-                        or actual_cells[
-                            next(k for k, v in actual_cells.items() if v.node_id == cell_id)
-                        ].text
-                        != native_cell.get("text")
-                    ):
-                        raise ValueError("native table grid differs")
+                    if native_cell is None:
+                        if cell_id is not None:
+                            raise ValueError("invented native grid cell")
+                        continue
+                    matches = [
+                        cell_ref
+                        for cell_ref, value in expected_cells.items()
+                        if value == native_cell
+                    ]
+                    if len(matches) != 1 or cell_id != actual_cells[matches[0]].node_id:
+                        raise ValueError("native table grid differs or is ambiguous")
     for node in doc.nodes:
         ref = node.mapping.native_ref
         if ref is None or _native_ref(data, ref) is None:

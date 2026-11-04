@@ -566,11 +566,66 @@
           "type": "integer"
         },
         "is_header": {
-          "title": "Is Header",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Is Header"
         },
         "mapping": {
           "$ref": "#/$defs/SourceMapping"
+        },
+        "native_column_header": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Column Header"
+        },
+        "native_fillable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Fillable"
+        },
+        "native_row_header": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Row Header"
+        },
+        "native_row_section": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Row Section"
         },
         "node_id": {
           "minLength": 1,
@@ -675,6 +730,24 @@
           "title": "Grid Cell Node Ids",
           "type": "array"
         },
+        "native_orientation": {
+          "anyOf": [
+            {
+              "enum": [
+                "rot_0",
+                "rot_90",
+                "rot_180",
+                "rot_270"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Orientation"
+        },
         "row_count": {
           "minimum": 0,
           "title": "Row Count",
@@ -759,8 +832,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "3",
-      "default": "3",
+      "const": "4",
+      "default": "4",
       "title": "Schema Version",
       "type": "string"
     },

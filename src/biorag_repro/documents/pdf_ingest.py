@@ -305,7 +305,7 @@ def publish_pdf_result(
             )
             if status == "success":
                 document = canonicalize_native(
-                    reloaded, paper_id, source, native_ref, configuration_sha256
+                    reloaded, paper_id, source, native_ref, configuration_sha256, header
                 )
                 from biorag_repro.documents.phase4 import validate_pdf_coverage
 
@@ -321,7 +321,7 @@ def publish_pdf_result(
                     TRANSFORMATION_ID,
                     runtime_settings_sha256,
                     canonical_bytes,
-                    "3",
+                    "4",
                     "canonical/PDF_DOCLING",
                 )
                 canonical_target = data_root / canonical_ref.logical_ref
@@ -344,7 +344,7 @@ def publish_pdf_result(
                     runtime_settings_sha256,
                     canonical_ref,
                     "canonical_pdf_docling",
-                    "3",
+                    "4",
                     data_root,
                 )
     except FileExistsError:
@@ -434,7 +434,9 @@ def canonicalize_saved_native(
 
         load_native = lambda path: DoclingDocument.load_from_json(path, allow_local_images=False)
     reloaded = load_native(native_path)
-    document = canonicalize_native(reloaded, paper_id, source, native, configuration_sha256)
+    document = canonicalize_native(
+        reloaded, paper_id, source, native, configuration_sha256, native_data
+    )
     validate_pdf_coverage(document, native_data)
     runtime_settings_sha256 = sha256_bytes(
         canonical_json_bytes(
@@ -460,7 +462,7 @@ def canonicalize_saved_native(
         TRANSFORMATION_ID,
         runtime_settings_sha256,
         canonical_bytes,
-        "3",
+        "4",
         "canonical/PDF_DOCLING",
     )
     canonical_path = data_root / canonical_ref.logical_ref
@@ -480,7 +482,7 @@ def canonicalize_saved_native(
         runtime_settings_sha256,
         canonical_ref,
         "canonical_pdf_docling",
-        "3",
+        "4",
         data_root,
     )
     build = PdfCanonicalBuild(

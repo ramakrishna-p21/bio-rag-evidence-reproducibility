@@ -34,7 +34,7 @@ def publish_canonical_jats(
         transformation_settings_sha256=doc.configuration_sha256,
         output_sha256=digest,
         output_format="json",
-        serialization_version="3",
+        serialization_version="4",
     )
     logical_ref = f"corpus/derived/canonical/JATS/{artifact_id}.json"
     ref = ArtifactRef(artifact_id=artifact_id, logical_ref=logical_ref, sha256=digest)
@@ -56,7 +56,7 @@ def publish_canonical_jats(
                 artifact=ref,
                 artifact_kind="canonical_jats",
                 output_format="json",
-                serialization_version="3",
+                serialization_version="4",
                 identity_version="1",
             )
         ],

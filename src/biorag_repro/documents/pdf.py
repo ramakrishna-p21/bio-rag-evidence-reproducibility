@@ -24,7 +24,7 @@ from biorag_repro.documents.models import (
     TextSegment,
 )
 
-TRANSFORMATION_ID = "docling_pdf_adapter_v2"
+TRANSFORMATION_ID = "docling_pdf_adapter_v3"
 HERON_REVISION = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
 TABLE_REVISION = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
 ASSETS = (
@@ -221,7 +221,7 @@ def _node_id(source: ArtifactRef, ref: str) -> str:
         canonical_json_bytes(
             {
                 "source_artifact_id": source.artifact_id,
-                "schema_version": "3",
+                "schema_version": "4",
                 "transformation_id": TRANSFORMATION_ID,
                 "native_ref": ref,
             }
@@ -235,6 +235,7 @@ def canonicalize_native(
     source: ArtifactRef,
     native_artifact: ArtifactRef,
     configuration_sha256: str,
+    saved_native: dict[str, Any] | None = None,
 ) -> CanonicalDocument:
     """Reconcile typed order with all saved native objects and child links."""
     walked = [item for item, _ in native_document.iterate_items(with_groups=True)]
@@ -275,6 +276,16 @@ def canonicalize_native(
     if len(refs) != len(items):
         raise ValueError("duplicate native object reference")
     nodes: list[CanonicalNode] = []
+
+    def native_field(item: Any, name: str) -> Any:
+        supplied = getattr(item, "model_fields_set", None)
+        if supplied is not None and name not in supplied:
+            return None
+        if supplied is None and name not in vars(item):
+            return None
+        value = getattr(item, name)
+        return getattr(value, "value", value)
+
     for item in items:
         native_ref = item.self_ref
         label = _label(item)
@@ -338,11 +349,29 @@ def canonicalize_native(
         if kind == "table":
             data = item.data
             native_grid = data.grid
+            raw_table = (
+                next(
+                    table["data"]
+                    for table in saved_native["tables"]
+                    if table["self_ref"] == native_ref
+                )
+                if saved_native is not None
+                else None
+            )
+            orientation = (
+                raw_table.get("orientation")
+                if raw_table is not None
+                else native_field(data, "orientation")
+            )
             cells: list[TableCell] = []
             grid_identity: dict[int, str] = {}
 
             def add_cell(
-                cell: Any, cell_ref: str, cells: list[TableCell], grid_identity: dict[int, str]
+                cell: Any,
+                cell_ref: str,
+                cells: list[TableCell],
+                grid_identity: dict[int, str],
+                raw_cell: dict[str, Any] | None = None,
             ) -> None:
                 cell_mapping = SourceMapping(
                     kind="docling",
@@ -365,6 +394,16 @@ def canonicalize_native(
                 )
                 cell_id = _node_id(source, cell_ref)
                 grid_identity[id(cell)] = cell_id
+                row_header = (
+                    raw_cell.get("row_header")
+                    if raw_cell is not None
+                    else native_field(cell, "row_header")
+                )
+                column_header = (
+                    raw_cell.get("column_header")
+                    if raw_cell is not None
+                    else native_field(cell, "column_header")
+                )
                 cells.append(
                     TableCell(
                         node_id=cell_id,
@@ -373,13 +412,35 @@ def canonicalize_native(
                         row_span=cell.row_span,
                         column_span=cell.col_span,
                         text=cell.text,
-                        is_header=bool(cell.column_header or cell.row_header),
+                        is_header=(
+                            bool(row_header or column_header)
+                            if row_header is not None and column_header is not None
+                            else None
+                        ),
+                        native_row_header=row_header,
+                        native_column_header=column_header,
+                        native_row_section=(
+                            raw_cell.get("row_section")
+                            if raw_cell is not None
+                            else native_field(cell, "row_section")
+                        ),
+                        native_fillable=(
+                            raw_cell.get("fillable")
+                            if raw_cell is not None
+                            else native_field(cell, "fillable")
+                        ),
                         mapping=cell_mapping,
                     )
                 )
 
             for index, cell in enumerate(data.table_cells):
-                add_cell(cell, f"{native_ref}/data/table_cells/{index}", cells, grid_identity)
+                add_cell(
+                    cell,
+                    f"{native_ref}/data/table_cells/{index}",
+                    cells,
+                    grid_identity,
+                    raw_table["table_cells"][index] if raw_table is not None else None,
+                )
             for row_index, row in enumerate(native_grid):
                 for column_index, cell in enumerate(row):
                     if cell is not None and id(cell) not in grid_identity:
@@ -388,6 +449,9 @@ def canonicalize_native(
                             f"{native_ref}/data/grid/{row_index}/{column_index}",
                             cells,
                             grid_identity,
+                            raw_table["grid"][row_index][column_index]
+                            if raw_table is not None
+                            else None,
                         )
             grid = [
                 [grid_identity.get(id(cell)) if cell is not None else None for cell in row]
@@ -401,6 +465,7 @@ def canonicalize_native(
                 structure_state="exact_native" if grid_complete else "parser_damaged",
                 row_count=data.num_rows,
                 column_count=data.num_cols,
+                native_orientation=orientation,
                 cells=cells,
                 grid_cell_node_ids=grid,
                 caption_node_ids=caption_ids,
