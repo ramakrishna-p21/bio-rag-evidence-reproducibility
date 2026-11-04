@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "claim": {
+      "const": "deterministic_reproduction_not_historical_execution",
+      "default": "deterministic_reproduction_not_historical_execution",
+      "title": "Claim",
+      "type": "string"
+    },
+    "corpus_release_sha256": {
+      "title": "Corpus Release Sha256",
+      "type": "string"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "ended_utc": {
+      "title": "Ended Utc",
+      "type": "string"
+    },
+    "historical_producer_authenticated": {
+      "const": false,
+      "default": false,
+      "title": "Historical Producer Authenticated",
+      "type": "boolean"
+    },
+    "human_authorized": {
+      "const": false,
+      "default": false,
+      "title": "Human Authorized",
+      "type": "boolean"
+    },
+    "jats_validation": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "pdf_validation": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "repository_state": {
+      "const": "clean",
+      "default": "clean",
+      "title": "Repository State",
+      "type": "string"
+    },
+    "reproduction_git_sha": {
+      "title": "Reproduction Git Sha",
+      "type": "string"
+    },
+    "runtime_inventory": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "started_utc": {
+      "title": "Started Utc",
+      "type": "string"
+    },
+    "status": {
+      "const": "validated_candidate_pending_human_review",
+      "default": "validated_candidate_pending_human_review",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reproduction_git_sha",
+    "started_utc",
+    "ended_utc",
+    "runtime_inventory",
+    "corpus_version",
+    "paper_id",
+    "corpus_release_sha256",
+    "jats_validation",
+    "pdf_validation"
+  ],
+  "title": "ReproductionCandidate",
+  "type": "object"
+}

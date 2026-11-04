@@ -244,7 +244,7 @@ def test_validation_and_gate_index_are_immutable_and_pair_bound(tmp_path):
         jats_validation=report_ref,
         pdf_validation=report_ref,
     )
-    with pytest.raises(ValueError, match="both Phase 4 arms"):
+    with pytest.raises(ValueError, match="independent human authorization"):
         publish_gate_index(index, output, corpus)
 
 
@@ -341,7 +341,5 @@ def test_original_synthetic_pdf_pair_has_saved_native_lineage(tmp_path, monkeypa
         jats_validation=jats_ref,
         pdf_validation=pdf_ref,
     )
-    index_ref = publish_gate_index(index, output, corpus)
-    assert (output / index_ref.logical_ref).is_file()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(ValueError, match="independent human authorization"):
         publish_gate_index(index, output, corpus)

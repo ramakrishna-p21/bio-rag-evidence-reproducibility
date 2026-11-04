@@ -151,8 +151,32 @@ def _publish_evidence(
     kind: str,
     inputs: list[ArtifactInput],
 ) -> ArtifactRef:
+    if (
+        not isinstance(value, Phase4Validation)
+        or model is not Phase4Validation
+        or kind != "phase4_validation"
+    ):
+        raise ValueError("independent human authorization is unavailable for gate publication")
     content = serialize_project_json(value, model)
-    digest = sha256_bytes(content)
+    ref = evidence_ref(value, model, kind, inputs)
+    target = data_root / ref.logical_ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(
+        target,
+        content,
+        ref.sha256,
+        validate_temp=lambda path: read_project_json(path, ref.sha256, model),
+    )
+    return ref
+
+
+def evidence_ref(
+    value: Phase4Validation | Phase4GateIndex,
+    model: type[Phase4Validation] | type[Phase4GateIndex],
+    kind: str,
+    inputs: list[ArtifactInput],
+) -> ArtifactRef:
+    digest = sha256_bytes(serialize_project_json(value, model))
     artifact_id = derived_artifact_id(
         artifact_kind=kind,
         inputs=inputs,
@@ -166,14 +190,6 @@ def _publish_evidence(
         artifact_id=artifact_id,
         logical_ref=f"corpus/derived/phase4_evidence/{artifact_id}.json",
         sha256=digest,
-    )
-    target = data_root / ref.logical_ref
-    target.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(
-        target,
-        content,
-        digest,
-        validate_temp=lambda path: read_project_json(path, digest, model),
     )
     return ref
 
@@ -193,117 +209,8 @@ def publish_validation(value: Phase4Validation, data_root: Path) -> ArtifactRef:
 
 
 def publish_gate_index(value: Phase4GateIndex, data_root: Path, corpus_root: Path) -> ArtifactRef:
-    for ref in (value.jats_validation, value.pdf_validation):
-        checked = read_project_json(data_root / ref.logical_ref, ref.sha256, Phase4Validation)
-        if checked.paper_id != value.paper_id or checked.corpus_version != value.corpus_version:
-            raise ValueError("gate validation paper or corpus mismatch")
-    jats = read_project_json(
-        data_root / value.jats_validation.logical_ref,
-        value.jats_validation.sha256,
-        Phase4Validation,
-    )
-    pdf = read_project_json(
-        data_root / value.pdf_validation.logical_ref, value.pdf_validation.sha256, Phase4Validation
-    )
-    if jats.representation != "JATS" or pdf.representation != "PDF_DOCLING":
-        raise ValueError("gate index requires both Phase 4 arms")
-    for report in (jats, pdf):
-        raw_kind = "JATS" if report.representation == "JATS" else "PDF"
-        if report.source.artifact_id != raw_source_artifact_id(
-            paper_id=report.paper_id, representation=raw_kind, sha256=report.source.sha256
-        ):
-            raise ValueError("gate source artifact ID mismatch")
-        source_path = corpus_root / "corpus/raw" / report.source.logical_ref
-        verify_file_sha256(source_path, report.source.sha256)
-        inputs = [report.source]
-        if report.native_artifact is not None:
-            inputs.append(report.native_artifact)
-            assert report.native_build_manifest is not None
-            _check_manifest(
-                report.native_build_manifest, data_root, report.native_artifact, [report.source]
-            )
-            assert report.attempt_artifact is not None
-            attempt = read_project_json(
-                data_root / report.attempt_artifact.logical_ref,
-                report.attempt_artifact.sha256,
-                ConversionAttempt,
-            )
-            if (
-                attempt.status != "success"
-                or attempt.build_status != "complete"
-                or attempt.source != report.source
-                or attempt.native_artifact != report.native_artifact
-                or attempt.environment_sha256 != report.environment_sha256
-                or attempt.asset_inventory_sha256 != report.asset_inventory_sha256
-            ):
-                raise ValueError("gate PDF attempt lineage mismatch")
-            if report.canonical_build_artifact is not None:
-                canonical_build = read_project_json(
-                    data_root / report.canonical_build_artifact.logical_ref,
-                    report.canonical_build_artifact.sha256,
-                    PdfCanonicalBuild,
-                )
-                if (
-                    canonical_build_ref(canonical_build) != report.canonical_build_artifact
-                    or canonical_build.original_attempt_artifact != report.attempt_artifact
-                    or canonical_build.native_artifact != report.native_artifact
-                    or canonical_build.canonical_artifact != report.canonical_artifact
-                    or canonical_build.build_manifest != report.build_manifest
-                ):
-                    raise ValueError("gate saved-native canonicalization lineage mismatch")
-            elif (
-                attempt.canonical_artifact != report.canonical_artifact
-                or attempt.build_manifest != report.build_manifest
-            ):
-                raise ValueError("gate PDF attempt canonical lineage mismatch")
-        manifest = _check_manifest(
-            report.build_manifest, data_root, report.canonical_artifact, inputs
-        )
-        doc = read_project_json(
-            data_root / report.canonical_artifact.logical_ref,
-            report.canonical_artifact.sha256,
-            CanonicalDocument,
-        )
-        if (
-            doc.paper_id != report.paper_id
-            or doc.representation != report.representation
-            or doc.source != report.source
-            or doc.native_artifact != report.native_artifact
-            or doc.configuration_sha256 != report.configuration_sha256
-            or doc.status != "complete"
-        ):
-            raise ValueError("gate canonical lineage mismatch")
-        if manifest.transformation_id != doc.transformation_id:
-            raise ValueError("gate canonical transformation differs")
-        if report.native_artifact is not None:
-            native_data = json.loads((data_root / report.native_artifact.logical_ref).read_bytes())
-            if validate_pdf_coverage(doc, native_data) != (
-                report.native_objects,
-                report.native_text_objects,
-                report.native_table_cells,
-            ):
-                raise ValueError("gate PDF coverage summary differs")
-        else:
-            if validate_jats_coverage(doc, source_path.read_bytes()) != (
-                report.jats_source_elements,
-                report.jats_source_slots,
-                report.jats_overlapping_slots,
-            ):
-                raise ValueError("gate JATS coverage summary differs")
-    return _publish_evidence(
-        value,
-        Phase4GateIndex,
-        data_root,
-        "phase4_gate_index",
-        [
-            ArtifactInput(
-                "jats_validation", value.jats_validation.artifact_id, value.jats_validation.sha256
-            ),
-            ArtifactInput(
-                "pdf_validation", value.pdf_validation.artifact_id, value.pdf_validation.sha256
-            ),
-        ],
-    )
+    """Historical gate publication is disabled until independent approval exists."""
+    raise ValueError("independent human authorization is unavailable; publish a candidate only")
 
 
 def load_frozen_paper(
@@ -847,6 +754,44 @@ def validate_build(
         or doc.status != "complete"
     ):
         raise ValueError("canonical identity or completion mismatch")
+    from biorag_repro.documents.authorization import check_manifest_contract, runtime_settings
+    from biorag_repro.documents.jats import TRANSFORMATION_ID as jats_transform
+    from biorag_repro.documents.pdf import TRANSFORMATION_ID as pdf_transform
+    from biorag_repro.documents.pdf_ingest import NATIVE_TRANSFORMATION
+
+    settings = build.configuration_sha256
+    if isinstance(build, (ConversionAttempt, PdfCanonicalBuild)):
+        settings = runtime_settings(
+            settings, build.environment_sha256, build.asset_inventory_sha256
+        )
+    check_manifest_contract(
+        build.build_manifest,
+        data_root,
+        build.canonical_artifact,
+        [build.source, native] if native else [build.source],
+        ["raw_pdf", "docling_native"] if native else ["raw_jats"],
+        "canonical_pdf_docling" if native else "canonical_jats",
+        pdf_transform if native else jats_transform,
+        settings,
+        "4",
+    )
+    if doc.transformation_id != (pdf_transform if native else jats_transform):
+        raise ValueError("canonical adapter identity mismatch")
+    if native is not None:
+        assert isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
+        assert build.native_build_manifest is not None
+        native_data = json.loads((data_root / native.logical_ref).read_bytes())
+        check_manifest_contract(
+            build.native_build_manifest,
+            data_root,
+            native,
+            [build.source],
+            ["raw_pdf"],
+            "docling_native",
+            NATIVE_TRANSFORMATION,
+            settings,
+            native_data["version"],
+        )
     warnings: list[str] = []
     jats_coverage: tuple[int, int, int] | None = None
     pdf_coverage: tuple[int, int, int] | None = None

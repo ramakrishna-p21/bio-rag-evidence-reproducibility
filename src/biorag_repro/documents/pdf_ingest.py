@@ -384,6 +384,7 @@ def canonicalize_saved_native(
     data_root: Path,
     *,
     load_native: Any = None,
+    original_data_root: Path | None = None,
 ) -> PdfCanonicalBuild:
     """Build a new canonical artifact from a verified, previously saved native document."""
     from biorag_repro.documents.phase4 import _check_manifest, validate_pdf_coverage
@@ -405,7 +406,8 @@ def canonicalize_saved_native(
         or original_attempt.build_manifest is None
     ):
         raise ValueError("original complete conversion attempt mismatch")
-    attempt_path = data_root / original_attempt.attempt_logical_ref
+    retained_root = original_data_root if original_data_root is not None else data_root
+    attempt_path = retained_root / original_attempt.attempt_logical_ref
     attempt_bytes = attempt_path.read_bytes()
     if ConversionAttempt.model_validate_json(attempt_bytes) != original_attempt:
         raise ValueError("original conversion attempt read-back mismatch")
@@ -416,11 +418,11 @@ def canonicalize_saved_native(
     )
     native = original_attempt.native_artifact
     native_manifest = _check_manifest(
-        original_attempt.native_build_manifest, data_root, native, [source]
+        original_attempt.native_build_manifest, retained_root, native, [source]
     )
     _check_manifest(
         original_attempt.build_manifest,
-        data_root,
+        retained_root,
         original_attempt.canonical_artifact,
         [source, native],
     )

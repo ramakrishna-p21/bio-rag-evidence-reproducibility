@@ -87,7 +87,7 @@ def test_saved_native_reuse_records_original_attempt_without_new_conversion(tmp_
     original = publish_pdf_result(
         result, path, ref, "P001", "c" * 64, "e" * 64, "f" * 64, tmp_path, load_native=load_fake
     )
-    monkeypatch.setattr(pdf_ingest, "TRANSFORMATION_ID", "docling_pdf_adapter_v2")
+    monkeypatch.setattr(pdf_ingest, "TRANSFORMATION_ID", "docling_pdf_adapter_v3")
     renewed = canonicalize_saved_native(
         path, ref, "P001", original, "c" * 64, tmp_path, load_native=load_fake
     )

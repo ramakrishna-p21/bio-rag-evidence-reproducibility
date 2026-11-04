@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 from biorag_repro.core.config import resolve_config
@@ -11,25 +10,19 @@ from biorag_repro.documents.models import JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.phase4 import (
     Arm,
-    Phase4GateIndex,
     build_arm,
     load_frozen_paper,
-    publish_gate_index,
     publish_validation,
     validate_build,
 )
 
 
-def _committed_head() -> str:
-    head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    for command in (["git", "diff", "--quiet"], ["git", "diff", "--cached", "--quiet"]):
-        if subprocess.run(command, check=False).returncode:
-            raise ValueError("gate evidence requires a clean tracked implementation")
-    return head
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Build one verified frozen Phase 4 source pair")
+    parser.add_argument("--publication", choices=["candidate", "complete"], default="candidate")
+    preliminary, _ = parser.parse_known_args()
+    if preliminary.publication == "complete":
+        parser.error("independent human authorization is unavailable in production")
     parser.add_argument("--corpus-root", type=Path, required=True)
     parser.add_argument("--release-record", type=Path, required=True)
     parser.add_argument("--release-sha256", required=True)
@@ -43,6 +36,14 @@ def main() -> int:
     parser.add_argument("--lock-path", type=Path)
     parser.add_argument("--reuse-attempt-id")
     args = parser.parse_args()
+    if args.arm == "pair":
+        parser.error(
+            "paired gate publication is unavailable; use scripts/reproduce_phase4.py for a candidate"
+        )
+    from biorag_repro.documents.authorization import PHASE2H_SHA256
+
+    if args.release_sha256 != PHASE2H_SHA256 or args.corpus_version != "corpus_v1":
+        parser.error("authorized Phase 2H release and corpus_v1 are required")
     release, paper = load_frozen_paper(
         args.corpus_root,
         args.release_record,
@@ -50,11 +51,7 @@ def main() -> int:
         args.corpus_version,
         args.paper_id,
     )
-    if args.arm == "pair":
-        implementation_sha = _committed_head()
-    else:
-        implementation_sha = None
-    arms: list[Arm] = ["JATS", "PDF_DOCLING"] if args.arm == "pair" else [args.arm]
+    arms: list[Arm] = [args.arm]
     evidence: dict[str, ArtifactRef] = {}
     for arm in arms:
         if arm == "JATS":
@@ -85,16 +82,6 @@ def main() -> int:
             corpus_version=release.corpus_version,
         )
         evidence[arm] = publish_validation(report, args.data_root)
-    if implementation_sha is not None:
-        index = Phase4GateIndex(
-            corpus_version=release.corpus_version,
-            paper_id=paper.paper_id,
-            corpus_release_sha256=args.release_sha256,
-            implementation_git_sha=implementation_sha,
-            jats_validation=evidence["JATS"],
-            pdf_validation=evidence["PDF_DOCLING"],
-        )
-        evidence["gate_index"] = publish_gate_index(index, args.data_root, args.corpus_root)
     print(
         json.dumps(
             {key: value.model_dump(mode="json") for key, value in evidence.items()}, sort_keys=True

@@ -361,7 +361,8 @@ def test_false_header_cannot_pass_complete_build_or_paired_gate(tmp_path):
         jats_validation=jvalidation,
         pdf_validation=pvalidation,
     )
-    assert publish_gate_index(index, output, corpus)
+    with pytest.raises(ValueError, match="independent human authorization"):
+        publish_gate_index(index, output, corpus)
 
     doc = CanonicalDocument.model_validate_json(
         (output / attempt.canonical_artifact.logical_ref).read_bytes()

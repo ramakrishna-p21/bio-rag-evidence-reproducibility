@@ -18,6 +18,7 @@ from biorag_repro.benchmark.split import PaperSplit, RelatednessRecord
 from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValidationReport
 from biorag_repro.core.manifest import BuildManifest
 from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
+from biorag_repro.documents.authorization import ReproductionCandidate
 from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
@@ -25,6 +26,7 @@ from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Vali
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "phase4_reproduction_candidate.schema.json": ReproductionCandidate,
     "benchmark_item.schema.json": BenchmarkItem,
     "benchmark_split.schema.json": PaperSplit,
     "benchmark_decision.schema.json": DecisionEvent,
