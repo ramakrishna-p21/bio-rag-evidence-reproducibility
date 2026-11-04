@@ -31,6 +31,7 @@ from biorag_repro.corpus.manifest import (
 )
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.models import CanonicalDocument, Record
+from biorag_repro.documents.pdf import native_classification
 from biorag_repro.documents.pdf_ingest import (
     ConversionAttempt,
     PdfCanonicalBuild,
@@ -500,11 +501,9 @@ def validate_jats_coverage(doc: CanonicalDocument, content: bytes) -> tuple[int,
     return len(paths), len(source_slots), sum(len(refs) > 1 for refs in represented.values())
 
 
-def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple[int, int, int]:
-    """Compare saved native objects and required fields against canonical nodes."""
-    if data.get("form_items") or data.get("key_value_items"):
-        raise ValueError("unsupported populated native structured item")
-    source = {}
+def _pdf_objects(data: dict[str, Any]) -> dict[str, Any]:
+    """Enumerate objects from saved native roots and arrays, not canonical kinds."""
+    source: dict[str, Any] = {}
     for root in ("body", "furniture"):
         if isinstance(data.get(root), dict):
             source[data[root]["self_ref"]] = data[root]
@@ -514,11 +513,41 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
             if ref in source:
                 raise ValueError("duplicate native object")
             source[ref] = item
-    by_ref = {node.mapping.native_ref: node for node in doc.nodes if node.kind != "table_cell"}
-    if len(by_ref) != sum(node.kind != "table_cell" for node in doc.nodes) or set(by_ref) != set(
-        source
-    ):
+    return source
+
+
+def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple[int, int, int]:
+    """Compare saved native objects and required fields against canonical nodes."""
+    if data.get("form_items") or data.get("key_value_items"):
+        raise ValueError("unsupported populated native structured item")
+    source = _pdf_objects(data)
+    all_by_ref = {node.mapping.native_ref: node for node in doc.nodes}
+    if len(all_by_ref) != len(doc.nodes) or not set(source) <= set(all_by_ref):
         raise ValueError("native object coverage differs")
+
+    def check_classification(ref: str, item: dict[str, Any], *, table_cell: bool = False) -> None:
+        node = all_by_ref.get(ref)
+        expected = native_classification(
+            ref,
+            "table_cell" if table_cell else item["label"],
+            item.get("content_layer"),
+            table_cell=table_cell,
+        )
+        actual = (node.kind, node.interpretation_state) if node else None
+        if actual != expected:
+            raise ValueError(
+                f"native classification differs at {ref}: expected {expected}, got {actual}"
+            )
+        assert node is not None
+        if (
+            node.mapping.source_artifact_id != doc.source.artifact_id
+            or node.mapping.native_artifact != doc.native_artifact
+        ):
+            raise ValueError(f"native classification source identity differs at {ref}")
+
+    for ref, item in source.items():
+        check_classification(ref, item)
+    by_ref = {ref: all_by_ref[ref] for ref in source}
     positioned = []
     seen = set()
 
@@ -534,10 +563,13 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
         if root in source:
             visit(root)
     expected_order = positioned + [ref for ref in source if ref not in seen]
-    actual_order = [node.mapping.native_ref for node in doc.nodes if node.kind != "table_cell"]
+    actual_order = [
+        node.mapping.native_ref for node in doc.nodes if node.mapping.native_ref in source
+    ]
     if actual_order != expected_order:
         raise ValueError("native reading order differs")
     table_cell_count = 0
+    expected_refs = set(source)
     for ref, item in source.items():
         node = by_ref[ref]
         parent_ref = (item.get("parent") or {}).get("$ref")
@@ -554,14 +586,6 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
             "content_layer"
         ):
             raise ValueError("native label or layer differs")
-        if node.kind == "page_furniture" and item.get("content_layer") != "furniture":
-            raise ValueError("invented page furniture")
-        if (
-            item.get("content_layer") == "furniture"
-            and ref != "#/furniture"
-            and node.kind != "page_furniture"
-        ):
-            raise ValueError("native page furniture type differs")
         if node.native_orig != item.get("orig"):
             raise ValueError("native orig differs")
         original = item.get("orig")
@@ -648,9 +672,11 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                         expected_cells[f"{ref}/data/grid/{row_index}/{column_index}"] = cell
             actual_cells = {cell.mapping.native_ref: cell for cell in node.table.cells}
             table_cell_count += len(expected_cells)
+            expected_refs.update(expected_cells)
             if set(actual_cells) != set(expected_cells):
                 raise ValueError("native table cell coverage differs")
             for cell_ref, native_cell in expected_cells.items():
+                check_classification(cell_ref, native_cell, table_cell=True)
                 cell = actual_cells[cell_ref]
                 row_header = native_cell.get("row_header")
                 column_header = native_cell.get("column_header")
@@ -709,9 +735,11 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                     ]
                     if len(matches) != 1 or cell_id != actual_cells[matches[0]].node_id:
                         raise ValueError("native table grid differs or is ambiguous")
+    if set(all_by_ref) != expected_refs:
+        raise ValueError("native object or cell coverage differs")
     for node in doc.nodes:
-        ref = node.mapping.native_ref
-        if ref is None or _native_ref(data, ref) is None:
+        native_ref = node.mapping.native_ref
+        if native_ref is None or _native_ref(data, native_ref) is None:
             raise ValueError("invented native reference")
     return len(source), len(data.get("texts", [])), table_cell_count
 
@@ -824,6 +852,12 @@ def validate_build(
         _check_manifest(build.native_build_manifest, data_root, native, [build.source])
         native_data = json.loads((data_root / native.logical_ref).read_bytes())
         pdf_coverage = validate_pdf_coverage(doc, native_data)
+        if any(
+            native_classification(ref, item["label"], item.get("content_layer"))[1]
+            in {"ambiguous", "parser_damaged"}
+            for ref, item in _pdf_objects(native_data).items()
+        ):
+            warnings.append("native_classification_uncertain")
         id_by_ref = {node.mapping.native_ref: node.node_id for node in doc.nodes}
         for node in doc.nodes:
             source_item = _native_ref(native_data, node.mapping.native_ref or "")
@@ -933,7 +967,7 @@ def validate_build(
             warnings.append("unresolved_relation")
         if any(p.charspan_state == "placeholder" for p in node.mapping.provenance):
             warnings.append("native_charspan_placeholder")
-        if node.interpretation_state in {"ambiguous", "parser_damaged"}:
+        if native is None and node.interpretation_state in {"ambiguous", "parser_damaged"}:
             warnings.append("native_classification_uncertain")
         if node.table and node.table.structure_state == "parser_damaged":
             warnings.append("table_structure_damaged")

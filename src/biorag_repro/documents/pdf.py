@@ -14,6 +14,7 @@ from biorag_repro.documents.models import (
     CanonicalDocument,
     CanonicalNode,
     CharspanState,
+    MappingState,
     NativeBBox,
     NativeProvenance,
     NodeKind,
@@ -229,6 +230,28 @@ def _node_id(source: ArtifactRef, ref: str) -> str:
     )
 
 
+def native_classification(
+    native_ref: str, label: str, content_layer: str | None, *, table_cell: bool = False
+) -> tuple[NodeKind, MappingState]:
+    """Map native structure without claiming independent PDF interpretation accuracy."""
+    if table_cell:
+        return "table_cell", "exact_native"
+    if content_layer == "furniture" and native_ref != "#/furniture":
+        return "page_furniture", "exact_native"
+    kinds: dict[str, NodeKind] = {
+        "section_header": "title",
+        "text": "paragraph",
+        "list_item": "list_item",
+        "table": "table",
+        "picture": "figure",
+        "formula": "formula",
+        "caption": "caption",
+        "list": "list",
+    }
+    kind = kinds.get(label, "source_construct")
+    return kind, "ambiguous" if kind == "source_construct" else "exact_native"
+
+
 def canonicalize_native(
     native_document: Any,
     paper_id: str,
@@ -289,24 +312,9 @@ def canonicalize_native(
     for item in items:
         native_ref = item.self_ref
         label = _label(item)
-        kinds: dict[str, NodeKind] = {
-            "section_header": "title",
-            "text": "paragraph",
-            "list_item": "list_item",
-            "table": "table",
-            "picture": "figure",
-            "formula": "formula",
-            "caption": "caption",
-            "code": "source_construct",
-            "list": "list",
-        }
         layer = getattr(item, "content_layer", None)
         layer = str(getattr(layer, "value", layer)) if layer is not None else None
-        kind = (
-            "page_furniture"
-            if layer == "furniture" and native_ref != "#/furniture"
-            else kinds.get(label, "source_construct")
-        )
+        kind, interpretation = native_classification(native_ref, label, layer)
         parent_ref = getattr(getattr(item, "parent", None), "cref", None)
         if parent_ref is not None and parent_ref not in refs:
             raise ValueError("unresolved native parent link")
@@ -488,7 +496,7 @@ def canonicalize_native(
             native_enumerated=getattr(item, "enumerated", None),
             native_heading_level=getattr(item, "level", None),
             native_group_name=getattr(item, "name", None),
-            interpretation_state="exact_native" if kind != "source_construct" else "ambiguous",
+            interpretation_state=interpretation,
             mapping=mapping,
             segments=segments,
             target_node_ids=caption_ids if kind == "figure" else [],
@@ -503,15 +511,18 @@ def canonicalize_native(
         nodes.append(node)
         if table_data:
             for cell in table_data.cells:
+                cell_kind, cell_interpretation = native_classification(
+                    cell.mapping.native_ref or "", "table_cell", None, table_cell=True
+                )
                 nodes.append(
                     CanonicalNode(
                         node_id=cell.node_id,
                         parent_node_id=node.node_id,
                         order=len(nodes),
-                        kind="table_cell",
+                        kind=cell_kind,
                         source_tag="TableCell",
                         native_label="table_cell",
-                        interpretation_state="exact_native",
+                        interpretation_state=cell_interpretation,
                         mapping=cell.mapping,
                         segments=[TextSegment(text=cell.text, mapping=cell.mapping)],
                     )
