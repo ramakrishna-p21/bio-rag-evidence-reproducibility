@@ -350,7 +350,9 @@ def test_effective_option_drift_is_rejected():
         verify_effective_options({"artifacts_path": "/cache"}, {}, PdfConfiguration())
 
 
-def test_verified_runtime_inventory_retains_installed_project(monkeypatch):
+@pytest.fixture
+def qualified_runtime(monkeypatch, tmp_path):
+    monkeypatch.setattr(pdf_module, "sys", Item(version_info=(3, 11, 15), prefix=str(tmp_path)))
     packages = dict(pdf_module.VERSIONS)
     rows = sorted(f"{name}=={version}" for name, version in packages.items())
     monkeypatch.setattr(
@@ -367,4 +369,42 @@ def test_verified_runtime_inventory_retains_installed_project(monkeypatch):
             Item(metadata={"Name": name}, version=version) for name, version in installed.items()
         ],
     )
-    assert pdf_module.verify_environment()["biorag-repro"] == "0.1.0"
+    return installed
+
+
+def test_verified_runtime_inventory_retains_installed_project(qualified_runtime):
+    assert pdf_module.verify_environment() == qualified_runtime
+
+
+def test_qualified_runtime_rejects_python_patch_drift(qualified_runtime, monkeypatch):
+    monkeypatch.setattr(pdf_module.sys, "version_info", (3, 11, 18))
+    with pytest.raises(ValueError, match=r"Python drift: 3\.11\.18"):
+        pdf_module.verify_environment()
+
+
+@pytest.mark.parametrize("version", [None, "0.0.0"])
+def test_qualified_runtime_requires_installed_project(qualified_runtime, version):
+    if version is None:
+        qualified_runtime.pop("biorag-repro")
+    else:
+        qualified_runtime["biorag-repro"] = version
+    with pytest.raises(ValueError, match="self-contained project runtime is required"):
+        pdf_module.verify_environment()
+
+
+def test_qualified_runtime_rejects_package_version_drift(qualified_runtime):
+    qualified_runtime["docling-slim"] = "0.0.0"
+    with pytest.raises(ValueError, match="qualified package drift"):
+        pdf_module.verify_environment()
+
+
+def test_qualified_runtime_rejects_unqualified_inventory(qualified_runtime):
+    qualified_runtime["unqualified-package"] = "1.0"
+    with pytest.raises(ValueError, match="qualified installed package inventory drift"):
+        pdf_module.verify_environment()
+
+
+def test_qualified_runtime_rejects_canonicalizer_drift(qualified_runtime):
+    qualified_runtime["rfc8785"] = "0.0.0"
+    with pytest.raises(ValueError, match="self-contained JSON canonicalizer version drift"):
+        pdf_module.verify_environment()
