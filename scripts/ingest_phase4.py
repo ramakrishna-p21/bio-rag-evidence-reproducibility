@@ -41,6 +41,7 @@ def main() -> int:
     parser.add_argument("--pdf-config", type=Path, default=Path("configs/pdf_docling.toml"))
     parser.add_argument("--assets-root", type=Path)
     parser.add_argument("--lock-path", type=Path)
+    parser.add_argument("--reuse-attempt-id")
     args = parser.parse_args()
     release, paper = load_frozen_paper(
         args.corpus_root,
@@ -73,6 +74,7 @@ def main() -> int:
             config_hash,
             assets_root=args.assets_root,
             lock_path=args.lock_path,
+            reuse_attempt_id=args.reuse_attempt_id if arm == "PDF_DOCLING" else None,
         )
         if build.build_status != "complete":
             raise ValueError(f"{arm} build did not complete: {build.status}")
@@ -92,7 +94,7 @@ def main() -> int:
             jats_validation=evidence["JATS"],
             pdf_validation=evidence["PDF_DOCLING"],
         )
-        evidence["gate_index"] = publish_gate_index(index, args.data_root)
+        evidence["gate_index"] = publish_gate_index(index, args.data_root, args.corpus_root)
     print(
         json.dumps(
             {key: value.model_dump(mode="json") for key, value in evidence.items()}, sort_keys=True

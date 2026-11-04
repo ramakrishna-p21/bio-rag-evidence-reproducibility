@@ -3,7 +3,7 @@
 import json
 import re
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from xml.etree import ElementTree as ET
 
 from pydantic import Field, field_validator, model_validator
@@ -31,7 +31,13 @@ from biorag_repro.corpus.manifest import (
 )
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.models import CanonicalDocument, Record
-from biorag_repro.documents.pdf_ingest import ConversionAttempt, convert_pdf
+from biorag_repro.documents.pdf_ingest import (
+    ConversionAttempt,
+    PdfCanonicalBuild,
+    canonical_build_ref,
+    canonicalize_saved_native,
+    convert_pdf,
+)
 from biorag_repro.documents.storage import publish_canonical_jats
 
 Arm = Literal["JATS", "PDF_DOCLING"]
@@ -49,7 +55,7 @@ class JatsBuild(Record):
 
 
 class Phase4Validation(Record):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     corpus_version: str
     paper_id: str
     representation: Arm
@@ -58,16 +64,35 @@ class Phase4Validation(Record):
     native_artifact: ArtifactRef | None = None
     native_build_manifest: ArtifactRef | None = None
     attempt_artifact: ArtifactRef | None = None
+    canonical_build_artifact: ArtifactRef | None = None
     canonical_artifact: ArtifactRef
     build_manifest: ArtifactRef
     environment_sha256: str | None = None
     asset_inventory_sha256: str | None = None
     warnings: list[str] = Field(default_factory=list)
+    jats_source_elements: int | None = None
+    jats_source_slots: int | None = None
+    jats_overlapping_slots: int | None = None
+    native_objects: int | None = None
+    native_text_objects: int | None = None
+    native_table_cells: int | None = None
     status: Literal["pass"] = "pass"
 
     @model_validator(mode="after")
     def valid_arm(self) -> Self:
         validate_sha256(self.configuration_sha256)
+        if self.representation == "JATS" and None in (
+            self.jats_source_elements,
+            self.jats_source_slots,
+            self.jats_overlapping_slots,
+        ):
+            raise ValueError("JATS validation requires complete source coverage counts")
+        if self.representation == "PDF_DOCLING" and None in (
+            self.native_objects,
+            self.native_text_objects,
+            self.native_table_cells,
+        ):
+            raise ValueError("PDF validation requires complete native coverage counts")
         if self.representation == "PDF_DOCLING" and not all(
             (
                 self.native_artifact,
@@ -85,6 +110,7 @@ class Phase4Validation(Record):
                 self.native_artifact,
                 self.native_build_manifest,
                 self.attempt_artifact,
+                self.canonical_build_artifact,
                 self.environment_sha256,
                 self.asset_inventory_sha256,
             )
@@ -96,7 +122,7 @@ class Phase4Validation(Record):
 class Phase4GateIndex(Record):
     """Local evidence index tied to one reviewed implementation and frozen pair."""
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     corpus_version: str
     paper_id: str
     corpus_release_sha256: str
@@ -130,7 +156,7 @@ def _publish_evidence(
     artifact_id = derived_artifact_id(
         artifact_kind=kind,
         inputs=inputs,
-        transformation_id="phase4_evidence_v1",
+        transformation_id="phase4_evidence_v2",
         transformation_settings_sha256=None,
         output_sha256=digest,
         output_format="json",
@@ -166,7 +192,7 @@ def publish_validation(value: Phase4Validation, data_root: Path) -> ArtifactRef:
     )
 
 
-def publish_gate_index(value: Phase4GateIndex, data_root: Path) -> ArtifactRef:
+def publish_gate_index(value: Phase4GateIndex, data_root: Path, corpus_root: Path) -> ArtifactRef:
     for ref in (value.jats_validation, value.pdf_validation):
         checked = read_project_json(data_root / ref.logical_ref, ref.sha256, Phase4Validation)
         if checked.paper_id != value.paper_id or checked.corpus_version != value.corpus_version:
@@ -187,6 +213,8 @@ def publish_gate_index(value: Phase4GateIndex, data_root: Path) -> ArtifactRef:
             paper_id=report.paper_id, representation=raw_kind, sha256=report.source.sha256
         ):
             raise ValueError("gate source artifact ID mismatch")
+        source_path = corpus_root / "corpus/raw" / report.source.logical_ref
+        verify_file_sha256(source_path, report.source.sha256)
         inputs = [report.source]
         if report.native_artifact is not None:
             inputs.append(report.native_artifact)
@@ -205,13 +233,32 @@ def publish_gate_index(value: Phase4GateIndex, data_root: Path) -> ArtifactRef:
                 or attempt.build_status != "complete"
                 or attempt.source != report.source
                 or attempt.native_artifact != report.native_artifact
-                or attempt.canonical_artifact != report.canonical_artifact
-                or attempt.build_manifest != report.build_manifest
                 or attempt.environment_sha256 != report.environment_sha256
                 or attempt.asset_inventory_sha256 != report.asset_inventory_sha256
             ):
                 raise ValueError("gate PDF attempt lineage mismatch")
-        _check_manifest(report.build_manifest, data_root, report.canonical_artifact, inputs)
+            if report.canonical_build_artifact is not None:
+                canonical_build = read_project_json(
+                    data_root / report.canonical_build_artifact.logical_ref,
+                    report.canonical_build_artifact.sha256,
+                    PdfCanonicalBuild,
+                )
+                if (
+                    canonical_build_ref(canonical_build) != report.canonical_build_artifact
+                    or canonical_build.original_attempt_artifact != report.attempt_artifact
+                    or canonical_build.native_artifact != report.native_artifact
+                    or canonical_build.canonical_artifact != report.canonical_artifact
+                    or canonical_build.build_manifest != report.build_manifest
+                ):
+                    raise ValueError("gate saved-native canonicalization lineage mismatch")
+            elif (
+                attempt.canonical_artifact != report.canonical_artifact
+                or attempt.build_manifest != report.build_manifest
+            ):
+                raise ValueError("gate PDF attempt canonical lineage mismatch")
+        manifest = _check_manifest(
+            report.build_manifest, data_root, report.canonical_artifact, inputs
+        )
         doc = read_project_json(
             data_root / report.canonical_artifact.logical_ref,
             report.canonical_artifact.sha256,
@@ -226,6 +273,23 @@ def publish_gate_index(value: Phase4GateIndex, data_root: Path) -> ArtifactRef:
             or doc.status != "complete"
         ):
             raise ValueError("gate canonical lineage mismatch")
+        if manifest.transformation_id != doc.transformation_id:
+            raise ValueError("gate canonical transformation differs")
+        if report.native_artifact is not None:
+            native_data = json.loads((data_root / report.native_artifact.logical_ref).read_bytes())
+            if validate_pdf_coverage(doc, native_data) != (
+                report.native_objects,
+                report.native_text_objects,
+                report.native_table_cells,
+            ):
+                raise ValueError("gate PDF coverage summary differs")
+        else:
+            if validate_jats_coverage(doc, source_path.read_bytes()) != (
+                report.jats_source_elements,
+                report.jats_source_slots,
+                report.jats_overlapping_slots,
+            ):
+                raise ValueError("gate JATS coverage summary differs")
     return _publish_evidence(
         value,
         Phase4GateIndex,
@@ -304,7 +368,8 @@ def build_arm(
     *,
     assets_root: Path | None = None,
     lock_path: Path | None = None,
-) -> JatsBuild | ConversionAttempt:
+    reuse_attempt_id: str | None = None,
+) -> JatsBuild | ConversionAttempt | PdfCanonicalBuild:
     """Verify exact frozen bytes before running the selected existing adapter."""
     if paper.paper_id != paper_id:
         raise ValueError("paper ID mismatch")
@@ -313,6 +378,14 @@ def build_arm(
     validate_sha256(configuration_sha256)
     source_path, source = _source(paper, arm, corpus_root)
     if arm == "PDF_DOCLING":
+        if reuse_attempt_id is not None:
+            if re.fullmatch(r"[0-9a-f]{32}", reuse_attempt_id) is None:
+                raise ValueError("invalid reuse attempt ID")
+            attempt_path = data_root / f"corpus/derived/attempts/{reuse_attempt_id}.json"
+            prior = ConversionAttempt.model_validate_json(attempt_path.read_bytes())
+            return canonicalize_saved_native(
+                source_path, source, paper_id, prior, configuration_sha256, data_root
+            )
         if assets_root is None or lock_path is None:
             raise ValueError("qualified PDF assets and lock are required")
         return convert_pdf(
@@ -320,15 +393,16 @@ def build_arm(
         )
     if arm != "JATS":
         raise ValueError("unknown Phase 4 representation")
+    source_content = source_path.read_bytes()
     doc = ingest_jats(
-        source_path.read_bytes(),
+        source_content,
         paper_id=paper_id,
         source_artifact_id=source.artifact_id,
         source_sha256=source.sha256,
         source_logical_ref=source.logical_ref,
         configuration_sha256=configuration_sha256,
     )
-    canonical, manifest = publish_canonical_jats(doc, data_root)
+    canonical, manifest = publish_canonical_jats(doc, data_root, source_content)
     return JatsBuild(
         paper_id=paper_id,
         source=source,
@@ -387,8 +461,318 @@ def _native_ref(data: object, reference: str) -> object:
     return current
 
 
+def validate_jats_coverage(doc: CanonicalDocument, content: bytes) -> tuple[int, int, int]:
+    """Compare canonical XML paths and slots with the original XML inventory."""
+    paths = _jats_paths(content)
+    nodes = {node.mapping.path: node for node in doc.nodes if node.mapping.path is not None}
+    if set(nodes) != set(paths) or len(nodes) != len(doc.nodes):
+        raise ValueError("JATS source element coverage differs")
+    source_slots = {}
+    for path, element in paths.items():
+        for name, value in (("text()", element.text), ("tail()", element.tail)):
+            if value is not None:
+                source_slots[f"{path}/{name}"] = value
+    represented: dict[str, list[str]] = {}
+    for path, node in nodes.items():
+        element = paths[path]
+        if (
+            node.source_tag != element.tag
+            or node.source_id != element.attrib.get("id")
+            or node.attributes != element.attrib
+            or node.mapping.state != "exact_native"
+        ):
+            raise ValueError("JATS source element differs")
+        for ordinal, part in enumerate(node.segments):
+            slot = part.mapping.path
+            if slot is None:
+                raise ValueError("JATS source slot missing path")
+            if (
+                slot not in source_slots
+                or part.text != source_slots[slot]
+                or part.mapping.segment_ordinal != ordinal
+            ):
+                raise ValueError("JATS source slot differs")
+            represented.setdefault(slot, []).append(node.node_id)
+    if set(represented) != set(source_slots):
+        raise ValueError("JATS source slot coverage differs")
+    ordered = list(paths)
+    if [node.mapping.path for node in doc.nodes] != ordered:
+        raise ValueError("JATS source element order differs")
+    path_by_element = {element: path for path, element in paths.items()}
+    parent_by_element = {child: parent for parent in paths.values() for child in parent}
+
+    def subtree_slots(element: ET.Element) -> list[str]:
+        result = []
+        own = f"{path_by_element[element]}/text()"
+        if own in source_slots:
+            result.append(own)
+        for child in element:
+            result.extend(subtree_slots(child))
+            tail = f"{path_by_element[child]}/tail()"
+            if tail in source_slots:
+                result.append(tail)
+        return result
+
+    xml_id_nodes = {
+        element.attrib["id"]: nodes[path].node_id
+        for path, element in paths.items()
+        if "id" in element.attrib
+    }
+    for path, element in paths.items():
+        parent = parent_by_element.get(element)
+        expected_parent = nodes[path_by_element[parent]].node_id if parent is not None else None
+        if nodes[path].parent_node_id != expected_parent:
+            raise ValueError("JATS source parent differs")
+        direct = [f"{path}/text()"] + [f"{path_by_element[child]}/tail()" for child in element]
+        direct = [slot for slot in direct if slot in source_slots]
+        actual = [part.mapping.path for part in nodes[path].segments if part.mapping.path in direct]
+        if actual != direct:
+            # Semantic nodes may also contain descendant slots, but their direct
+            # slots still appear in their original mixed-content order.
+            raise ValueError("JATS mixed content source order differs")
+        if nodes[path].kind in {
+            "title",
+            "paragraph",
+            "table_cell",
+            "caption",
+            "formula",
+            "xref",
+            "reference",
+        } and [part.mapping.path for part in nodes[path].segments] != subtree_slots(element):
+            raise ValueError("JATS subtree mixed content order differs")
+        tag = element.tag.rsplit("}", 1)[-1]
+        if tag in {"disp-formula", "inline-formula"} and nodes[path].kind != "formula":
+            raise ValueError("JATS formula structure differs")
+        if tag == "xref" and (
+            nodes[path].rid != element.attrib.get("rid")
+            or nodes[path].ref_type != element.attrib.get("ref-type")
+        ):
+            raise ValueError("JATS xref fields differ")
+        if tag == "xref":
+            rid = element.attrib.get("rid", "")
+            targets = [xml_id_nodes[target] for target in rid.split() if target in xml_id_nodes]
+            if nodes[path].target_node_ids != targets:
+                raise ValueError("JATS xref targets differ")
+        if tag == "table":
+            table = nodes[path].table
+            if table is None:
+                raise ValueError("JATS table omitted")
+            rows = [child for child in element.iter() if child.tag.rsplit("}", 1)[-1] == "tr"]
+            source_cells = [
+                cell for row in rows for cell in row if cell.tag.rsplit("}", 1)[-1] in {"td", "th"}
+            ]
+            by_id = {node.node_id: node for node in doc.nodes}
+            if table.row_count != len(rows) or len(table.cells) != len(source_cells):
+                raise ValueError("JATS table cell coverage differs")
+            wrapper = parent_by_element.get(element)
+            wrapper = (
+                wrapper
+                if wrapper is not None and wrapper.tag.rsplit("}", 1)[-1] == "table-wrap"
+                else element
+            )
+            captions = [
+                nodes[path_by_element[child]].node_id
+                for child in wrapper
+                if child.tag.rsplit("}", 1)[-1] == "caption"
+            ]
+            footnotes = [
+                nodes[path_by_element[child]].node_id
+                for child in wrapper
+                if child.tag.rsplit("}", 1)[-1] == "table-wrap-foot"
+            ]
+            if table.caption_node_ids != captions or table.footnote_node_ids != footnotes:
+                raise ValueError("JATS table relations differ")
+            for source_cell, cell in zip(source_cells, table.cells, strict=True):
+                if (
+                    by_id[cell.node_id].mapping.path != path_by_element[source_cell]
+                    or cell.row_span != int(source_cell.attrib.get("rowspan", "1"))
+                    or cell.column_span != int(source_cell.attrib.get("colspan", "1"))
+                    or cell.text != "".join(source_cell.itertext())
+                ):
+                    raise ValueError("JATS table cell differs")
+    return len(paths), len(source_slots), sum(len(refs) > 1 for refs in represented.values())
+
+
+def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple[int, int, int]:
+    """Compare saved native objects and required fields against canonical nodes."""
+    if data.get("form_items") or data.get("key_value_items"):
+        raise ValueError("unsupported populated native structured item")
+    source = {}
+    for root in ("body", "furniture"):
+        if isinstance(data.get(root), dict):
+            source[data[root]["self_ref"]] = data[root]
+    for array in ("groups", "texts", "pictures", "tables", "form_items", "key_value_items"):
+        for item in data.get(array, []):
+            ref = item["self_ref"]
+            if ref in source:
+                raise ValueError("duplicate native object")
+            source[ref] = item
+    by_ref = {node.mapping.native_ref: node for node in doc.nodes if node.kind != "table_cell"}
+    if len(by_ref) != sum(node.kind != "table_cell" for node in doc.nodes) or set(by_ref) != set(
+        source
+    ):
+        raise ValueError("native object coverage differs")
+    positioned = []
+    seen = set()
+
+    def visit(ref: str) -> None:
+        if ref in seen or ref not in source:
+            raise ValueError("native child relation invalid")
+        seen.add(ref)
+        positioned.append(ref)
+        for child in source[ref].get("children", []):
+            visit(child["$ref"])
+
+    for root in ("#/body", "#/furniture"):
+        if root in source:
+            visit(root)
+    expected_order = positioned + [ref for ref in source if ref not in seen]
+    actual_order = [node.mapping.native_ref for node in doc.nodes if node.kind != "table_cell"]
+    if actual_order != expected_order:
+        raise ValueError("native reading order differs")
+    table_cell_count = 0
+    for ref, item in source.items():
+        node = by_ref[ref]
+        parent_ref = (item.get("parent") or {}).get("$ref")
+        if parent_ref is not None and parent_ref not in by_ref:
+            raise ValueError("native parent unresolved")
+        if node.parent_node_id != (by_ref[parent_ref].node_id if parent_ref else None):
+            raise ValueError("native parent differs")
+        children = [link["$ref"] for link in item.get("children", [])]
+        if node.native_child_node_ids != [by_ref[child].node_id for child in children]:
+            raise ValueError("native children differ")
+        if node.native_order_state != ("linked" if ref in seen else "unpositioned"):
+            raise ValueError("native order state differs")
+        if node.native_label != item.get("label") or node.native_content_layer != item.get(
+            "content_layer"
+        ):
+            raise ValueError("native label or layer differs")
+        if node.kind == "page_furniture" and item.get("content_layer") != "furniture":
+            raise ValueError("invented page furniture")
+        if (
+            item.get("content_layer") == "furniture"
+            and ref != "#/furniture"
+            and node.kind != "page_furniture"
+        ):
+            raise ValueError("native page furniture type differs")
+        if node.native_orig != item.get("orig"):
+            raise ValueError("native orig differs")
+        original = item.get("orig")
+        original_text = item.get("text")
+        expected_qualification = (
+            (
+                "unverified_formula"
+                if item.get("label") == "formula" and original != original_text
+                else "marker_inclusive"
+                if item.get("label") == "list_item" and original != original_text
+                else "same_as_text"
+                if original == original_text
+                else "unclassified_variant"
+            )
+            if original is not None
+            else None
+        )
+        if node.orig_qualification != expected_qualification:
+            raise ValueError("native orig qualification differs")
+        if item.get("label") == "formula" and not original_text:
+            state = "unverified_native_rendition" if original else "marker_only"
+            if node.content_state != state:
+                raise ValueError("native formula state differs")
+        if node.native_marker != item.get("marker") or node.native_enumerated != item.get(
+            "enumerated"
+        ):
+            raise ValueError("native list fields differ")
+        if node.native_heading_level != item.get("level") or node.native_group_name != item.get(
+            "name"
+        ):
+            raise ValueError("native heading or group field differs")
+        if "text" in item and (len(node.segments) != 1 or node.segments[0].text != item["text"]):
+            raise ValueError("native text differs")
+        if "text" not in item and node.segments:
+            raise ValueError("invented native text")
+        if len(node.mapping.provenance) != len(item.get("prov", [])):
+            raise ValueError("native provenance coverage differs")
+        for index, native_prov in enumerate(item.get("prov", [])):
+            record = node.mapping.provenance[index]
+            span = native_prov.get("charspan")
+            expected_state = (
+                "unavailable" if span is None else "placeholder" if span == [0, 0] else "meaningful"
+            )
+            if (
+                record.page_no != native_prov.get("page_no")
+                or record.charspan != native_prov.get("charspan")
+                or record.charspan_state != expected_state
+                or record.ordinal != index
+                or record.state != "approximate"
+                or (record.bbox.model_dump() if record.bbox else None) != native_prov.get("bbox")
+            ):
+                raise ValueError("native provenance differs")
+        if item.get("annotations") or item.get("references") or item.get("footnotes"):
+            raise ValueError("unsupported populated native relation")
+        captions = [link["$ref"] for link in item.get("captions", [])]
+        if node.kind == "figure" and node.target_node_ids != [
+            by_ref[target].node_id for target in captions
+        ]:
+            raise ValueError("native figure captions differ")
+        if node.kind == "table":
+            if node.table is None:
+                raise ValueError("native table structure omitted")
+            table = item["data"]
+            if (node.table.row_count, node.table.column_count) != (
+                table["num_rows"],
+                table["num_cols"],
+            ):
+                raise ValueError("native table dimensions differ")
+            if node.table.caption_node_ids != [by_ref[target].node_id for target in captions]:
+                raise ValueError("native table captions differ")
+            expected_cells = {
+                f"{ref}/data/table_cells/{i}": cell
+                for i, cell in enumerate(table.get("table_cells", []))
+            }
+            for row_index, row in enumerate(table.get("grid", [])):
+                for column_index, cell in enumerate(row):
+                    if cell is not None and cell not in expected_cells.values():
+                        expected_cells[f"{ref}/data/grid/{row_index}/{column_index}"] = cell
+            actual_cells = {cell.mapping.native_ref: cell for cell in node.table.cells}
+            table_cell_count += len(expected_cells)
+            if set(actual_cells) != set(expected_cells):
+                raise ValueError("native table cell coverage differs")
+            for cell_ref, native_cell in expected_cells.items():
+                cell = actual_cells[cell_ref]
+                if (
+                    cell.text != native_cell.get("text")
+                    or cell.row != native_cell.get("start_row_offset_idx")
+                    or cell.column != native_cell.get("start_col_offset_idx")
+                    or cell.row_span != native_cell.get("row_span")
+                    or cell.column_span != native_cell.get("col_span")
+                ):
+                    raise ValueError("native table cell differs")
+            grid = table.get("grid", [])
+            if len(grid) != len(node.table.grid_cell_node_ids):
+                raise ValueError("native table grid differs")
+            for row, canonical_row in zip(grid, node.table.grid_cell_node_ids, strict=True):
+                if len(row) != len(canonical_row):
+                    raise ValueError("native table grid differs")
+                for native_cell, cell_id in zip(row, canonical_row, strict=True):
+                    if native_cell is None and cell_id is not None:
+                        raise ValueError("invented native grid cell")
+                    if native_cell is not None and (
+                        cell_id is None
+                        or actual_cells[
+                            next(k for k, v in actual_cells.items() if v.node_id == cell_id)
+                        ].text
+                        != native_cell.get("text")
+                    ):
+                        raise ValueError("native table grid differs")
+    for node in doc.nodes:
+        ref = node.mapping.native_ref
+        if ref is None or _native_ref(data, ref) is None:
+            raise ValueError("invented native reference")
+    return len(source), len(data.get("texts", [])), table_cell_count
+
+
 def validate_build(
-    build: JatsBuild | ConversionAttempt,
+    build: JatsBuild | ConversionAttempt | PdfCanonicalBuild,
     data_root: Path,
     *,
     corpus_root: Path | None = None,
@@ -399,7 +783,9 @@ def validate_build(
         raise ValueError("complete successful build is required")
     if build.canonical_artifact is None or build.build_manifest is None:
         raise ValueError("complete build has missing artifacts")
-    native = build.native_artifact if isinstance(build, ConversionAttempt) else None
+    native = (
+        build.native_artifact if isinstance(build, (ConversionAttempt, PdfCanonicalBuild)) else None
+    )
     if corpus_root is not None:
         source_path = corpus_root / "corpus/raw" / build.source.logical_ref
         if source_path.is_symlink() or not source_path.is_file():
@@ -424,12 +810,17 @@ def validate_build(
     ):
         raise ValueError("canonical identity or completion mismatch")
     warnings: list[str] = []
+    jats_coverage: tuple[int, int, int] | None = None
+    pdf_coverage: tuple[int, int, int] | None = None
     if native is None:
         if doc.representation != "JATS":
             raise ValueError("JATS build has wrong representation")
+        if corpus_root is None:
+            raise ValueError("JATS validation requires frozen source root")
         paths = None
-        if corpus_root is not None:
-            paths = _jats_paths(source_path.read_bytes())
+        source_content = source_path.read_bytes()
+        paths = _jats_paths(source_content)
+        jats_coverage = validate_jats_coverage(doc, source_content)
         for node in doc.nodes:
             if paths is not None and node.mapping.path not in paths:
                 raise ValueError("unresolved JATS XML node path")
@@ -444,11 +835,12 @@ def validate_build(
     else:
         if doc.representation != "PDF_DOCLING" or doc.native_artifact != native:
             raise ValueError("PDF native lineage mismatch")
-        assert isinstance(build, ConversionAttempt)
+        assert isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
         if build.native_build_manifest is None:
             raise ValueError("native build manifest missing")
         _check_manifest(build.native_build_manifest, data_root, native, [build.source])
         native_data = json.loads((data_root / native.logical_ref).read_bytes())
+        pdf_coverage = validate_pdf_coverage(doc, native_data)
         id_by_ref = {node.mapping.native_ref: node.node_id for node in doc.nodes}
         for node in doc.nodes:
             source_item = _native_ref(native_data, node.mapping.native_ref or "")
@@ -563,7 +955,17 @@ def validate_build(
         if node.table and node.table.structure_state == "parser_damaged":
             warnings.append("table_structure_damaged")
     attempt_ref = None
-    if isinstance(build, ConversionAttempt):
+    if isinstance(build, PdfCanonicalBuild):
+        attempt_ref = build.original_attempt_artifact
+        record_ref = canonical_build_ref(build)
+        if (
+            read_project_json(
+                data_root / record_ref.logical_ref, record_ref.sha256, PdfCanonicalBuild
+            )
+            != build
+        ):
+            raise ValueError("PDF canonical build read-back mismatch")
+    elif isinstance(build, ConversionAttempt):
         attempt_path = data_root / build.attempt_logical_ref
         attempt_digest = sha256_bytes(attempt_path.read_bytes())
         if read_project_json(attempt_path, attempt_digest, ConversionAttempt) != build:
@@ -581,16 +983,27 @@ def validate_build(
         configuration_sha256=doc.configuration_sha256,
         native_artifact=native,
         native_build_manifest=build.native_build_manifest
-        if isinstance(build, ConversionAttempt)
+        if isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
         else None,
         attempt_artifact=attempt_ref,
+        canonical_build_artifact=canonical_build_ref(build)
+        if isinstance(build, PdfCanonicalBuild)
+        else None,
+        jats_source_elements=jats_coverage[0] if jats_coverage else None,
+        jats_source_slots=jats_coverage[1] if jats_coverage else None,
+        jats_overlapping_slots=jats_coverage[2] if jats_coverage else None,
+        native_objects=pdf_coverage[0] if pdf_coverage else None,
+        native_text_objects=pdf_coverage[1] if pdf_coverage else None,
+        native_table_cells=pdf_coverage[2] if pdf_coverage else None,
         canonical_artifact=build.canonical_artifact,
         build_manifest=build.build_manifest,
         environment_sha256=build.environment_sha256
-        if isinstance(build, ConversionAttempt)
+        if isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
         else None,
         asset_inventory_sha256=(
-            build.asset_inventory_sha256 if isinstance(build, ConversionAttempt) else None
+            build.asset_inventory_sha256
+            if isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
+            else None
         ),
         warnings=sorted(set(warnings)),
     )

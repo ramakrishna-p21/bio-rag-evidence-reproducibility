@@ -88,6 +88,41 @@ class ConversionAttempt(Record):
         return self
 
 
+class PdfCanonicalBuild(Record):
+    schema_version: Literal["1"] = "1"
+    paper_id: str
+    source: ArtifactRef
+    configuration_sha256: str
+    environment_sha256: str
+    asset_inventory_sha256: str
+    original_attempt_artifact: ArtifactRef
+    native_artifact: ArtifactRef
+    native_build_manifest: ArtifactRef
+    canonical_artifact: ArtifactRef
+    build_manifest: ArtifactRef
+    status: Literal["success"] = "success"
+    build_status: Literal["complete"] = "complete"
+
+
+def canonical_build_ref(build: PdfCanonicalBuild) -> ArtifactRef:
+    content = serialize_project_json(build, PdfCanonicalBuild)
+    return _ref(
+        "pdf_canonical_build",
+        [
+            ArtifactInput(
+                "original_attempt",
+                build.original_attempt_artifact.artifact_id,
+                build.original_attempt_artifact.sha256,
+            )
+        ],
+        "saved_native_canonicalization_v1",
+        build.configuration_sha256,
+        content,
+        "1",
+        "phase4_evidence",
+    )
+
+
 def _ref(
     kind: str,
     inputs: list[ArtifactInput],
@@ -272,6 +307,9 @@ def publish_pdf_result(
                 document = canonicalize_native(
                     reloaded, paper_id, source, native_ref, configuration_sha256
                 )
+                from biorag_repro.documents.phase4 import validate_pdf_coverage
+
+                validate_pdf_coverage(document, header)
                 canonical_bytes = serialize_project_json(document, CanonicalDocument)
                 inputs = [
                     raw_input,
@@ -283,7 +321,7 @@ def publish_pdf_result(
                     TRANSFORMATION_ID,
                     runtime_settings_sha256,
                     canonical_bytes,
-                    "2",
+                    "3",
                     "canonical/PDF_DOCLING",
                 )
                 canonical_target = data_root / canonical_ref.logical_ref
@@ -306,7 +344,7 @@ def publish_pdf_result(
                     runtime_settings_sha256,
                     canonical_ref,
                     "canonical_pdf_docling",
-                    "2",
+                    "3",
                     data_root,
                 )
     except FileExistsError:
@@ -335,6 +373,138 @@ def publish_pdf_result(
         ),
         data_root,
     )
+
+
+def canonicalize_saved_native(
+    source_path: Path,
+    source: ArtifactRef,
+    paper_id: str,
+    original_attempt: ConversionAttempt,
+    configuration_sha256: str,
+    data_root: Path,
+    *,
+    load_native: Any = None,
+) -> PdfCanonicalBuild:
+    """Build a new canonical artifact from a verified, previously saved native document."""
+    from biorag_repro.documents.phase4 import _check_manifest, validate_pdf_coverage
+
+    verify_file_sha256(source_path, source.sha256)
+    if source.artifact_id != raw_source_artifact_id(
+        paper_id=paper_id, representation="PDF", sha256=source.sha256
+    ):
+        raise ValueError("raw PDF artifact ID mismatch")
+    if (
+        original_attempt.paper_id != paper_id
+        or original_attempt.source != source
+        or original_attempt.configuration_sha256 != configuration_sha256
+        or original_attempt.status != "success"
+        or original_attempt.build_status != "complete"
+        or original_attempt.native_artifact is None
+        or original_attempt.native_build_manifest is None
+        or original_attempt.canonical_artifact is None
+        or original_attempt.build_manifest is None
+    ):
+        raise ValueError("original complete conversion attempt mismatch")
+    attempt_path = data_root / original_attempt.attempt_logical_ref
+    attempt_bytes = attempt_path.read_bytes()
+    if ConversionAttempt.model_validate_json(attempt_bytes) != original_attempt:
+        raise ValueError("original conversion attempt read-back mismatch")
+    attempt_ref = ArtifactRef(
+        artifact_id="attempt_" + original_attempt.attempt_id,
+        logical_ref=original_attempt.attempt_logical_ref,
+        sha256=sha256_bytes(attempt_bytes),
+    )
+    native = original_attempt.native_artifact
+    native_manifest = _check_manifest(
+        original_attempt.native_build_manifest, data_root, native, [source]
+    )
+    _check_manifest(
+        original_attempt.build_manifest,
+        data_root,
+        original_attempt.canonical_artifact,
+        [source, native],
+    )
+    native_path = data_root / native.logical_ref
+    verify_file_sha256(native_path, native.sha256)
+    native_data = json.loads(native_path.read_bytes())
+    if native_data.get("schema_name") != "DoclingDocument" or not native_data.get("version"):
+        raise ValueError("invalid saved native document")
+    if load_native is None:
+        from docling_core.types.doc import DoclingDocument
+
+        load_native = lambda path: DoclingDocument.load_from_json(path, allow_local_images=False)
+    reloaded = load_native(native_path)
+    document = canonicalize_native(reloaded, paper_id, source, native, configuration_sha256)
+    validate_pdf_coverage(document, native_data)
+    runtime_settings_sha256 = sha256_bytes(
+        canonical_json_bytes(
+            {
+                "configuration_sha256": configuration_sha256,
+                "environment_sha256": original_attempt.environment_sha256,
+                "asset_inventory_sha256": original_attempt.asset_inventory_sha256,
+            }
+        )
+    )
+    if (
+        native_manifest.transformation_id != NATIVE_TRANSFORMATION
+        or native_manifest.transformation_settings_sha256 != runtime_settings_sha256
+    ):
+        raise ValueError("saved native conversion identity differs")
+    canonical_bytes = serialize_project_json(document, CanonicalDocument)
+    canonical_ref = _ref(
+        "canonical_pdf_docling",
+        [
+            ArtifactInput("raw_pdf", source.artifact_id, source.sha256),
+            ArtifactInput("docling_native", native.artifact_id, native.sha256),
+        ],
+        TRANSFORMATION_ID,
+        runtime_settings_sha256,
+        canonical_bytes,
+        "3",
+        "canonical/PDF_DOCLING",
+    )
+    canonical_path = data_root / canonical_ref.logical_ref
+    canonical_path.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(
+        canonical_path,
+        canonical_bytes,
+        canonical_ref.sha256,
+        validate_temp=lambda path: read_project_json(path, canonical_ref.sha256, CanonicalDocument),
+    )
+    build_manifest = _manifest(
+        [
+            BuildInput(role="raw_pdf", artifact=source),
+            BuildInput(role="docling_native", artifact=native),
+        ],
+        TRANSFORMATION_ID,
+        runtime_settings_sha256,
+        canonical_ref,
+        "canonical_pdf_docling",
+        "3",
+        data_root,
+    )
+    build = PdfCanonicalBuild(
+        paper_id=paper_id,
+        source=source,
+        configuration_sha256=configuration_sha256,
+        environment_sha256=original_attempt.environment_sha256,
+        asset_inventory_sha256=original_attempt.asset_inventory_sha256,
+        original_attempt_artifact=attempt_ref,
+        native_artifact=native,
+        native_build_manifest=original_attempt.native_build_manifest,
+        canonical_artifact=canonical_ref,
+        build_manifest=build_manifest,
+    )
+    record = canonical_build_ref(build)
+    record_path = data_root / record.logical_ref
+    record_path.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(
+        record_path,
+        serialize_project_json(build, PdfCanonicalBuild),
+        record.sha256,
+        validate_temp=lambda path: read_project_json(path, record.sha256, PdfCanonicalBuild),
+    )
+    return build
 
 
 def convert_pdf(

@@ -54,7 +54,7 @@ def test_schema_matches_authoritative_model_and_stored_bytes():
     path = Path(__file__).resolve().parents[1] / "schemas" / "canonical_document.schema.json"
     assert path.read_bytes() == schema_bytes(CanonicalDocument)
     schema = json.loads(path.read_text())
-    assert schema["properties"]["schema_version"]["const"] == "2"
+    assert schema["properties"]["schema_version"]["const"] == "3"
     doc = document()
     encoded = serialize_project_json(doc, CanonicalDocument)
     assert CanonicalDocument.model_validate_json(encoded) == doc
@@ -95,11 +95,22 @@ def test_table_model_rejects_overlapping_cells():
 
 def test_no_clobber_publication_checks_output_before_complete_manifest(tmp_path):
     doc = document()
-    ref, manifest_ref = publish_canonical_jats(doc, tmp_path)
+    source = b"<article><body><p>alpha</p><p>beta</p></body></article>"
+    ref, manifest_ref = publish_canonical_jats(doc, tmp_path, source)
     assert read_project_json(tmp_path / ref.logical_ref, ref.sha256, CanonicalDocument) == doc
     manifest = read_manifest(tmp_path / manifest_ref.logical_ref, manifest_ref.sha256)
     assert manifest.status == "complete"
     assert manifest.inputs[0].artifact.artifact_id == doc.source.artifact_id
     assert manifest.outputs[0].artifact == ref
     with pytest.raises(FileExistsError):
-        publish_canonical_jats(doc, tmp_path)
+        publish_canonical_jats(doc, tmp_path, source)
+
+
+def test_incomplete_jats_cannot_publish_complete_manifest(tmp_path):
+    doc = document()
+    source = b"<article><body><p>alpha</p><p>beta</p></body></article>"
+    nodes = [node.model_copy(deep=True) for node in doc.nodes]
+    nodes[2].segments = []
+    with pytest.raises(ValueError, match="source slot"):
+        publish_canonical_jats(doc.model_copy(update={"nodes": nodes}), tmp_path, source)
+    assert not list(tmp_path.rglob("*.build.json"))

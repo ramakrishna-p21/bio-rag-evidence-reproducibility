@@ -15,11 +15,16 @@ from biorag_repro.documents.models import CanonicalDocument
 
 
 def publish_canonical_jats(
-    doc: CanonicalDocument, data_root: Path
+    doc: CanonicalDocument, data_root: Path, source_content: bytes
 ) -> tuple[ArtifactRef, ArtifactRef]:
     """Publish validated canonical bytes, then their verified complete build manifest."""
     if doc.representation != "JATS" or doc.status != "complete" or doc.native_artifact is not None:
         raise ValueError("expected complete JATS canonical document")
+    from biorag_repro.documents.phase4 import validate_jats_coverage
+
+    if sha256_bytes(source_content) != doc.source.sha256:
+        raise ValueError("JATS source hash mismatch")
+    validate_jats_coverage(doc, source_content)
     content = serialize_project_json(doc, CanonicalDocument)
     digest = sha256_bytes(content)
     artifact_id = derived_artifact_id(
@@ -29,7 +34,7 @@ def publish_canonical_jats(
         transformation_settings_sha256=doc.configuration_sha256,
         output_sha256=digest,
         output_format="json",
-        serialization_version="2",
+        serialization_version="3",
     )
     logical_ref = f"corpus/derived/canonical/JATS/{artifact_id}.json"
     ref = ArtifactRef(artifact_id=artifact_id, logical_ref=logical_ref, sha256=digest)
@@ -51,7 +56,7 @@ def publish_canonical_jats(
                 artifact=ref,
                 artifact_kind="canonical_jats",
                 output_format="json",
-                serialization_version="2",
+                serialization_version="3",
                 identity_version="1",
             )
         ],

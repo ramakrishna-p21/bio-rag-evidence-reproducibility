@@ -12,7 +12,9 @@ MappingState = Literal[
 ]
 RelationState = Literal["present", "absent", "unavailable", "ambiguous", "parser_damaged"]
 CharspanState = Literal["meaningful", "placeholder", "unavailable", "ambiguous", "parser_damaged"]
-ContentState = Literal["present", "marker_only", "missing", "unsupported"]
+ContentState = Literal[
+    "present", "marker_only", "missing", "unsupported", "unverified_native_rendition"
+]
 NodeKind = Literal[
     "article",
     "front",
@@ -33,6 +35,7 @@ NodeKind = Literal[
     "xref",
     "supplement",
     "source_construct",
+    "page_furniture",
 ]
 
 
@@ -193,6 +196,18 @@ class CanonicalNode(Record):
     kind: NodeKind
     source_tag: str
     native_label: str | None = None
+    native_content_layer: str | None = None
+    native_child_node_ids: list[str] = Field(default_factory=list)
+    native_order_state: Literal["linked", "unpositioned"] | None = None
+    native_orig: str | None = None
+    orig_qualification: (
+        Literal["same_as_text", "unverified_formula", "marker_inclusive", "unclassified_variant"]
+        | None
+    ) = None
+    native_marker: str | None = None
+    native_enumerated: bool | None = None
+    native_heading_level: int | None = None
+    native_group_name: str | None = None
     interpretation_state: MappingState | None = None
     source_id: str | None = None
     attributes: dict[str, str] = Field(default_factory=dict)
@@ -207,7 +222,7 @@ class CanonicalNode(Record):
 
 
 class CanonicalDocument(Record):
-    schema_version: Literal["2"] = "2"
+    schema_version: Literal["3"] = "3"
     paper_id: str
     representation: Literal["JATS", "PDF_DOCLING"]
     source: ArtifactRef
@@ -252,6 +267,8 @@ class CanonicalDocument(Record):
                 raise ValueError("unresolved canonical parent")
             if any(target not in ids for target in node.target_node_ids):
                 raise ValueError("unresolved canonical target")
+            if any(target not in ids for target in node.native_child_node_ids):
+                raise ValueError("unresolved canonical native child")
             for segment in node.segments:
                 if segment.mapping.source_artifact_id != self.source.artifact_id:
                     raise ValueError("segment source differs from document source")

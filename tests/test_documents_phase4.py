@@ -18,6 +18,8 @@ from biorag_repro.documents.phase4 import (
     publish_gate_index,
     publish_validation,
     validate_build,
+    validate_jats_coverage,
+    validate_pdf_coverage,
 )
 
 
@@ -56,7 +58,7 @@ def test_jats_build_rejects_wrong_paper_source_hash_and_publishes_complete_linea
         build_arm(paper, "P002", "JATS", corpus, output, "a" * 64)
     built = build_arm(paper, "P001", "JATS", corpus, output, "a" * 64)
     assert built.canonical_artifact is not None and built.build_manifest is not None
-    checked = validate_build(built, output)
+    checked = validate_build(built, output, corpus_root=corpus)
     assert checked.status == "pass"
     assert checked.source == built.source
     with pytest.raises(FileExistsError):
@@ -64,6 +66,104 @@ def test_jats_build_rejects_wrong_paper_source_hash_and_publishes_complete_linea
     (corpus / "corpus/raw" / paper.jats.logical_ref).write_bytes(b"<article><body/></article>")
     with pytest.raises(ValueError, match="SHA-256"):
         build_arm(paper, "P001", "JATS", corpus, output, "a" * 64)
+
+
+def test_jats_coverage_rejects_a_missing_required_tail():
+    from biorag_repro.documents.jats import ingest_jats
+
+    xml = b"<article><body><custom>A<italic>B</italic> tail</custom></body></article>"
+    digest = sha256_bytes(xml)
+    source_id = raw_source_artifact_id(paper_id="P001", representation="JATS", sha256=digest)
+    doc = ingest_jats(
+        xml,
+        paper_id="P001",
+        source_artifact_id=source_id,
+        source_sha256=digest,
+        source_logical_ref="synthetic.xml",
+        configuration_sha256="a" * 64,
+    )
+    validate_jats_coverage(doc, xml)
+    nodes = [node.model_copy(deep=True) for node in doc.nodes]
+    for node in nodes:
+        node.segments = [
+            part
+            for part in node.segments
+            if not (part.mapping.path or "").endswith("/italic[1]/tail()")
+        ]
+    with pytest.raises(ValueError, match="source slot"):
+        validate_jats_coverage(doc.model_copy(update={"nodes": nodes}), xml)
+
+
+def test_pdf_coverage_rejects_missing_native_object_and_orig():
+    from types import SimpleNamespace as Item
+
+    from biorag_repro.documents.pdf import canonicalize_native
+
+    source = ArtifactRef(artifact_id="raw_pdf", logical_ref="source.pdf", sha256="a" * 64)
+    native = ArtifactRef(artifact_id="native", logical_ref="native.json", sha256="b" * 64)
+    body = Item(
+        self_ref="#/body",
+        parent=None,
+        label="unspecified",
+        content_layer="body",
+        children=[Item(cref="#/texts/0")],
+        prov=[],
+        captions=[],
+    )
+    formula = Item(
+        self_ref="#/texts/0",
+        parent=Item(cref="#/body"),
+        label="formula",
+        content_layer="body",
+        children=[],
+        prov=[],
+        captions=[],
+        text="",
+        orig="uncertain",
+    )
+    typed = Item(
+        body=body,
+        texts=[formula],
+        groups=[],
+        pictures=[],
+        tables=[],
+        form_items=[],
+        key_value_items=[],
+        iterate_items=lambda with_groups: iter([(body, 0), (formula, 1)]),
+    )
+    doc = canonicalize_native(typed, "P001", source, native, "c" * 64)
+    data = {
+        "body": {
+            "self_ref": "#/body",
+            "children": [{"$ref": "#/texts/0"}],
+            "label": "unspecified",
+            "content_layer": "body",
+        },
+        "texts": [
+            {
+                "self_ref": "#/texts/0",
+                "parent": {"$ref": "#/body"},
+                "children": [],
+                "label": "formula",
+                "content_layer": "body",
+                "text": "",
+                "orig": "uncertain",
+                "prov": [],
+            }
+        ],
+        "groups": [],
+        "pictures": [],
+        "tables": [],
+        "form_items": [],
+        "key_value_items": [],
+    }
+    validate_pdf_coverage(doc, data)
+    with pytest.raises(ValueError, match="native object"):
+        validate_pdf_coverage(doc.model_copy(update={"nodes": doc.nodes[:1]}), data)
+    altered = [node.model_copy(deep=True) for node in doc.nodes]
+    altered[1].native_orig = None
+    with pytest.raises(ValueError, match="native orig"):
+        validate_pdf_coverage(doc.model_copy(update={"nodes": altered}), data)
 
 
 def test_pdf_boundary_refuses_partial_or_failed_complete_build(tmp_path, monkeypatch):
@@ -132,7 +232,7 @@ def test_validation_and_gate_index_are_immutable_and_pair_bound(tmp_path):
     assert (output / report_ref.logical_ref).is_file()
     with pytest.raises(FileExistsError):
         publish_validation(report, output)
-    with pytest.raises(ValueError, match="requires native"):
+    with pytest.raises(ValueError, match="requires complete native"):
         Phase4Validation.model_validate(
             report.model_copy(update={"representation": "PDF_DOCLING"}).model_dump()
         )
@@ -145,7 +245,7 @@ def test_validation_and_gate_index_are_immutable_and_pair_bound(tmp_path):
         pdf_validation=report_ref,
     )
     with pytest.raises(ValueError, match="both Phase 4 arms"):
-        publish_gate_index(index, output)
+        publish_gate_index(index, output, corpus)
 
 
 def test_original_synthetic_pdf_pair_has_saved_native_lineage(tmp_path, monkeypatch):
@@ -241,7 +341,7 @@ def test_original_synthetic_pdf_pair_has_saved_native_lineage(tmp_path, monkeypa
         jats_validation=jats_ref,
         pdf_validation=pdf_ref,
     )
-    index_ref = publish_gate_index(index, output)
+    index_ref = publish_gate_index(index, output, corpus)
     assert (output / index_ref.logical_ref).is_file()
     with pytest.raises(FileExistsError):
-        publish_gate_index(index, output)
+        publish_gate_index(index, output, corpus)

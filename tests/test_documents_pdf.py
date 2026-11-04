@@ -118,6 +118,176 @@ def test_native_picture_caption_link_is_retained_without_proximity_inference():
     assert document.nodes[1].relation_state == "exact_native"
 
 
+def test_native_inventory_retains_picture_child_and_furniture_outside_typed_walk():
+    body = Item(
+        self_ref="#/body",
+        parent=None,
+        label="unspecified",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[ref("#/pictures/0"), ref("#/texts/1")],
+    )
+    picture = Item(
+        self_ref="#/pictures/0",
+        parent=ref("#/body"),
+        label="picture",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[ref("#/texts/0")],
+    )
+    child = Item(
+        self_ref="#/texts/0",
+        parent=ref("#/pictures/0"),
+        label="text",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[],
+        text="figure value",
+        orig="figure value",
+    )
+    header = Item(
+        self_ref="#/texts/1",
+        parent=ref("#/body"),
+        label="page_header",
+        content_layer="furniture",
+        prov=[],
+        captions=[],
+        children=[],
+        text="Page 1",
+        orig="Page 1",
+    )
+    native = Item(
+        body=body,
+        furniture=Item(
+            self_ref="#/furniture",
+            parent=None,
+            label="unspecified",
+            content_layer="furniture",
+            prov=[],
+            captions=[],
+            children=[],
+        ),
+        texts=[child, header],
+        pictures=[picture],
+        tables=[],
+        groups=[],
+        form_items=[],
+        key_value_items=[],
+        iterate_items=lambda with_groups: iter([(body, 0), (picture, 1)]),
+    )
+    document = canonicalize_native(native, "P001", RAW, NATIVE, "c" * 64)
+    by_ref = {node.mapping.native_ref: node for node in document.nodes}
+    assert len(by_ref) == len(document.nodes) == 5
+    assert by_ref["#/texts/0"].parent_node_id == by_ref["#/pictures/0"].node_id
+    assert by_ref["#/texts/0"].segments[0].text == "figure value"
+    assert by_ref["#/texts/1"].kind == "page_furniture"
+    assert by_ref["#/texts/1"].native_content_layer == "furniture"
+
+
+def test_native_formula_list_and_heading_fields_remain_qualified():
+    body = Item(
+        self_ref="#/body",
+        parent=None,
+        label="unspecified",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[ref("#/texts/0"), ref("#/texts/1"), ref("#/texts/2")],
+    )
+    formula = Item(
+        self_ref="#/texts/0",
+        parent=ref("#/body"),
+        label="formula",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[],
+        text="",
+        orig="damaged glyph",
+    )
+    listed = Item(
+        self_ref="#/texts/1",
+        parent=ref("#/body"),
+        label="list_item",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[],
+        text="value",
+        orig="1. value",
+        marker="1.",
+        enumerated=True,
+    )
+    heading = Item(
+        self_ref="#/texts/2",
+        parent=ref("#/body"),
+        label="section_header",
+        content_layer="body",
+        prov=[],
+        captions=[],
+        children=[],
+        text="Methods",
+        orig="Methods",
+        level=2,
+    )
+    native = Item(
+        body=body,
+        texts=[formula, listed, heading],
+        pictures=[],
+        tables=[],
+        groups=[],
+        form_items=[],
+        key_value_items=[],
+        iterate_items=lambda with_groups: iter(
+            [(body, 0), (formula, 1), (listed, 1), (heading, 1)]
+        ),
+    )
+    nodes = canonicalize_native(native, "P001", RAW, NATIVE, "c" * 64).nodes
+    assert nodes[1].native_orig == "damaged glyph"
+    assert nodes[1].orig_qualification == "unverified_formula"
+    assert nodes[1].content_state == "unverified_native_rendition"
+    assert (nodes[2].native_marker, nodes[2].native_enumerated, nodes[2].native_orig) == (
+        "1.",
+        True,
+        "1. value",
+    )
+    assert nodes[2].orig_qualification == "marker_inclusive"
+    assert nodes[3].native_heading_level == 2
+
+
+def test_unlinked_native_item_has_explicit_unknown_reading_order():
+    body = Item(
+        self_ref="#/body", parent=None, label="unspecified", children=[], prov=[], captions=[]
+    )
+    detached = Item(
+        self_ref="#/texts/0",
+        parent=None,
+        label="text",
+        children=[],
+        prov=[],
+        captions=[],
+        text="detached",
+        orig="detached",
+    )
+    native = Item(
+        body=body,
+        texts=[detached],
+        groups=[],
+        pictures=[],
+        tables=[],
+        form_items=[],
+        key_value_items=[],
+        iterate_items=lambda with_groups: iter([(body, 0)]),
+    )
+    document = canonicalize_native(native, "P001", RAW, NATIVE, "c" * 64)
+    assert document.nodes[1].mapping.native_ref == "#/texts/0"
+    assert document.nodes[1].native_order_state == "unpositioned"
+    assert document.nodes[1].parent_node_id is None
+
+
 def test_native_grid_only_empty_cell_is_preserved():
     body = Item(self_ref="#/body", parent=None, label="unspecified", prov=[], captions=[])
     first = Item(

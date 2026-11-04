@@ -24,7 +24,7 @@ from biorag_repro.documents.models import (
     TextSegment,
 )
 
-TRANSFORMATION_ID = "docling_pdf_adapter_v1"
+TRANSFORMATION_ID = "docling_pdf_adapter_v2"
 HERON_REVISION = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
 TABLE_REVISION = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
 ASSETS = (
@@ -221,7 +221,7 @@ def _node_id(source: ArtifactRef, ref: str) -> str:
         canonical_json_bytes(
             {
                 "source_artifact_id": source.artifact_id,
-                "schema_version": "2",
+                "schema_version": "3",
                 "transformation_id": TRANSFORMATION_ID,
                 "native_ref": ref,
             }
@@ -236,8 +236,41 @@ def canonicalize_native(
     native_artifact: ArtifactRef,
     configuration_sha256: str,
 ) -> CanonicalDocument:
-    """Traverse a reloaded typed DoclingDocument in its native order."""
-    items = [item for item, _ in native_document.iterate_items(with_groups=True)]
+    """Reconcile typed order with all saved native objects and child links."""
+    walked = [item for item, _ in native_document.iterate_items(with_groups=True)]
+    inventory = {}
+    for name in ("body", "furniture"):
+        item = getattr(native_document, name, None)
+        if item is not None:
+            inventory[item.self_ref] = item
+    for name in ("groups", "texts", "pictures", "tables", "form_items", "key_value_items"):
+        for item in getattr(native_document, name, []):
+            if item.self_ref in inventory:
+                raise ValueError("duplicate native object reference")
+            inventory[item.self_ref] = item
+    for item in walked:
+        inventory.setdefault(item.self_ref, item)
+    items = []
+    linked: set[str] = set()
+
+    def visit(ref: str) -> None:
+        if ref in linked:
+            raise ValueError("repeated or cyclic native child reference")
+        item = inventory.get(ref)
+        if item is None:
+            raise ValueError("unresolved native child reference")
+        linked.add(ref)
+        items.append(item)
+        for child in getattr(item, "children", []):
+            visit(child.cref)
+
+    for root in ("#/body", "#/furniture"):
+        if root in inventory:
+            visit(root)
+    positioned = set(linked)
+    for ref in inventory:
+        if ref not in linked:
+            visit(ref)
     refs = {item.self_ref: _node_id(source, item.self_ref) for item in items}
     if len(refs) != len(items):
         raise ValueError("duplicate native object reference")
@@ -256,7 +289,13 @@ def canonicalize_native(
             "code": "source_construct",
             "list": "list",
         }
-        kind = kinds.get(label, "source_construct")
+        layer = getattr(item, "content_layer", None)
+        layer = str(getattr(layer, "value", layer)) if layer is not None else None
+        kind = (
+            "page_furniture"
+            if layer == "furniture" and native_ref != "#/furniture"
+            else kinds.get(label, "source_construct")
+        )
         parent_ref = getattr(getattr(item, "parent", None), "cref", None)
         if parent_ref is not None and parent_ref not in refs:
             raise ValueError("unresolved native parent link")
@@ -274,6 +313,26 @@ def canonicalize_native(
         )
         content = getattr(item, "text", None)
         text = content if isinstance(content, str) else None
+        original = getattr(item, "orig", None)
+        orig = original if isinstance(original, str) else None
+        orig_qualification: (
+            Literal[
+                "same_as_text", "unverified_formula", "marker_inclusive", "unclassified_variant"
+            ]
+            | None
+        ) = (
+            (
+                "unverified_formula"
+                if kind == "formula" and orig != text
+                else "marker_inclusive"
+                if kind == "list_item" and orig != text
+                else "same_as_text"
+                if orig == text
+                else "unclassified_variant"
+            )
+            if orig is not None
+            else None
+        )
         segments = [TextSegment(text=text, mapping=mapping)] if text is not None else []
         table_data = None
         if kind == "table":
@@ -355,6 +414,15 @@ def canonicalize_native(
             kind=kind,
             source_tag=type(item).__name__,
             native_label=label,
+            native_content_layer=layer,
+            native_child_node_ids=[refs[child.cref] for child in getattr(item, "children", [])],
+            native_order_state="linked" if native_ref in positioned else "unpositioned",
+            native_orig=orig,
+            orig_qualification=orig_qualification,
+            native_marker=getattr(item, "marker", None),
+            native_enumerated=getattr(item, "enumerated", None),
+            native_heading_level=getattr(item, "level", None),
+            native_group_name=getattr(item, "name", None),
             interpretation_state="exact_native" if kind != "source_construct" else "ambiguous",
             mapping=mapping,
             segments=segments,
@@ -362,7 +430,9 @@ def canonicalize_native(
             relation_state=("exact_native" if caption_ids else "unavailable")
             if kind == "figure"
             else None,
-            content_state="marker_only" if kind == "formula" and not text else "present",
+            content_state=("unverified_native_rendition" if orig else "marker_only")
+            if kind == "formula" and not text
+            else "present",
             table=table_data,
         )
         nodes.append(node)

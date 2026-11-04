@@ -58,6 +58,20 @@ def test_doctype_is_allowed_without_fetch_and_mixed_content_is_ordered():
     assert doc.source_doctype_declared is True
 
 
+def test_generic_wrapper_retains_direct_text_and_child_tails():
+    xml = (
+        b"<article><body><custom>before<italic>inside</italic> after"
+        b"<bold>second</bold> end</custom></body></article>"
+    )
+    doc = parse(xml)
+    wrapper = next(node for node in doc.nodes if node.source_tag == "custom")
+    assert [(part.mapping.path.rsplit("/", 1)[-1], part.text) for part in wrapper.segments] == [
+        ("text()", "before"),
+        ("tail()", " after"),
+        ("tail()", " end"),
+    ]
+
+
 def test_paths_ids_xrefs_sections_and_source_order():
     doc = parse()
     assert [node.source_id for node in nodes(doc, "section")][:1] == ["s1"]

@@ -19,7 +19,7 @@ from biorag_repro.documents.models import (
     TextSegment,
 )
 
-TRANSFORMATION_ID = "jats_adapter_v2"
+TRANSFORMATION_ID = "jats_adapter_v3"
 MAX_XML_BYTES = 64 * 1024 * 1024
 _ENTITY = re.compile(rb"<!\s*ENTITY\b", re.IGNORECASE)
 _DOCTYPE = re.compile(rb"<!\s*DOCTYPE\b", re.IGNORECASE)
@@ -57,7 +57,7 @@ def _node_id(source_id: str, path: str) -> str:
     payload = {
         "source_artifact_id": source_id,
         "transformation_id": TRANSFORMATION_ID,
-        "schema_version": "2",
+        "schema_version": "3",
         "path": path,
     }
     return "node_" + sha256_bytes(canonical_json_bytes(payload))
@@ -104,6 +104,30 @@ def _segments(
             add(child.tail, child, "tail()")
 
     walk(element)
+    return result
+
+
+def _direct_segments(
+    element: ET.Element, paths: dict[ET.Element, str], source_id: str
+) -> list[TextSegment]:
+    slots = [(element, "text()", element.text)] + [
+        (child, "tail()", child.tail) for child in element
+    ]
+    result: list[TextSegment] = []
+    for owner, slot, value in slots:
+        if value is not None:
+            result.append(
+                TextSegment(
+                    text=value,
+                    mapping=SourceMapping(
+                        kind="jats",
+                        state="exact_native",
+                        source_artifact_id=source_id,
+                        path=f"{paths[owner]}/{slot}",
+                        segment_ordinal=len(result),
+                    ),
+                )
+            )
     return result
 
 
@@ -243,7 +267,7 @@ def ingest_jats(
                 segments=(
                     _segments(element, paths, source_artifact_id)
                     if kind in _TEXT_KINDS or not len(element)
-                    else []
+                    else _direct_segments(element, paths, source_artifact_id)
                 ),
                 mapping=SourceMapping(
                     kind="jats",

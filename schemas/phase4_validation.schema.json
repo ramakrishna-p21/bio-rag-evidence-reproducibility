@@ -58,6 +58,17 @@
     "canonical_artifact": {
       "$ref": "#/$defs/ArtifactRef"
     },
+    "canonical_build_artifact": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "configuration_sha256": {
       "title": "Configuration Sha256",
       "type": "string"
@@ -77,6 +88,42 @@
       ],
       "default": null,
       "title": "Environment Sha256"
+    },
+    "jats_overlapping_slots": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Jats Overlapping Slots"
+    },
+    "jats_source_elements": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Jats Source Elements"
+    },
+    "jats_source_slots": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Jats Source Slots"
     },
     "native_artifact": {
       "anyOf": [
@@ -100,6 +147,42 @@
       ],
       "default": null
     },
+    "native_objects": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Objects"
+    },
+    "native_table_cells": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Table Cells"
+    },
+    "native_text_objects": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Native Text Objects"
+    },
     "paper_id": {
       "title": "Paper Id",
       "type": "string"
@@ -113,8 +196,8 @@
       "type": "string"
     },
     "schema_version": {
-      "const": "1",
-      "default": "1",
+      "const": "2",
+      "default": "2",
       "title": "Schema Version",
       "type": "string"
     },

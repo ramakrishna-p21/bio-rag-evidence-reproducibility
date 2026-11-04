@@ -9,7 +9,11 @@ import pytest
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import raw_source_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.documents.pdf_ingest import ConversionAttempt, publish_pdf_result
+from biorag_repro.documents.pdf_ingest import (
+    ConversionAttempt,
+    canonicalize_saved_native,
+    publish_pdf_result,
+)
 
 
 def source(tmp_path):
@@ -29,7 +33,19 @@ def source(tmp_path):
 class FakeDocument:
     def save_as_json(self, path, **kwargs):
         Path(path).write_text(
-            json.dumps({"schema_name": "DoclingDocument", "version": "1.10.0", "body": "fixture"})
+            json.dumps(
+                {
+                    "schema_name": "DoclingDocument",
+                    "version": "1.10.0",
+                    "body": {"self_ref": "#/body", "label": "unspecified", "children": []},
+                    "texts": [],
+                    "groups": [],
+                    "pictures": [],
+                    "tables": [],
+                    "form_items": [],
+                    "key_value_items": [],
+                }
+            )
         )
 
 
@@ -60,6 +76,81 @@ def test_success_publishes_saved_native_then_canonical_and_manifest(tmp_path):
         publish_pdf_result(
             result, path, ref, "P001", "c" * 64, "e" * 64, "f" * 64, tmp_path, load_native=load_fake
         )
+
+
+def test_saved_native_reuse_records_original_attempt_without_new_conversion(tmp_path, monkeypatch):
+    from biorag_repro.documents import pdf_ingest
+
+    path, ref = source(tmp_path)
+    result = Item(status=Item(value="success"), errors=[], pages=[], document=FakeDocument())
+    monkeypatch.setattr(pdf_ingest, "TRANSFORMATION_ID", "docling_pdf_adapter_v1")
+    original = publish_pdf_result(
+        result, path, ref, "P001", "c" * 64, "e" * 64, "f" * 64, tmp_path, load_native=load_fake
+    )
+    monkeypatch.setattr(pdf_ingest, "TRANSFORMATION_ID", "docling_pdf_adapter_v2")
+    renewed = canonicalize_saved_native(
+        path, ref, "P001", original, "c" * 64, tmp_path, load_native=load_fake
+    )
+    assert renewed.status == "success" and renewed.build_status == "complete"
+    assert renewed.native_artifact == original.native_artifact
+    assert renewed.original_attempt_artifact.sha256 == sha256_bytes(
+        (tmp_path / original.attempt_logical_ref).read_bytes()
+    )
+    assert renewed.canonical_artifact != original.canonical_artifact
+    assert renewed.build_manifest != original.build_manifest
+    from biorag_repro.documents.phase4 import validate_build
+
+    checked = validate_build(renewed, tmp_path)
+    assert checked.canonical_build_artifact is not None
+    assert checked.attempt_artifact == renewed.original_attempt_artifact
+    with pytest.raises(FileExistsError):
+        canonicalize_saved_native(
+            path, ref, "P001", original, "c" * 64, tmp_path, load_native=load_fake
+        )
+
+
+def test_omitted_native_object_prevents_complete_manifest(tmp_path):
+    path, ref = source(tmp_path)
+
+    class IncompleteNative:
+        def save_as_json(self, target, **kwargs):
+            Path(target).write_text(
+                json.dumps(
+                    {
+                        "schema_name": "DoclingDocument",
+                        "version": "1.10.0",
+                        "body": {
+                            "self_ref": "#/body",
+                            "label": "unspecified",
+                            "children": [{"$ref": "#/texts/0"}],
+                        },
+                        "texts": [
+                            {
+                                "self_ref": "#/texts/0",
+                                "label": "text",
+                                "text": "lost",
+                                "orig": "lost",
+                                "parent": {"$ref": "#/body"},
+                                "children": [],
+                                "prov": [],
+                            }
+                        ],
+                        "groups": [],
+                        "pictures": [],
+                        "tables": [],
+                        "form_items": [],
+                        "key_value_items": [],
+                    }
+                )
+            )
+
+    result = Item(status=Item(value="success"), errors=[], pages=[], document=IncompleteNative())
+    attempt = publish_pdf_result(
+        result, path, ref, "P001", "c" * 64, "e" * 64, "f" * 64, tmp_path, load_native=load_fake
+    )
+    assert attempt.build_status == "failed"
+    assert attempt.build_manifest is None
+    assert "native object" in attempt.errors[0] or "native child" in attempt.errors[0]
 
 
 @pytest.mark.parametrize("status", ["failure", "partial_success"])
