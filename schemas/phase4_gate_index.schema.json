@@ -1,0 +1,72 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Local evidence index tied to one reviewed implementation and frozen pair.",
+  "properties": {
+    "corpus_release_sha256": {
+      "title": "Corpus Release Sha256",
+      "type": "string"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "implementation_git_sha": {
+      "title": "Implementation Git Sha",
+      "type": "string"
+    },
+    "jats_validation": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "pdf_validation": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "schema_version": {
+      "const": "2",
+      "default": "2",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "corpus_version",
+    "paper_id",
+    "corpus_release_sha256",
+    "implementation_git_sha",
+    "jats_validation",
+    "pdf_validation"
+  ],
+  "title": "Phase4GateIndex",
+  "type": "object"
+}

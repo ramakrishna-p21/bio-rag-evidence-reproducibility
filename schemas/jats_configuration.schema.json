@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "entity_policy": {
+      "const": "reject_declarations",
+      "default": "reject_declarations",
+      "title": "Entity Policy",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "source_faithful": {
+      "const": true,
+      "default": true,
+      "title": "Source Faithful",
+      "type": "boolean"
+    }
+  },
+  "title": "JatsConfiguration",
+  "type": "object"
+}
