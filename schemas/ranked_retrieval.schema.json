@@ -104,6 +104,17 @@
     "index": {
       "$ref": "#/$defs/ArtifactRef"
     },
+    "index_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "query_id": {
       "minLength": 1,
       "pattern": "\\S",

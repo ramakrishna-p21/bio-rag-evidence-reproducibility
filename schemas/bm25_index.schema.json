@@ -26,6 +26,85 @@
       "title": "ArtifactRef",
       "type": "object"
     },
+    "Bm25Statistics": {
+      "additionalProperties": false,
+      "properties": {
+        "average_document_length": {
+          "exclusiveMinimum": 0,
+          "title": "Average Document Length",
+          "type": "number"
+        },
+        "average_idf": {
+          "title": "Average Idf",
+          "type": "number"
+        },
+        "corpus_size": {
+          "exclusiveMinimum": 0,
+          "title": "Corpus Size",
+          "type": "integer"
+        },
+        "document_frequencies": {
+          "patternProperties": {
+            "\\S": {
+              "exclusiveMinimum": 0,
+              "type": "integer"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Document Frequencies",
+          "type": "object"
+        },
+        "document_lengths": {
+          "items": {
+            "exclusiveMinimum": 0,
+            "type": "integer"
+          },
+          "title": "Document Lengths",
+          "type": "array"
+        },
+        "idf": {
+          "patternProperties": {
+            "\\S": {
+              "type": "number"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Idf",
+          "type": "object"
+        },
+        "term_frequencies": {
+          "items": {
+            "patternProperties": {
+              "\\S": {
+                "exclusiveMinimum": 0,
+                "type": "integer"
+              }
+            },
+            "propertyNames": {
+              "minLength": 1
+            },
+            "type": "object"
+          },
+          "title": "Term Frequencies",
+          "type": "array"
+        }
+      },
+      "required": [
+        "corpus_size",
+        "document_lengths",
+        "term_frequencies",
+        "document_frequencies",
+        "average_document_length",
+        "average_idf",
+        "idf"
+      ],
+      "title": "Bm25Statistics",
+      "type": "object"
+    },
     "ConfigurationRef": {
       "additionalProperties": false,
       "properties": {
@@ -47,6 +126,30 @@
   },
   "additionalProperties": false,
   "properties": {
+    "b": {
+      "default": 0.75,
+      "maximum": 0.75,
+      "minimum": 0.75,
+      "title": "B",
+      "type": "number"
+    },
+    "chunk_paper_ids": {
+      "items": {
+        "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Chunk Paper Ids",
+      "type": "array"
+    },
+    "chunk_set_manifests": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "minItems": 1,
+      "title": "Chunk Set Manifests",
+      "type": "array"
+    },
     "chunk_sets": {
       "items": {
         "$ref": "#/$defs/ArtifactRef"
@@ -55,8 +158,36 @@
       "title": "Chunk Sets",
       "type": "array"
     },
+    "chunk_tokens": {
+      "enum": [
+        192,
+        384
+      ],
+      "title": "Chunk Tokens",
+      "type": "integer"
+    },
     "configuration": {
       "$ref": "#/$defs/ConfigurationRef"
+    },
+    "epsilon": {
+      "default": 0.25,
+      "maximum": 0.25,
+      "minimum": 0.25,
+      "title": "Epsilon",
+      "type": "number"
+    },
+    "implementation": {
+      "const": "rank-bm25==0.2.2:BM25Okapi",
+      "default": "rank-bm25==0.2.2:BM25Okapi",
+      "title": "Implementation",
+      "type": "string"
+    },
+    "k1": {
+      "default": 1.5,
+      "maximum": 1.5,
+      "minimum": 1.5,
+      "title": "K1",
+      "type": "number"
     },
     "ordered_chunk_ids": {
       "items": {
@@ -68,10 +199,48 @@
       "title": "Ordered Chunk Ids",
       "type": "array"
     },
+    "paper_ids": {
+      "items": {
+        "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Paper Ids",
+      "type": "array"
+    },
+    "preprocessing": {
+      "const": "unicode_word_punctuation_v1",
+      "default": "unicode_word_punctuation_v1",
+      "title": "Preprocessing",
+      "type": "string"
+    },
+    "regex_implementation": {
+      "const": "python3.11.re:unicode:flags=0",
+      "default": "python3.11.re:unicode:flags=0",
+      "title": "Regex Implementation",
+      "type": "string"
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
     "schema_version": {
       "const": "1",
       "default": "1",
       "title": "Schema Version",
+      "type": "string"
+    },
+    "statistics": {
+      "$ref": "#/$defs/Bm25Statistics"
+    },
+    "token_pattern": {
+      "const": "\\w+|[^\\w\\s]",
+      "default": "\\w+|[^\\w\\s]",
+      "title": "Token Pattern",
       "type": "string"
     },
     "tokenized_corpus": {
@@ -88,6 +257,12 @@
     }
   },
   "required": [
+    "representation",
+    "chunk_tokens",
+    "paper_ids",
+    "chunk_paper_ids",
+    "chunk_set_manifests",
+    "statistics",
     "configuration",
     "chunk_sets",
     "ordered_chunk_ids",

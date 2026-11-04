@@ -72,10 +72,18 @@ def record_ref(
     elif isinstance(value, (Bm25Index, DenseIndex)):
         kind = "bm25_index" if isinstance(value, Bm25Index) else "dense_index"
         dependencies = [("chunk_set", item) for item in value.chunk_sets]
+        if isinstance(value, Bm25Index):
+            dependencies = [
+                (role, ref)
+                for pair in zip(value.chunk_sets, value.chunk_set_manifests, strict=True)
+                for role, ref in zip(("chunk_set", "chunk_set_build_manifest"), pair, strict=True)
+            ]
         if isinstance(value, DenseIndex):
             dependencies.append(("vectors", value.vectors))
     elif isinstance(value, RankedRetrieval):
         kind, dependencies = "ranked_retrieval", [("index", value.index)]
+        if value.index_build_manifest is not None:
+            dependencies.append(("index_build_manifest", value.index_build_manifest))
     else:
         kind, dependencies = "context", [("retrieval", value.retrieval)]
     dependencies.append(("configuration", value.configuration.artifact))

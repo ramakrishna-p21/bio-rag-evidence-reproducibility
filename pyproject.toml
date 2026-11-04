@@ -11,6 +11,7 @@ requires-python = ">=3.11,<3.12"
 dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 
 [project.optional-dependencies]
+bm25 = ["rank-bm25==0.2.2"]
 chunking = ["tokenizers==0.22.2"]
 benchmark = ["PyMuPDF==1.26.5"]
 pdf = ["docling-slim==2.145.0", "docling-core==2.105.0", "docling-parse==7.24.2", "docling-ibm-models==4.0.4", "torch==2.15.0"]

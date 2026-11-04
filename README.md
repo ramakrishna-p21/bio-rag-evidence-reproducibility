@@ -4,7 +4,7 @@ Research software for evaluating how two representations of the same frozen publ
 
 ## Local setup
 
-Python 3.11 is required. Install the project and development tools with `python -m pip install -e '.[dev,benchmark]'`. PyMuPDF is used only to locate evidence in original PDFs for human review.
+Python 3.11 is required. Install the project and development tools with `python -m pip install -e '.[dev,benchmark,bm25]'`. PyMuPDF is used only to locate evidence in original PDFs for human review.
 
 ## Benchmark construction
 

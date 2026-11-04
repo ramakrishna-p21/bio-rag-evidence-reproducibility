@@ -233,8 +233,31 @@ class ChunkSet(Record):
         return self
 
 
+class Bm25Statistics(Record):
+    corpus_size: int = Field(gt=0)
+    document_lengths: list[Annotated[int, Field(gt=0)]]
+    term_frequencies: list[dict[Nonblank, Annotated[int, Field(gt=0)]]]
+    document_frequencies: dict[Nonblank, Annotated[int, Field(gt=0)]]
+    average_document_length: float = Field(gt=0)
+    average_idf: float
+    idf: dict[Nonblank, float]
+
+
 class Bm25Index(Record):
     schema_version: Literal["1"] = "1"
+    representation: Representation
+    chunk_tokens: Literal[192, 384]
+    paper_ids: list[PaperId] = Field(min_length=1)
+    chunk_paper_ids: list[PaperId] = Field(min_length=1)
+    chunk_set_manifests: list[ArtifactRef] = Field(min_length=1)
+    preprocessing: Literal["unicode_word_punctuation_v1"] = "unicode_word_punctuation_v1"
+    token_pattern: Literal[r"\w+|[^\w\s]"] = r"\w+|[^\w\s]"
+    regex_implementation: Literal["python3.11.re:unicode:flags=0"] = "python3.11.re:unicode:flags=0"
+    implementation: Literal["rank-bm25==0.2.2:BM25Okapi"] = "rank-bm25==0.2.2:BM25Okapi"
+    k1: float = Field(default=1.5, ge=1.5, le=1.5)
+    b: float = Field(default=0.75, ge=0.75, le=0.75)
+    epsilon: float = Field(default=0.25, ge=0.25, le=0.25)
+    statistics: Bm25Statistics
     configuration: ConfigurationRef
     chunk_sets: list[ArtifactRef] = Field(min_length=1)
     ordered_chunk_ids: list[Nonblank] = Field(min_length=1)
@@ -242,6 +265,13 @@ class Bm25Index(Record):
 
     @model_validator(mode="after")
     def valid_rows(self) -> Self:
+        _unique(self.paper_ids, "index paper")
+        if self.paper_ids != sorted(set(self.chunk_paper_ids)):
+            raise ValueError("index paper membership differs from rows")
+        if len(self.chunk_set_manifests) != len(self.chunk_sets):
+            raise ValueError("index chunk-set manifests differ from inputs")
+        if len(self.chunk_paper_ids) != len(self.ordered_chunk_ids):
+            raise ValueError("index paper rows differ from chunk IDs")
         _unique(self.ordered_chunk_ids, "index chunk")
         _unique([item.artifact_id for item in self.chunk_sets], "index chunk set")
         if len(self.ordered_chunk_ids) != len(self.tokenized_corpus):
@@ -283,6 +313,7 @@ class RankedRetrieval(Record):
     schema_version: Literal["1"] = "1"
     configuration: ConfigurationRef
     index: ArtifactRef
+    index_build_manifest: ArtifactRef | None = None
     retriever: Literal["bm25", "bge"]
     query_id: Nonblank
     question: Nonblank

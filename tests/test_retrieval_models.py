@@ -320,6 +320,20 @@ def records():
         chunk(),
         metadata(),
         Bm25Index(
+            representation="JATS",
+            chunk_tokens=192,
+            paper_ids=["P001"],
+            chunk_paper_ids=["P001"],
+            chunk_set_manifests=[ref("set_manifest")],
+            statistics={
+                "corpus_size": 1,
+                "document_lengths": [2],
+                "term_frequencies": [{"−": 1, "1.2": 1}],
+                "document_frequencies": {"−": 1, "1.2": 1},
+                "average_document_length": 2.0,
+                "average_idf": -1.0986122886681098,
+                "idf": {"−": -0.27465307216702745, "1.2": -0.27465307216702745},
+            },
             configuration=cfg,
             chunk_sets=[ref("set")],
             ordered_chunk_ids=["c1"],
@@ -433,6 +447,20 @@ def test_jsonl_contract_reuses_existing_project_serialization():
 
 def test_index_contract_can_reference_multiple_frozen_papers():
     value = Bm25Index(
+        representation="JATS",
+        chunk_tokens=192,
+        paper_ids=["P001", "P002"],
+        chunk_paper_ids=["P001", "P002"],
+        chunk_set_manifests=[ref("P001manifest"), ref("P002manifest")],
+        statistics={
+            "corpus_size": 2,
+            "document_lengths": [1, 1],
+            "term_frequencies": [{"a": 1}, {"b": 1}],
+            "document_frequencies": {"a": 1, "b": 1},
+            "average_document_length": 1.0,
+            "average_idf": 0.0,
+            "idf": {"a": 0.0, "b": 0.0},
+        },
         configuration=configuration(),
         chunk_sets=[ref("P001set"), ref("P002set")],
         ordered_chunk_ids=["c1", "c2"],

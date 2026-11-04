@@ -86,10 +86,14 @@ def test_index_links_reject_renewed_but_wrong_chunk_order(index_position):
     first.accounting[0].chunk_ids = ["c1"]
     second.accounting[0].chunk_ids = ["c2"]
     references = [record_ref(first), record_ref(second)]
-    index.chunk_sets = references
+    index.chunk_sets = (
+        sorted(references, key=lambda ref: ref.artifact_id) if index_position == 3 else references
+    )
     index.ordered_chunk_ids = ["c1", "c2"]
     if index_position == 3:
         index.tokenized_corpus = [["a"], ["b"]]
+        index.chunk_paper_ids = ["P001", "P001"]
+        index.chunk_set_manifests *= 2
     else:
         index.input_token_counts = [1, 1]
     validate_index_links(index, [first, second])
