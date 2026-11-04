@@ -4,7 +4,7 @@ Research software for evaluating how two representations of the same frozen publ
 
 ## Local setup
 
-Python 3.11 is required. Install the project and development tools with `python -m pip install -e '.[dev,benchmark,bm25]'`. PyMuPDF is used only to locate evidence in original PDFs for human review.
+Python 3.11 is required. Install the project and development tools with `python -m pip install -e '.[dev,benchmark,bm25,dense]'`. PyMuPDF is used only to locate evidence in original PDFs for human review.
 
 ## Benchmark construction
 
@@ -15,3 +15,5 @@ The frozen source files and production benchmark working artifacts remain outsid
 ## Checks
 
 Run `python -m pytest -q`, `python -m ruff format --check .`, `python -m ruff check .`, `python -m mypy src/biorag_repro`, and `python scripts/export_schemas.py --check` for the current code and schema checks.
+
+Dense inference uses a verified local `BAAI/bge-base-en-v1.5` snapshot and CPU float32 execution. For the CPU dependency build, install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` before installing the project extras. Select the pinned snapshot directory with `BIORAG_BGE_ROOT` when running tests to include actual model checks. Without that setting, the model test is skipped and model behavior remains unverified by that test run. Model files and scientific data are acquired separately and kept outside Git.

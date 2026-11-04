@@ -266,16 +266,18 @@ def validate_index_links(index: Bm25Index | DenseIndex, chunk_sets: list[ChunkSe
     from biorag_repro.retrieval.storage import record_ref
 
     index = type(index).model_validate(index.model_dump())
-    if isinstance(index, Bm25Index):
-        chunk_sets = sorted(chunk_sets, key=lambda item: record_ref(item).artifact_id)
+    chunk_sets = sorted(chunk_sets, key=lambda item: record_ref(item).artifact_id)
     if index.chunk_sets != [record_ref(item) for item in chunk_sets]:
         raise ValueError("index chunk-set references differ from selected inputs")
     expected_ids = [chunk_id for item in chunk_sets for chunk_id in item.chunk_ids]
-    if isinstance(index, Bm25Index):
-        expected_ids.sort()
+    expected_ids.sort()
     if index.ordered_chunk_ids != expected_ids:
         raise ValueError("index chunk order differs from selected chunk sets")
-    if any(item.configuration != index.configuration for item in chunk_sets):
+    # Dense execution adds the verified model pin to the retained chunk settings.
+    # Its scientific reader checks the resolved settings, not reference equality.
+    if isinstance(index, Bm25Index) and any(
+        item.configuration != index.configuration for item in chunk_sets
+    ):
         raise ValueError("index configuration differs from selected chunk sets")
     if len({(item.input.representation) for item in chunk_sets}) != 1:
         raise ValueError("index mixes source representations")

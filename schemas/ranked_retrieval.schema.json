@@ -44,6 +44,36 @@
       "title": "ConfigurationRef",
       "type": "object"
     },
+    "DenseQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "model_input_sha256": {
+          "title": "Model Input Sha256",
+          "type": "string"
+        },
+        "token_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 512,
+          "title": "Token Count",
+          "type": "integer"
+        },
+        "vector": {
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "title": "Vector",
+          "type": "array"
+        }
+      },
+      "required": [
+        "token_count",
+        "model_input_sha256",
+        "vector"
+      ],
+      "title": "DenseQuery",
+      "type": "object"
+    },
     "RankedHit": {
       "additionalProperties": false,
       "properties": {
@@ -80,6 +110,17 @@
   "properties": {
     "configuration": {
       "$ref": "#/$defs/ConfigurationRef"
+    },
+    "dense_query": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DenseQuery"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "designated_paper_id": {
       "anyOf": [

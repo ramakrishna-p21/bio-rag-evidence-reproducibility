@@ -281,14 +281,56 @@ class Bm25Index(Record):
         return self
 
 
+class DenseExecution(Record):
+    model: Snapshot
+    tokenizer: Snapshot
+    query_instruction: Literal["Represent this sentence for searching relevant passages: "] = (
+        "Represent this sentence for searching relevant passages: "
+    )
+    passage_instruction: Literal[""] = ""
+    preprocessing: Literal["bert_uncased_complete_special_tokens_v1"] = (
+        "bert_uncased_complete_special_tokens_v1"
+    )
+    capacity: Literal[512] = 512
+    dimension: Literal[768] = 768
+    pooling: Literal["final_hidden_state_cls"] = "final_hidden_state_cls"
+    normalization: Literal["l2"] = "l2"
+    device: Literal["cpu"] = "cpu"
+    dtype: Literal["float32"] = "float32"
+    attention: Literal["eager"] = "eager"
+    evaluation: Literal[True] = True
+    inference_only: Literal[True] = True
+    deterministic_algorithms: Literal[True] = True
+    batch_size: int = Field(gt=0)
+    threads: int = Field(gt=0)
+    interop_threads: int = Field(gt=0)
+    versions: dict[Nonblank, Nonblank] = Field(min_length=1)
+
+
+class DenseQuery(Record):
+    token_count: int = Field(gt=0, le=512)
+    model_input_sha256: Sha256
+    vector: list[float] = Field(min_length=1)
+
+
 class DenseIndex(Record):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     configuration: ConfigurationRef
+    representation: Representation
+    chunk_tokens: Literal[192, 384]
+    paper_ids: list[PaperId] = Field(min_length=1)
+    chunk_paper_ids: list[PaperId] = Field(min_length=1)
+    chunk_set_manifests: list[ArtifactRef] = Field(min_length=1)
+    execution: DenseExecution
     chunk_sets: list[ArtifactRef] = Field(min_length=1)
     ordered_chunk_ids: list[Nonblank] = Field(min_length=1)
     vectors: ArtifactRef
+    vectors_build_manifest: ArtifactRef
     dimension: int = Field(gt=0)
+    vector_count: int = Field(gt=0)
+    shape: list[int] = Field(min_length=2, max_length=2)
     input_token_counts: list[Annotated[int, Field(gt=0)]]
+    input_id_hashes: list[Sha256]
     dtype: Literal["float32"] = "float32"
     normalization: Literal["l2"] = "l2"
     similarity: Literal["exact_dot_product"] = "exact_dot_product"
@@ -299,6 +341,19 @@ class DenseIndex(Record):
         _unique([item.artifact_id for item in self.chunk_sets], "index chunk set")
         if len(self.ordered_chunk_ids) != len(self.input_token_counts):
             raise ValueError("dense input counts and chunk IDs differ")
+        if len(self.input_id_hashes) != len(self.ordered_chunk_ids):
+            raise ValueError("dense input hashes and chunk IDs differ")
+        if len(self.chunk_paper_ids) != len(self.ordered_chunk_ids):
+            raise ValueError("dense paper rows and chunk IDs differ")
+        if self.paper_ids != sorted(set(self.chunk_paper_ids)):
+            raise ValueError("dense paper membership differs")
+        if len(self.chunk_set_manifests) != len(self.chunk_sets):
+            raise ValueError("dense chunk-set manifests differ")
+        if self.vector_count != len(self.ordered_chunk_ids) or self.shape != [
+            self.vector_count,
+            self.dimension,
+        ]:
+            raise ValueError("dense vector count/shape differs from ordered membership")
         return self
 
 
@@ -321,9 +376,12 @@ class RankedRetrieval(Record):
     scope: Literal["designated_paper", "full_corpus"]
     designated_paper_id: PaperId | None
     hits: list[RankedHit] = Field(max_length=20)
+    dense_query: DenseQuery | None = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def valid_ranks(self) -> Self:
+        if (self.retriever == "bge") != (self.dense_query is not None):
+            raise ValueError("BGE retrieval requires complete query evidence; BM25 has none")
         _unique([item.chunk.artifact_id for item in self.hits], "ranked chunk")
         if [item.rank for item in self.hits] != list(range(1, len(self.hits) + 1)):
             raise ValueError("retrieval ranks must be contiguous in supplied order")
