@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ConfigurationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "resolved_sha256": {
+          "title": "Resolved Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "resolved_sha256"
+      ],
+      "title": "ConfigurationRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "chunk_sets": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "minItems": 1,
+      "title": "Chunk Sets",
+      "type": "array"
+    },
+    "configuration": {
+      "$ref": "#/$defs/ConfigurationRef"
+    },
+    "dimension": {
+      "exclusiveMinimum": 0,
+      "title": "Dimension",
+      "type": "integer"
+    },
+    "dtype": {
+      "const": "float32",
+      "default": "float32",
+      "title": "Dtype",
+      "type": "string"
+    },
+    "input_token_counts": {
+      "items": {
+        "exclusiveMinimum": 0,
+        "type": "integer"
+      },
+      "title": "Input Token Counts",
+      "type": "array"
+    },
+    "normalization": {
+      "const": "l2",
+      "default": "l2",
+      "title": "Normalization",
+      "type": "string"
+    },
+    "ordered_chunk_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Ordered Chunk Ids",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "similarity": {
+      "const": "exact_dot_product",
+      "default": "exact_dot_product",
+      "title": "Similarity",
+      "type": "string"
+    },
+    "vectors": {
+      "$ref": "#/$defs/ArtifactRef"
+    }
+  },
+  "required": [
+    "configuration",
+    "chunk_sets",
+    "ordered_chunk_ids",
+    "vectors",
+    "dimension",
+    "input_token_counts"
+  ],
+  "title": "DenseIndex",
+  "type": "object"
+}

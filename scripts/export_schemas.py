@@ -23,9 +23,27 @@ from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
 from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
+from biorag_repro.retrieval.models import (
+    Bm25Index,
+    CanonicalInput,
+    Chunk,
+    ChunkSet,
+    ContextRecord,
+    DenseIndex,
+    Phase5Configuration,
+    RankedRetrieval,
+)
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "phase5_configuration.schema.json": Phase5Configuration,
+    "canonical_input.schema.json": CanonicalInput,
+    "chunk.schema.json": Chunk,
+    "chunk_set.schema.json": ChunkSet,
+    "bm25_index.schema.json": Bm25Index,
+    "dense_index.schema.json": DenseIndex,
+    "ranked_retrieval.schema.json": RankedRetrieval,
+    "context_record.schema.json": ContextRecord,
     "phase4_reproduction_candidate.schema.json": ReproductionCandidate,
     "benchmark_item.schema.json": BenchmarkItem,
     "benchmark_split.schema.json": PaperSplit,
