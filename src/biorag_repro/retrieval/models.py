@@ -11,6 +11,9 @@ from biorag_repro.documents.models import ContentState, MappingState, Record, So
 Sha256 = Annotated[str, AfterValidator(lambda value: _digest(value))]
 Nonblank = Annotated[str, Field(min_length=1, pattern=r"\S")]
 Representation = Literal["JATS", "PDF_DOCLING"]
+OccurrenceField = Literal["segment", "table_cell", "native_orig", "native_marker", "nontextual"]
+ContributorUsage = Literal["content", "repeated_context", "containing_reference"]
+AccountingStatus = Literal["included", "oversized", "unsupported", "nontextual"]
 PaperId = Annotated[str, Field(pattern=r"^P0(?:0[1-9]|[1-4][0-9]|50)$")]
 
 
@@ -72,6 +75,11 @@ class Phase5Configuration(Record):
     evidence_tokens: Literal[2048] = 2048
     duplicate_policy: Literal["text_and_scientific_provenance"] = "text_and_scientific_provenance"
     stop_policy: Literal["first_nonfitting"] = "first_nonfitting"
+    chunking_algorithm: Literal["canonical_whole_units_v1"] = "canonical_whole_units_v1"
+    construction_counting: Literal["no_special_tokens_no_padding_no_truncation"] = (
+        "no_special_tokens_no_padding_no_truncation"
+    )
+    construction_backend: Literal["tokenizers==0.22.2"] = "tokenizers==0.22.2"
 
     @model_validator(mode="after")
     def permitted_models(self) -> Self:
@@ -119,7 +127,7 @@ class SourceOccurrence(Record):
     occurrence_id: Nonblank
     canonical: ArtifactRef
     owner_node_id: Nonblank
-    field: Literal["segment", "table_cell", "native_orig", "native_marker", "nontextual"]
+    field: OccurrenceField
     segment_index: int | None = Field(ge=0)
     mapping: SourceMapping
     text: str | None
@@ -145,7 +153,7 @@ class SourceOccurrence(Record):
 class SourceContributor(Record):
     occurrence_id: Nonblank
     node_id: Nonblank
-    usage: Literal["content", "repeated_context", "containing_reference"]
+    usage: ContributorUsage
 
 
 class Chunk(Record):
@@ -159,7 +167,7 @@ class Chunk(Record):
 
 class OccurrenceAccounting(Record):
     occurrence_id: Nonblank
-    status: Literal["included", "oversized", "unsupported", "nontextual"]
+    status: AccountingStatus
     chunk_ids: list[Nonblank]
     reason: Nonblank | None
 
@@ -174,14 +182,41 @@ class OccurrenceAccounting(Record):
         return self
 
 
+class ChunkingDiagnostic(Record):
+    unit_id: Nonblank
+    kind: Nonblank
+    code: Literal["oversized", "unsupported", "nontextual", "layout_only"]
+    source_node_ids: list[Nonblank] = Field(min_length=1)
+    contributors: list[SourceContributor] = Field(min_length=1)
+    actual_tokens: int | None = Field(ge=0)
+    token_limit: Literal[192, 384]
+    rendered_text: str | None
+    reason: Nonblank
+    uncertainty: list[Nonblank]
+
+    @model_validator(mode="after")
+    def valid_oversize(self) -> Self:
+        if self.code == "oversized" and (
+            self.actual_tokens is None
+            or self.actual_tokens <= self.token_limit
+            or self.rendered_text is None
+        ):
+            raise ValueError(
+                "oversized diagnostic requires complete text and actual over-limit count"
+            )
+        return self
+
+
 class ChunkSet(Record):
     schema_version: Literal["1"] = "1"
     input: CanonicalInput
     configuration: ConfigurationRef
     chunks: ArtifactRef
+    chunks_build_manifest: ArtifactRef | None = None
     chunk_ids: list[Nonblank]
     occurrences: list[SourceOccurrence]
     accounting: list[OccurrenceAccounting]
+    diagnostics: list[ChunkingDiagnostic] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def complete_accounting(self) -> Self:

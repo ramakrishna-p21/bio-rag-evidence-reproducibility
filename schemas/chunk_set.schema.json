@@ -80,6 +80,111 @@
       "title": "CanonicalInput",
       "type": "object"
     },
+    "ChunkingDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Actual Tokens"
+        },
+        "code": {
+          "enum": [
+            "oversized",
+            "unsupported",
+            "nontextual",
+            "layout_only"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/SourceContributor"
+          },
+          "minItems": 1,
+          "title": "Contributors",
+          "type": "array"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        },
+        "rendered_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rendered Text"
+        },
+        "source_node_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Node Ids",
+          "type": "array"
+        },
+        "token_limit": {
+          "enum": [
+            192,
+            384
+          ],
+          "title": "Token Limit",
+          "type": "integer"
+        },
+        "uncertainty": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Uncertainty",
+          "type": "array"
+        },
+        "unit_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Unit Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unit_id",
+        "kind",
+        "code",
+        "source_node_ids",
+        "contributors",
+        "actual_tokens",
+        "token_limit",
+        "rendered_text",
+        "reason",
+        "uncertainty"
+      ],
+      "title": "ChunkingDiagnostic",
+      "type": "object"
+    },
     "ConfigurationRef": {
       "additionalProperties": false,
       "properties": {
@@ -264,6 +369,39 @@
         "reason"
       ],
       "title": "OccurrenceAccounting",
+      "type": "object"
+    },
+    "SourceContributor": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "occurrence_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Occurrence Id",
+          "type": "string"
+        },
+        "usage": {
+          "enum": [
+            "content",
+            "repeated_context",
+            "containing_reference"
+          ],
+          "title": "Usage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "occurrence_id",
+        "node_id",
+        "usage"
+      ],
+      "title": "SourceContributor",
       "type": "object"
     },
     "SourceMapping": {
@@ -517,8 +655,26 @@
     "chunks": {
       "$ref": "#/$defs/ArtifactRef"
     },
+    "chunks_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "configuration": {
       "$ref": "#/$defs/ConfigurationRef"
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/ChunkingDiagnostic"
+      },
+      "title": "Diagnostics",
+      "type": "array"
     },
     "input": {
       "$ref": "#/$defs/CanonicalInput"

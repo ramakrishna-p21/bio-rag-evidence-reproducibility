@@ -78,6 +78,24 @@
       "title": "Chunk Tokens",
       "type": "integer"
     },
+    "chunking_algorithm": {
+      "const": "canonical_whole_units_v1",
+      "default": "canonical_whole_units_v1",
+      "title": "Chunking Algorithm",
+      "type": "string"
+    },
+    "construction_backend": {
+      "const": "tokenizers==0.22.2",
+      "default": "tokenizers==0.22.2",
+      "title": "Construction Backend",
+      "type": "string"
+    },
+    "construction_counting": {
+      "const": "no_special_tokens_no_padding_no_truncation",
+      "default": "no_special_tokens_no_padding_no_truncation",
+      "title": "Construction Counting",
+      "type": "string"
+    },
     "construction_tokenizer": {
       "$ref": "#/$defs/Snapshot"
     },

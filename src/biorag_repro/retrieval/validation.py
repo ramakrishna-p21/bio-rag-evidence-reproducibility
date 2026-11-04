@@ -155,7 +155,12 @@ def validate_occurrences(
             text = node.native_orig
         elif item.field == "native_marker":
             text = node.native_marker
-        elif node.segments or node.native_orig or node.native_marker or node.node_id in cells:
+        elif (
+            node.segments
+            or node.native_orig
+            or node.native_marker
+            or (node.node_id in cells and cells[node.node_id].text)
+        ):
             raise ValueError("nontextual occurrence hides canonical textual content")
         if (
             item.mapping != mapping

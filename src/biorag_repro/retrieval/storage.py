@@ -67,6 +67,8 @@ def record_ref(
         dependencies = [(item.role, item.artifact) for item in _inputs(value.input)]
         if isinstance(value, ChunkSet):
             dependencies.append(("chunks_jsonl", value.chunks))
+            if value.chunks_build_manifest is not None:
+                dependencies.append(("chunks_build_manifest", value.chunks_build_manifest))
     elif isinstance(value, (Bm25Index, DenseIndex)):
         kind = "bm25_index" if isinstance(value, Bm25Index) else "dense_index"
         dependencies = [("chunk_set", item) for item in value.chunk_sets]
