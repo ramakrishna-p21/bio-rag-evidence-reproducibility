@@ -1,0 +1,220 @@
+{
+  "$defs": {
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "A recorded pin is not a claim of installed assets or qualification.",
+      "properties": {
+        "file_hashes": {
+          "patternProperties": {
+            "\\S": {
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "File Hashes",
+          "type": "object"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "state": {
+          "enum": [
+            "unresolved",
+            "pinned"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "state"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Shared settings exclude the per-condition representation coordinate.",
+  "properties": {
+    "b": {
+      "default": 0.75,
+      "maximum": 0.75,
+      "minimum": 0.75,
+      "title": "B",
+      "type": "number"
+    },
+    "bge_model": {
+      "$ref": "#/$defs/Snapshot"
+    },
+    "bm25_implementation": {
+      "const": "rank-bm25==0.2.2:BM25Okapi",
+      "default": "rank-bm25==0.2.2:BM25Okapi",
+      "title": "Bm25 Implementation",
+      "type": "string"
+    },
+    "chunk_tokens": {
+      "enum": [
+        192,
+        384
+      ],
+      "title": "Chunk Tokens",
+      "type": "integer"
+    },
+    "chunking_algorithm": {
+      "const": "canonical_whole_units_v1",
+      "default": "canonical_whole_units_v1",
+      "title": "Chunking Algorithm",
+      "type": "string"
+    },
+    "construction_backend": {
+      "const": "tokenizers==0.22.2",
+      "default": "tokenizers==0.22.2",
+      "title": "Construction Backend",
+      "type": "string"
+    },
+    "construction_counting": {
+      "const": "no_special_tokens_no_padding_no_truncation",
+      "default": "no_special_tokens_no_padding_no_truncation",
+      "title": "Construction Counting",
+      "type": "string"
+    },
+    "construction_tokenizer": {
+      "$ref": "#/$defs/Snapshot"
+    },
+    "context_candidates": {
+      "const": 20,
+      "default": 20,
+      "title": "Context Candidates",
+      "type": "integer"
+    },
+    "context_rendering": {
+      "anyOf": [
+        {
+          "const": "whole_evidence_wrappers_qwen_no_special_tokens_v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context Rendering"
+    },
+    "duplicate_policy": {
+      "const": "text_and_scientific_provenance",
+      "default": "text_and_scientific_provenance",
+      "title": "Duplicate Policy",
+      "type": "string"
+    },
+    "epsilon": {
+      "default": 0.25,
+      "maximum": 0.25,
+      "minimum": 0.25,
+      "title": "Epsilon",
+      "type": "number"
+    },
+    "evidence_tokens": {
+      "const": 2048,
+      "default": 2048,
+      "title": "Evidence Tokens",
+      "type": "integer"
+    },
+    "k1": {
+      "default": 1.5,
+      "maximum": 1.5,
+      "minimum": 1.5,
+      "title": "K1",
+      "type": "number"
+    },
+    "lexical_tokenizer": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Lexical Tokenizer",
+      "type": "string"
+    },
+    "overlap_tokens": {
+      "const": 0,
+      "default": 0,
+      "title": "Overlap Tokens",
+      "type": "integer"
+    },
+    "oversized_policy": {
+      "const": "diagnose_without_truncation",
+      "default": "diagnose_without_truncation",
+      "title": "Oversized Policy",
+      "type": "string"
+    },
+    "packing_tokenizer": {
+      "$ref": "#/$defs/Snapshot"
+    },
+    "purpose": {
+      "enum": [
+        "development_contract",
+        "synthetic_fixture"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "designated_paper",
+        "full_corpus"
+      ],
+      "title": "Scope",
+      "type": "string"
+    },
+    "statistics": {
+      "const": "representation_wide",
+      "default": "representation_wide",
+      "title": "Statistics",
+      "type": "string"
+    },
+    "stop_policy": {
+      "const": "first_nonfitting",
+      "default": "first_nonfitting",
+      "title": "Stop Policy",
+      "type": "string"
+    },
+    "unit_policy": {
+      "const": "complete_units",
+      "default": "complete_units",
+      "title": "Unit Policy",
+      "type": "string"
+    }
+  },
+  "required": [
+    "purpose",
+    "chunk_tokens",
+    "construction_tokenizer",
+    "packing_tokenizer",
+    "bge_model",
+    "lexical_tokenizer",
+    "scope"
+  ],
+  "title": "Phase5Configuration",
+  "type": "object"
+}

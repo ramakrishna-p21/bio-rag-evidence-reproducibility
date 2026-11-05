@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ConfigurationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "resolved_sha256": {
+          "title": "Resolved Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "resolved_sha256"
+      ],
+      "title": "ConfigurationRef",
+      "type": "object"
+    },
+    "DenseQuery": {
+      "additionalProperties": false,
+      "properties": {
+        "model_input_sha256": {
+          "title": "Model Input Sha256",
+          "type": "string"
+        },
+        "token_count": {
+          "exclusiveMinimum": 0,
+          "maximum": 512,
+          "title": "Token Count",
+          "type": "integer"
+        },
+        "vector": {
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "title": "Vector",
+          "type": "array"
+        }
+      },
+      "required": [
+        "token_count",
+        "model_input_sha256",
+        "vector"
+      ],
+      "title": "DenseQuery",
+      "type": "object"
+    },
+    "RankedHit": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "paper_id": {
+          "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "rank": {
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "rank",
+        "chunk",
+        "paper_id",
+        "score"
+      ],
+      "title": "RankedHit",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configuration": {
+      "$ref": "#/$defs/ConfigurationRef"
+    },
+    "dense_query": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/DenseQuery"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "designated_paper_id": {
+      "anyOf": [
+        {
+          "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Designated Paper Id"
+    },
+    "hits": {
+      "items": {
+        "$ref": "#/$defs/RankedHit"
+      },
+      "maxItems": 20,
+      "title": "Hits",
+      "type": "array"
+    },
+    "index": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "index_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "query_id": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Query Id",
+      "type": "string"
+    },
+    "question": {
+      "minLength": 1,
+      "pattern": "\\S",
+      "title": "Question",
+      "type": "string"
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
+    "retriever": {
+      "enum": [
+        "bm25",
+        "bge"
+      ],
+      "title": "Retriever",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "designated_paper",
+        "full_corpus"
+      ],
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration",
+    "index",
+    "retriever",
+    "query_id",
+    "question",
+    "representation",
+    "scope",
+    "designated_paper_id",
+    "hits"
+  ],
+  "title": "RankedRetrieval",
+  "type": "object"
+}

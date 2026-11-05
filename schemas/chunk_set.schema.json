@@ -1,0 +1,706 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "CanonicalInput": {
+      "additionalProperties": false,
+      "properties": {
+        "build_manifest": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "canonical": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "corpus_release_sha256": {
+          "title": "Corpus Release Sha256",
+          "type": "string"
+        },
+        "corpus_version": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Corpus Version",
+          "type": "string"
+        },
+        "paper_id": {
+          "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "representation": {
+          "enum": [
+            "JATS",
+            "PDF_DOCLING"
+          ],
+          "title": "Representation",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1",
+          "default": "1",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "validation": {
+          "$ref": "#/$defs/ArtifactRef"
+        }
+      },
+      "required": [
+        "corpus_version",
+        "corpus_release_sha256",
+        "paper_id",
+        "representation",
+        "canonical",
+        "validation",
+        "build_manifest"
+      ],
+      "title": "CanonicalInput",
+      "type": "object"
+    },
+    "ChunkingDiagnostic": {
+      "additionalProperties": false,
+      "properties": {
+        "actual_tokens": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Actual Tokens"
+        },
+        "code": {
+          "enum": [
+            "oversized",
+            "unsupported",
+            "nontextual",
+            "layout_only"
+          ],
+          "title": "Code",
+          "type": "string"
+        },
+        "contributors": {
+          "items": {
+            "$ref": "#/$defs/SourceContributor"
+          },
+          "minItems": 1,
+          "title": "Contributors",
+          "type": "array"
+        },
+        "kind": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Kind",
+          "type": "string"
+        },
+        "reason": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Reason",
+          "type": "string"
+        },
+        "rendered_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rendered Text"
+        },
+        "source_node_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Node Ids",
+          "type": "array"
+        },
+        "token_limit": {
+          "enum": [
+            192,
+            384
+          ],
+          "title": "Token Limit",
+          "type": "integer"
+        },
+        "uncertainty": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Uncertainty",
+          "type": "array"
+        },
+        "unit_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Unit Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "unit_id",
+        "kind",
+        "code",
+        "source_node_ids",
+        "contributors",
+        "actual_tokens",
+        "token_limit",
+        "rendered_text",
+        "reason",
+        "uncertainty"
+      ],
+      "title": "ChunkingDiagnostic",
+      "type": "object"
+    },
+    "ConfigurationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "resolved_sha256": {
+          "title": "Resolved Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "resolved_sha256"
+      ],
+      "title": "ConfigurationRef",
+      "type": "object"
+    },
+    "NativeBBox": {
+      "additionalProperties": false,
+      "properties": {
+        "b": {
+          "title": "B",
+          "type": "number"
+        },
+        "coord_origin": {
+          "minLength": 1,
+          "title": "Coord Origin",
+          "type": "string"
+        },
+        "l": {
+          "title": "L",
+          "type": "number"
+        },
+        "r": {
+          "title": "R",
+          "type": "number"
+        },
+        "t": {
+          "title": "T",
+          "type": "number"
+        }
+      },
+      "required": [
+        "l",
+        "t",
+        "r",
+        "b",
+        "coord_origin"
+      ],
+      "title": "NativeBBox",
+      "type": "object"
+    },
+    "NativeProvenance": {
+      "additionalProperties": false,
+      "properties": {
+        "bbox": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NativeBBox"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "charspan": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 2,
+              "minItems": 2,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Charspan"
+        },
+        "charspan_state": {
+          "enum": [
+            "meaningful",
+            "placeholder",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged"
+          ],
+          "title": "Charspan State",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 0,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "page_no": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page No"
+        },
+        "state": {
+          "enum": [
+            "exact_native",
+            "derived",
+            "approximate",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ordinal",
+        "charspan_state",
+        "state"
+      ],
+      "title": "NativeProvenance",
+      "type": "object"
+    },
+    "OccurrenceAccounting": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_ids": {
+          "items": {
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Chunk Ids",
+          "type": "array"
+        },
+        "occurrence_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Occurrence Id",
+          "type": "string"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "included",
+            "oversized",
+            "unsupported",
+            "nontextual"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "occurrence_id",
+        "status",
+        "chunk_ids",
+        "reason"
+      ],
+      "title": "OccurrenceAccounting",
+      "type": "object"
+    },
+    "SourceContributor": {
+      "additionalProperties": false,
+      "properties": {
+        "node_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Node Id",
+          "type": "string"
+        },
+        "occurrence_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Occurrence Id",
+          "type": "string"
+        },
+        "usage": {
+          "enum": [
+            "content",
+            "repeated_context",
+            "containing_reference"
+          ],
+          "title": "Usage",
+          "type": "string"
+        }
+      },
+      "required": [
+        "occurrence_id",
+        "node_id",
+        "usage"
+      ],
+      "title": "SourceContributor",
+      "type": "object"
+    },
+    "SourceMapping": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "jats",
+            "docling"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "native_artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "native_ref": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Ref"
+        },
+        "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Path"
+        },
+        "provenance": {
+          "items": {
+            "$ref": "#/$defs/NativeProvenance"
+          },
+          "title": "Provenance",
+          "type": "array"
+        },
+        "segment_ordinal": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Segment Ordinal"
+        },
+        "source_artifact_id": {
+          "minLength": 1,
+          "title": "Source Artifact Id",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "exact_native",
+            "derived",
+            "approximate",
+            "unavailable",
+            "ambiguous",
+            "parser_damaged",
+            "failed"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "state",
+        "source_artifact_id"
+      ],
+      "title": "SourceMapping",
+      "type": "object"
+    },
+    "SourceOccurrence": {
+      "additionalProperties": false,
+      "description": "One location/field; containing-node references do not create new evidence.",
+      "properties": {
+        "canonical": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "content_state": {
+          "enum": [
+            "present",
+            "marker_only",
+            "missing",
+            "unsupported",
+            "unverified_native_rendition"
+          ],
+          "title": "Content State",
+          "type": "string"
+        },
+        "field": {
+          "enum": [
+            "segment",
+            "table_cell",
+            "native_orig",
+            "native_marker",
+            "nontextual"
+          ],
+          "title": "Field",
+          "type": "string"
+        },
+        "interpretation_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "exact_native",
+                "derived",
+                "approximate",
+                "unavailable",
+                "ambiguous",
+                "parser_damaged",
+                "failed"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interpretation State"
+        },
+        "mapping": {
+          "$ref": "#/$defs/SourceMapping"
+        },
+        "native_order_state": {
+          "anyOf": [
+            {
+              "enum": [
+                "linked",
+                "unpositioned"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Native Order State"
+        },
+        "occurrence_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Occurrence Id",
+          "type": "string"
+        },
+        "orig_qualification": {
+          "anyOf": [
+            {
+              "enum": [
+                "same_as_text",
+                "unverified_formula",
+                "marker_inclusive",
+                "unclassified_variant"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Orig Qualification"
+        },
+        "owner_node_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Owner Node Id",
+          "type": "string"
+        },
+        "segment_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Segment Index"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Text"
+        }
+      },
+      "required": [
+        "occurrence_id",
+        "canonical",
+        "owner_node_id",
+        "field",
+        "segment_index",
+        "mapping",
+        "text",
+        "content_state",
+        "interpretation_state"
+      ],
+      "title": "SourceOccurrence",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "accounting": {
+      "items": {
+        "$ref": "#/$defs/OccurrenceAccounting"
+      },
+      "title": "Accounting",
+      "type": "array"
+    },
+    "chunk_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Chunk Ids",
+      "type": "array"
+    },
+    "chunks": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "chunks_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "configuration": {
+      "$ref": "#/$defs/ConfigurationRef"
+    },
+    "diagnostics": {
+      "items": {
+        "$ref": "#/$defs/ChunkingDiagnostic"
+      },
+      "title": "Diagnostics",
+      "type": "array"
+    },
+    "input": {
+      "$ref": "#/$defs/CanonicalInput"
+    },
+    "occurrences": {
+      "items": {
+        "$ref": "#/$defs/SourceOccurrence"
+      },
+      "title": "Occurrences",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "input",
+    "configuration",
+    "chunks",
+    "chunk_ids",
+    "occurrences",
+    "accounting"
+  ],
+  "title": "ChunkSet",
+  "type": "object"
+}

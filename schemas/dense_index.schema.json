@@ -1,0 +1,380 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ConfigurationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "resolved_sha256": {
+          "title": "Resolved Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "resolved_sha256"
+      ],
+      "title": "ConfigurationRef",
+      "type": "object"
+    },
+    "DenseExecution": {
+      "additionalProperties": false,
+      "properties": {
+        "attention": {
+          "const": "eager",
+          "default": "eager",
+          "title": "Attention",
+          "type": "string"
+        },
+        "batch_size": {
+          "exclusiveMinimum": 0,
+          "title": "Batch Size",
+          "type": "integer"
+        },
+        "capacity": {
+          "const": 512,
+          "default": 512,
+          "title": "Capacity",
+          "type": "integer"
+        },
+        "deterministic_algorithms": {
+          "const": true,
+          "default": true,
+          "title": "Deterministic Algorithms",
+          "type": "boolean"
+        },
+        "device": {
+          "const": "cpu",
+          "default": "cpu",
+          "title": "Device",
+          "type": "string"
+        },
+        "dimension": {
+          "const": 768,
+          "default": 768,
+          "title": "Dimension",
+          "type": "integer"
+        },
+        "dtype": {
+          "const": "float32",
+          "default": "float32",
+          "title": "Dtype",
+          "type": "string"
+        },
+        "evaluation": {
+          "const": true,
+          "default": true,
+          "title": "Evaluation",
+          "type": "boolean"
+        },
+        "inference_only": {
+          "const": true,
+          "default": true,
+          "title": "Inference Only",
+          "type": "boolean"
+        },
+        "interop_threads": {
+          "exclusiveMinimum": 0,
+          "title": "Interop Threads",
+          "type": "integer"
+        },
+        "model": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "normalization": {
+          "const": "l2",
+          "default": "l2",
+          "title": "Normalization",
+          "type": "string"
+        },
+        "passage_instruction": {
+          "const": "",
+          "default": "",
+          "title": "Passage Instruction",
+          "type": "string"
+        },
+        "pooling": {
+          "const": "final_hidden_state_cls",
+          "default": "final_hidden_state_cls",
+          "title": "Pooling",
+          "type": "string"
+        },
+        "preprocessing": {
+          "const": "bert_uncased_complete_special_tokens_v1",
+          "default": "bert_uncased_complete_special_tokens_v1",
+          "title": "Preprocessing",
+          "type": "string"
+        },
+        "query_instruction": {
+          "const": "Represent this sentence for searching relevant passages: ",
+          "default": "Represent this sentence for searching relevant passages: ",
+          "title": "Query Instruction",
+          "type": "string"
+        },
+        "threads": {
+          "exclusiveMinimum": 0,
+          "title": "Threads",
+          "type": "integer"
+        },
+        "tokenizer": {
+          "$ref": "#/$defs/Snapshot"
+        },
+        "versions": {
+          "minProperties": 1,
+          "patternProperties": {
+            "\\S": {
+              "minLength": 1,
+              "pattern": "\\S",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "Versions",
+          "type": "object"
+        }
+      },
+      "required": [
+        "model",
+        "tokenizer",
+        "batch_size",
+        "threads",
+        "interop_threads",
+        "versions"
+      ],
+      "title": "DenseExecution",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "A recorded pin is not a claim of installed assets or qualification.",
+      "properties": {
+        "file_hashes": {
+          "patternProperties": {
+            "\\S": {
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "File Hashes",
+          "type": "object"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "state": {
+          "enum": [
+            "unresolved",
+            "pinned"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "state"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "chunk_paper_ids": {
+      "items": {
+        "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Chunk Paper Ids",
+      "type": "array"
+    },
+    "chunk_set_manifests": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "minItems": 1,
+      "title": "Chunk Set Manifests",
+      "type": "array"
+    },
+    "chunk_sets": {
+      "items": {
+        "$ref": "#/$defs/ArtifactRef"
+      },
+      "minItems": 1,
+      "title": "Chunk Sets",
+      "type": "array"
+    },
+    "chunk_tokens": {
+      "enum": [
+        192,
+        384
+      ],
+      "title": "Chunk Tokens",
+      "type": "integer"
+    },
+    "configuration": {
+      "$ref": "#/$defs/ConfigurationRef"
+    },
+    "dimension": {
+      "exclusiveMinimum": 0,
+      "title": "Dimension",
+      "type": "integer"
+    },
+    "dtype": {
+      "const": "float32",
+      "default": "float32",
+      "title": "Dtype",
+      "type": "string"
+    },
+    "execution": {
+      "$ref": "#/$defs/DenseExecution"
+    },
+    "input_id_hashes": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Input Id Hashes",
+      "type": "array"
+    },
+    "input_token_counts": {
+      "items": {
+        "exclusiveMinimum": 0,
+        "type": "integer"
+      },
+      "title": "Input Token Counts",
+      "type": "array"
+    },
+    "normalization": {
+      "const": "l2",
+      "default": "l2",
+      "title": "Normalization",
+      "type": "string"
+    },
+    "ordered_chunk_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Ordered Chunk Ids",
+      "type": "array"
+    },
+    "paper_ids": {
+      "items": {
+        "pattern": "^P0(?:0[1-9]|[1-4][0-9]|50)$",
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Paper Ids",
+      "type": "array"
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2",
+      "default": "2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "shape": {
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 2,
+      "minItems": 2,
+      "title": "Shape",
+      "type": "array"
+    },
+    "similarity": {
+      "const": "exact_dot_product",
+      "default": "exact_dot_product",
+      "title": "Similarity",
+      "type": "string"
+    },
+    "vector_count": {
+      "exclusiveMinimum": 0,
+      "title": "Vector Count",
+      "type": "integer"
+    },
+    "vectors": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "vectors_build_manifest": {
+      "$ref": "#/$defs/ArtifactRef"
+    }
+  },
+  "required": [
+    "configuration",
+    "representation",
+    "chunk_tokens",
+    "paper_ids",
+    "chunk_paper_ids",
+    "chunk_set_manifests",
+    "execution",
+    "chunk_sets",
+    "ordered_chunk_ids",
+    "vectors",
+    "vectors_build_manifest",
+    "dimension",
+    "vector_count",
+    "shape",
+    "input_token_counts",
+    "input_id_hashes"
+  ],
+  "title": "DenseIndex",
+  "type": "object"
+}

@@ -1,0 +1,253 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ConfigurationRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact": {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        "resolved_sha256": {
+          "title": "Resolved Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact",
+        "resolved_sha256"
+      ],
+      "title": "ConfigurationRef",
+      "type": "object"
+    },
+    "ContextDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "chunk_id": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "included",
+            "duplicate",
+            "nonfitting",
+            "not_processed"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "duplicate_of_rank": {
+          "anyOf": [
+            {
+              "maximum": 20,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duplicate Of Rank"
+        },
+        "rank": {
+          "maximum": 20,
+          "minimum": 1,
+          "title": "Rank",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rank",
+        "chunk_id",
+        "decision"
+      ],
+      "title": "ContextDecision",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "A recorded pin is not a claim of installed assets or qualification.",
+      "properties": {
+        "file_hashes": {
+          "patternProperties": {
+            "\\S": {
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "File Hashes",
+          "type": "object"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "state": {
+          "enum": [
+            "unresolved",
+            "pinned"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "state"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configuration": {
+      "$ref": "#/$defs/ConfigurationRef"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/ContextDecision"
+      },
+      "maxItems": 20,
+      "title": "Decisions",
+      "type": "array"
+    },
+    "exact_context": {
+      "title": "Exact Context",
+      "type": "string"
+    },
+    "generator_tokens": {
+      "maximum": 2048,
+      "minimum": 0,
+      "title": "Generator Tokens",
+      "type": "integer"
+    },
+    "included_chunk_ids": {
+      "items": {
+        "minLength": 1,
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Included Chunk Ids",
+      "type": "array"
+    },
+    "packing_policy": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Packing Policy"
+    },
+    "packing_tokenizer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Snapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
+    "retrieval": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "retrieval_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "stop_reason": {
+      "enum": [
+        "exhausted",
+        "first_nonfitting",
+        "top20"
+      ],
+      "title": "Stop Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "configuration",
+    "retrieval",
+    "representation",
+    "decisions",
+    "included_chunk_ids",
+    "exact_context",
+    "generator_tokens",
+    "stop_reason"
+  ],
+  "title": "ContextRecord",
+  "type": "object"
+}
