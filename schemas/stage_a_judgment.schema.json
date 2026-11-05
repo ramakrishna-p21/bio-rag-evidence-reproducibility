@@ -1,0 +1,259 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ComponentLocus": {
+      "additionalProperties": false,
+      "description": "Canonical text occurrences carrying one benchmark evidence component.",
+      "properties": {
+        "observed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Text"
+        },
+        "occurrence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Occurrence Ids",
+          "type": "array"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text",
+        "occurrence_ids"
+      ],
+      "title": "ComponentLocus",
+      "type": "object"
+    },
+    "Placement": {
+      "additionalProperties": false,
+      "description": "One canonical context (block or table) that holds a complete evidence set.",
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ComponentLocus"
+          },
+          "minItems": 1,
+          "title": "Components",
+          "type": "array"
+        },
+        "container_node_id": {
+          "title": "Container Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "container_node_id",
+        "components"
+      ],
+      "title": "Placement",
+      "type": "object"
+    },
+    "SetLocus": {
+      "additionalProperties": false,
+      "description": "Placements of one benchmark evidence set; alternative sets stay separate.",
+      "properties": {
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/Placement"
+          },
+          "minItems": 1,
+          "title": "Placements",
+          "type": "array"
+        },
+        "set_index": {
+          "minimum": 0,
+          "title": "Set Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "set_index",
+        "placements"
+      ],
+      "title": "SetLocus",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "alteration": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Alteration"
+    },
+    "at_utc": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "At Utc"
+    },
+    "basis": {
+      "enum": [
+        "deterministic",
+        "reviewer"
+      ],
+      "title": "Basis",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "candidate": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "canonical": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "item_id": {
+      "title": "Item Id",
+      "type": "string"
+    },
+    "item_sha256": {
+      "title": "Item Sha256",
+      "type": "string"
+    },
+    "label": {
+      "enum": [
+        "preserved",
+        "altered_but_sufficient",
+        "scientifically_corrupted",
+        "absent",
+        "unresolved"
+      ],
+      "title": "Label",
+      "type": "string"
+    },
+    "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "rationale": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Rationale"
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
+    "reviewer": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reviewer"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sets": {
+      "items": {
+        "$ref": "#/$defs/SetLocus"
+      },
+      "title": "Sets",
+      "type": "array"
+    }
+  },
+  "required": [
+    "benchmark_version",
+    "corpus_version",
+    "item_id",
+    "item_sha256",
+    "paper_id",
+    "representation",
+    "canonical",
+    "label",
+    "basis",
+    "sets"
+  ],
+  "title": "StageAJudgment",
+  "type": "object"
+}
