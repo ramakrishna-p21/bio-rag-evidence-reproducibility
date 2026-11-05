@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ColumnSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "nullable": {
+          "title": "Nullable",
+          "type": "boolean"
+        },
+        "type": {
+          "enum": [
+            "integer",
+            "logical",
+            "string"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "nullable"
+      ],
+      "title": "ColumnSpec",
+      "type": "object"
+    },
+    "OpenObservation": {
+      "additionalProperties": false,
+      "description": "An observation that does not contribute a clean evaluable pair of outcomes.",
+      "properties": {
+        "answer_correct": {
+          "enum": [
+            "yes",
+            "no",
+            "non_evaluable",
+            "missing",
+            "not_executed"
+          ],
+          "title": "Answer Correct",
+          "type": "string"
+        },
+        "condition": {
+          "enum": [
+            "JATS",
+            "PDF_DOCLING",
+            "CLOSED_BOOK"
+          ],
+          "title": "Condition",
+          "type": "string"
+        },
+        "evidence_delivered": {
+          "enum": [
+            "yes",
+            "no",
+            "non_evaluable",
+            "not_applicable"
+          ],
+          "title": "Evidence Delivered",
+          "type": "string"
+        },
+        "evidence_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Reason"
+        },
+        "execution_status": {
+          "enum": [
+            "planned_not_executed",
+            "operational_failure",
+            "completed"
+          ],
+          "title": "Execution Status",
+          "type": "string"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "matrix_arm": {
+          "enum": [
+            "confirmatory",
+            "dense_robustness",
+            "chunk_robustness",
+            "scope_robustness",
+            "closed_book"
+          ],
+          "title": "Matrix Arm",
+          "type": "string"
+        },
+        "observation_key": {
+          "title": "Observation Key",
+          "type": "string"
+        },
+        "paper_id": {
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "repeat_index": {
+          "title": "Repeat Index",
+          "type": "integer"
+        },
+        "stage_c_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage C Reason"
+        }
+      },
+      "required": [
+        "observation_key",
+        "item_id",
+        "paper_id",
+        "condition",
+        "matrix_arm",
+        "repeat_index",
+        "execution_status",
+        "evidence_delivered",
+        "answer_correct"
+      ],
+      "title": "OpenObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "columns": {
+      "items": {
+        "$ref": "#/$defs/ColumnSpec"
+      },
+      "title": "Columns",
+      "type": "array"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "csv": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "missing_token": {
+      "title": "Missing Token",
+      "type": "string"
+    },
+    "not_evaluable": {
+      "items": {
+        "$ref": "#/$defs/OpenObservation"
+      },
+      "title": "Not Evaluable",
+      "type": "array"
+    },
+    "pairing": {
+      "title": "Pairing",
+      "type": "string"
+    },
+    "primary_repeat_index": {
+      "title": "Primary Repeat Index",
+      "type": "integer"
+    },
+    "row_count": {
+      "minimum": 0,
+      "title": "Row Count",
+      "type": "integer"
+    },
+    "row_grain": {
+      "title": "Row Grain",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scoring_reference": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Scoring Reference",
+      "type": "object"
+    },
+    "table_schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Table Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "row_grain",
+    "pairing",
+    "missing_token",
+    "primary_repeat_index",
+    "scoring_reference",
+    "columns",
+    "row_count",
+    "csv",
+    "counts",
+    "not_evaluable"
+  ],
+  "title": "AnalysisInventory",
+  "type": "object"
+}

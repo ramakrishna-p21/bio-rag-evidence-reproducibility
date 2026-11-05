@@ -1,0 +1,421 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "analysis_role": {
+      "enum": [
+        "development",
+        "confirmatory",
+        "secondary"
+      ],
+      "title": "Analysis Role",
+      "type": "string"
+    },
+    "answer_class": {
+      "enum": [
+        "quantitative_value",
+        "biological_entity",
+        "dataset_cohort",
+        "bounded_entity_set",
+        "categorical_conclusion"
+      ],
+      "title": "Answer Class",
+      "type": "string"
+    },
+    "answer_correct": {
+      "enum": [
+        "yes",
+        "no",
+        "non_evaluable",
+        "missing",
+        "not_executed"
+      ],
+      "title": "Answer Correct",
+      "type": "string"
+    },
+    "attempt_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Attempt Id"
+    },
+    "benchmark_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "completion_kind": {
+      "anyOf": [
+        {
+          "enum": [
+            "answer",
+            "abstained",
+            "unparseable"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Completion Kind"
+    },
+    "condition": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING",
+        "CLOSED_BOOK"
+      ],
+      "title": "Condition",
+      "type": "string"
+    },
+    "config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Config Sha256",
+      "type": "string"
+    },
+    "context_artifact": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Context Artifact"
+    },
+    "context_composition": {
+      "anyOf": [
+        {
+          "enum": [
+            "designated_only",
+            "other_only",
+            "mixed",
+            "empty"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Context Composition"
+    },
+    "context_provenance": {
+      "enum": [
+        "not_applicable",
+        "assembled_only",
+        "generator_input_simulated",
+        "generator_input_recorded"
+      ],
+      "title": "Context Provenance",
+      "type": "string"
+    },
+    "corpus_version": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "correct_without_evidence": {
+      "enum": [
+        "TRUE",
+        "FALSE",
+        "NA"
+      ],
+      "title": "Correct Without Evidence",
+      "type": "string"
+    },
+    "earliest_failure": {
+      "enum": [
+        "none",
+        "stage_a",
+        "stage_b",
+        "stage_c",
+        "unresolved",
+        "not_applicable",
+        "incomplete"
+      ],
+      "title": "Earliest Failure",
+      "type": "string"
+    },
+    "evidence_delivered": {
+      "enum": [
+        "yes",
+        "no",
+        "non_evaluable",
+        "not_applicable"
+      ],
+      "title": "Evidence Delivered",
+      "type": "string"
+    },
+    "evidence_reason": {
+      "anyOf": [
+        {
+          "enum": [
+            "stage_a_not_assessed",
+            "stage_a_unresolved",
+            "stage_b_not_assessed"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Evidence Reason"
+    },
+    "execution_status": {
+      "enum": [
+        "planned_not_executed",
+        "operational_failure",
+        "completed"
+      ],
+      "title": "Execution Status",
+      "type": "string"
+    },
+    "generator_input_artifact": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Generator Input Artifact"
+    },
+    "item_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+      "title": "Item Id",
+      "type": "string"
+    },
+    "item_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Item Sha256",
+      "type": "string"
+    },
+    "matrix_arm": {
+      "enum": [
+        "confirmatory",
+        "dense_robustness",
+        "chunk_robustness",
+        "scope_robustness",
+        "closed_book"
+      ],
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "observation_key": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+      "title": "Observation Key",
+      "type": "string"
+    },
+    "paper_id": {
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "phase": {
+      "enum": [
+        "development",
+        "qualification",
+        "final_test"
+      ],
+      "title": "Phase",
+      "type": "string"
+    },
+    "primary_row": {
+      "title": "Primary Row",
+      "type": "boolean"
+    },
+    "repeat_index": {
+      "maximum": 3,
+      "minimum": 1,
+      "title": "Repeat Index",
+      "type": "integer"
+    },
+    "run_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Run Id"
+    },
+    "split": {
+      "enum": [
+        "development",
+        "final_test"
+      ],
+      "title": "Split",
+      "type": "string"
+    },
+    "stage_a_artifact": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage A Artifact"
+    },
+    "stage_a_label": {
+      "anyOf": [
+        {
+          "enum": [
+            "preserved",
+            "altered_but_sufficient",
+            "scientifically_corrupted",
+            "absent",
+            "unresolved"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage A Label"
+    },
+    "stage_b_artifact": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage B Artifact"
+    },
+    "stage_b_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "delivered",
+            "not_delivered",
+            "not_reachable_stage_a",
+            "non_evaluable"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage B Status"
+    },
+    "stage_c_artifact": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage C Artifact"
+    },
+    "stage_c_basis": {
+      "anyOf": [
+        {
+          "enum": [
+            "deterministic",
+            "reviewer"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage C Basis"
+    },
+    "stage_c_reason": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage C Reason"
+    },
+    "stage_c_status": {
+      "anyOf": [
+        {
+          "enum": [
+            "correct",
+            "incorrect",
+            "missing",
+            "non_evaluable"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Stage C Status"
+    }
+  },
+  "required": [
+    "benchmark_version",
+    "corpus_version",
+    "item_id",
+    "item_sha256",
+    "paper_id",
+    "answer_class",
+    "split",
+    "phase",
+    "analysis_role",
+    "matrix_arm",
+    "condition",
+    "repeat_index",
+    "primary_row",
+    "observation_key",
+    "config_sha256",
+    "run_id",
+    "attempt_id",
+    "execution_status",
+    "completion_kind",
+    "stage_a_label",
+    "stage_a_artifact",
+    "stage_b_status",
+    "stage_b_artifact",
+    "context_artifact",
+    "context_composition",
+    "context_provenance",
+    "generator_input_artifact",
+    "evidence_delivered",
+    "evidence_reason",
+    "stage_c_status",
+    "stage_c_reason",
+    "stage_c_basis",
+    "stage_c_artifact",
+    "answer_correct",
+    "earliest_failure",
+    "correct_without_evidence"
+  ],
+  "title": "AnalysisRow",
+  "type": "object"
+}

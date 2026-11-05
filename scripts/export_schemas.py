@@ -23,6 +23,7 @@ from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
 from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
+from biorag_repro.evaluation.analysis_models import AnalysisInventory, AnalysisRow, GeneratorInput
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
@@ -45,6 +46,9 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "stage_b_judgment.schema.json": StageBJudgment,
     "generation_result.schema.json": GenerationResult,
     "stage_c_score.schema.json": StageCScore,
+    "analysis_row.schema.json": AnalysisRow,
+    "analysis_inventory.schema.json": AnalysisInventory,
+    "generator_input.schema.json": GeneratorInput,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,
