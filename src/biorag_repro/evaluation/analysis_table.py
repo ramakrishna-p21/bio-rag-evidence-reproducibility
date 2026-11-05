@@ -12,6 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, get_args
 
+from biorag_repro.benchmark.development_view import DevelopmentView, check_development_items
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import observation_key
@@ -36,6 +37,7 @@ from biorag_repro.evaluation.analysis_models import (
     Phase,
     PlannedRoster,
     Role,
+    RosterItem,
     analysis_role,
     column_type,
 )
@@ -336,6 +338,32 @@ def build_table(observations: list[Observation], roster: PlannedRoster) -> Table
     check_rows(rows)
     check_roster(rows, roster)
     return Table(rows, roster, [unique[k] for k in sorted(unique)])
+
+
+def roster_items_from_development_view(
+    view: DevelopmentView, items: list[BenchmarkItem]
+) -> list[RosterItem]:
+    """Roster entries for exactly the items of a verified development-only view.
+
+    Membership comes from the published view, never from a caller-supplied list. A
+    roster built from this covers the development subset only; it says nothing about
+    the complete frozen benchmark or the final-test partition.
+    """
+    try:
+        check_development_items(items, view.development_paper_ids, view.benchmark_version)
+    except ValueError:
+        raise ValueError("items are not the development-only view") from None
+    if len(items) != view.development_item_count:
+        raise ValueError("items differ from the development view membership")
+    return [
+        RosterItem(
+            item_id=item.item_id,
+            state="included",
+            paper_id=item.paper_id,
+            item_sha256=item_digest(item),
+        )
+        for item in sorted(items, key=lambda i: i.item_id)
+    ]
 
 
 def check_roster(rows: list[AnalysisRow], roster: PlannedRoster) -> None:

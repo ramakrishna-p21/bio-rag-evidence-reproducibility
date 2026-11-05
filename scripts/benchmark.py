@@ -7,10 +7,12 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from biorag_repro.benchmark.audit import sample_audit
+from biorag_repro.benchmark.development_view import publish_development_view
 from biorag_repro.benchmark.discovery import CandidateLead, discover_jats
 from biorag_repro.benchmark.flags import flag_leads
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.pdf import locate_pdf
+from biorag_repro.benchmark.release import BenchmarkRelease
 from biorag_repro.benchmark.review import (
     DecisionEvent,
     FlagDisposition,
@@ -21,6 +23,7 @@ from biorag_repro.benchmark.split import PaperMeta, PaperSplit, RelatednessRecor
 from biorag_repro.benchmark.storage import encode_jsonl, read_jsonl
 from biorag_repro.benchmark.validation import validate_items
 from biorag_repro.core.hashing import sha256_bytes, verify_file_sha256
+from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
 from biorag_repro.corpus.manifest import (
     CorpusManifest,
@@ -90,6 +93,10 @@ def main() -> int:
     validation.add_argument("--decisions-sha256")
     validation.add_argument("--dispositions", type=Path)
     validation.add_argument("--dispositions-sha256")
+    derive = commands.add_parser("derive-development")
+    derive.add_argument("--benchmark-release", type=Path, required=True)
+    derive.add_argument("--benchmark-release-sha256", required=True)
+    derive.add_argument("--expected-development-items", type=int, required=True)
     args = parser.parse_args()
     release, manifest = load_corpus(args.data_root, args.corpus_release, args.corpus_release_sha256)
     by_id = {paper.paper_id: paper for paper in manifest.papers}
@@ -173,7 +180,33 @@ def main() -> int:
         draw = sample_audit([item.item_id for item in items], seed=3102027)
         publish_json(args.output, draw)
         print(f"eligible={draw.eligible_count} selected={len(draw.selected_ids)}")
-    else:
+    elif args.command == "derive-development":
+        frozen = read_project_json(
+            args.benchmark_release, args.benchmark_release_sha256, BenchmarkRelease
+        )
+        if frozen.corpus_content_sha256 != release.corpus_content_sha256:
+            raise ValueError("benchmark release differs from frozen corpus")
+        published = publish_development_view(
+            data_root=args.data_root,
+            items_ref=frozen.items,
+            split_ref=frozen.split,
+            release_ref=ArtifactRef(
+                artifact_id=f"{frozen.benchmark_version}_release",
+                logical_ref=args.benchmark_release.resolve()
+                .relative_to(args.data_root.resolve())
+                .as_posix(),
+                sha256=args.benchmark_release_sha256,
+            ),
+            benchmark_version=frozen.benchmark_version,
+            corpus_version=frozen.corpus_version,
+            expected_source_items=frozen.item_count,
+            expected_development_items=args.expected_development_items,
+        )
+        print(
+            f"directory={published.directory} record_sha256={published.record_sha256} "
+            f"items_sha256={published.items_sha256}"
+        )
+    elif args.command == "validate":
         items = read_jsonl(args.items, args.items_sha256, BenchmarkItem)
         split_record = read_project_json(args.split, args.split_sha256, PaperSplit)
         if bool(args.decisions) != bool(args.decisions_sha256):
