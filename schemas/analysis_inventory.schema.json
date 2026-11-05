@@ -163,6 +163,71 @@
       ],
       "title": "OpenObservation",
       "type": "object"
+    },
+    "RosterItem": {
+      "additionalProperties": false,
+      "description": "One declared candidate item. Only included items generate planned observations.",
+      "properties": {
+        "item_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "item_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Item Sha256"
+        },
+        "paper_id": {
+          "anyOf": [
+            {
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:@+\\-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paper Id"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        },
+        "state": {
+          "enum": [
+            "included",
+            "missing",
+            "unresolved",
+            "excluded"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id",
+        "state"
+      ],
+      "title": "RosterItem",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -184,6 +249,18 @@
     "csv": {
       "$ref": "#/$defs/ArtifactRef"
     },
+    "executed_observations": {
+      "minimum": 0,
+      "title": "Executed Observations",
+      "type": "integer"
+    },
+    "items": {
+      "items": {
+        "$ref": "#/$defs/RosterItem"
+      },
+      "title": "Items",
+      "type": "array"
+    },
     "missing_token": {
       "title": "Missing Token",
       "type": "string"
@@ -199,9 +276,21 @@
       "title": "Pairing",
       "type": "string"
     },
+    "planned_observations": {
+      "minimum": 0,
+      "title": "Planned Observations",
+      "type": "integer"
+    },
     "primary_repeat_index": {
       "title": "Primary Repeat Index",
       "type": "integer"
+    },
+    "primary_selection": {
+      "title": "Primary Selection",
+      "type": "string"
+    },
+    "roster": {
+      "$ref": "#/$defs/ArtifactRef"
     },
     "row_count": {
       "minimum": 0,
@@ -216,6 +305,14 @@
       "const": "1",
       "default": "1",
       "title": "Schema Version",
+      "type": "string"
+    },
+    "scope": {
+      "enum": [
+        "complete_matrix",
+        "partial_development"
+      ],
+      "title": "Scope",
       "type": "string"
     },
     "scoring_reference": {
@@ -239,6 +336,12 @@
     "primary_repeat_index",
     "scoring_reference",
     "columns",
+    "primary_selection",
+    "scope",
+    "roster",
+    "items",
+    "planned_observations",
+    "executed_observations",
     "row_count",
     "csv",
     "counts",

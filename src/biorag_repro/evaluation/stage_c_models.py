@@ -34,6 +34,7 @@ REASONS: dict[str, set[str]] = {
         "unit_not_in_gold",
         "uninterpretable_numeric_text",
         "case_only_difference",
+        "approved_name_in_longer_text",
         "wording_not_approved",
         "set_segmentation_ambiguous",
         "gold_unusable",

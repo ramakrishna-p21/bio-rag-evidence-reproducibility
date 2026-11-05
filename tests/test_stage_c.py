@@ -198,7 +198,14 @@ ENTITY = [
     ("rs1801133 C>T", [], "rs1801131 C>T", "incorrect", "entity_not_approved"),
     ("BRAF V600E", [], "BRAF V600K", "incorrect", "entity_not_approved"),
     ("CD4+ T cell", [], "CD4+ T cells", "incorrect", "entity_not_approved"),  # no substring match
-    ("TCGA-BRCA", [], "TCGA-BRCA cohort", "incorrect", "entity_not_approved"),
+    ("TCGA-BRCA", [], "TCGA-BRCA cohort", "non_evaluable", "approved_name_in_longer_text"),
+    ("TP53", ["p53"], "TP53.", "non_evaluable", "approved_name_in_longer_text"),
+    ("TP53", ["p53"], "(p53)", "non_evaluable", "approved_name_in_longer_text"),
+    ("TP53", ["p53"], "The gene is TP53", "non_evaluable", "approved_name_in_longer_text"),
+    ("TP53", ["p53"], "It is not TP53.", "non_evaluable", "approved_name_in_longer_text"),
+    ("TP53", [], "TP530", "incorrect", "entity_not_approved"),  # boundary, not substring
+    ("TP53", [], "TP63 and TP73", "incorrect", "entity_not_approved"),
+    ("TP53", [], "tp53 mutation", "incorrect", "entity_not_approved"),
     ("TP53", [], "", "incorrect", "empty_answer"),
 ]
 
@@ -212,7 +219,7 @@ def test_entity_oracle(canonical, aliases, answer, status, reason):
 def test_cohort_uses_same_rules():
     gold = entity("GTEx", ["Genotype-Tissue Expression"], "dataset_cohort")
     assert verdict(gold, "Genotype-Tissue Expression") == ("correct", None)
-    assert verdict(gold, "GTEx v8") == ("incorrect", "entity_not_approved")
+    assert verdict(gold, "GTEx v8") == ("non_evaluable", "approved_name_in_longer_text")
 
 
 # --- bounded sets -----------------------------------------------------------
@@ -235,6 +242,11 @@ SETS = [
     (["TP53", "KRAS", "Egfr"], "non_evaluable", "case_only_difference"),
     (["TP53", "KRAS", "Egfr", "PIK3CA"], "incorrect", "set_extra_member"),
     (["TP53", "Kras"], "incorrect", "set_incomplete"),  # EGFR missing under any reading
+    (["TP53", "KRAS", "EGFR", "tp53"], "non_evaluable", "case_only_difference"),
+    (["TP53", "KRAS", "EGFR", "Kras"], "non_evaluable", "case_only_difference"),
+    ("TP53, tp53, KRAS, EGFR", "non_evaluable", "case_only_difference"),
+    (["TP53", "KRAS", "EGFR", "tp53", "PIK3CA"], "incorrect", "set_extra_member"),
+    (["TP53", "p53", "KRAS", "EGFR", "P53"], "non_evaluable", "case_only_difference"),
     ("TP53; KRAS; EGFR", "correct", None),
     ("TP53, KRAS, EGFR", "correct", None),
     ("TP53\nKRAS\nEGFR", "correct", None),
@@ -634,3 +646,40 @@ def test_identity_depends_on_every_scientific_input():
     assert stage_c.score(item, make_result(item)) == stage_c.score(item, make_result(item))
     raw = serialize_project_json(stage_c.score(item, make_result(item)), StageCScore)
     assert sha256_bytes(raw) == base.sha256
+
+
+def test_punctuated_entity_is_adjudicable_and_keeps_the_automatic_score():
+    item = make_item(entity("TP53", ["p53"]))
+    result = make_result(item, answer="TP53.")
+    automatic = stage_c.score(item, result)
+    assert (automatic.status, automatic.reason) == ("non_evaluable", "approved_name_in_longer_text")
+    _, judged = adjudicated(item, result, rationale="Trailing full stop only.")
+    assert (judged.status, judged.basis, judged.reviewer) == ("correct", "reviewer", "Reviewer One")
+    assert judged.automatic == stage_c.score_ref(automatic)
+    assert judged.rationale == "Trailing full stop only." and judged.at_utc
+    stage_c.validate_score(judged, item, result)
+    _, rejected = adjudicated(item, make_result(item, answer="It is not TP53."), status="incorrect")
+    assert rejected.status == "incorrect" and rejected.reason == "adjudicated_incorrect"
+
+
+def test_other_incorrect_scores_stay_closed_to_review():
+    item = make_item(entity("TP53"))
+    for answer in ("TP63", "tumor protein p53", "TP530"):
+        with pytest.raises(ValueError):
+            stage_c.adjudicate(
+                stage_c.score(item, make_result(item, answer=answer)),
+                status="correct",
+                reviewer="R",
+                at_utc="2026-11-05T12:00:00Z",
+                rationale="x",
+            )
+    # a completed unparseable output is not turned into an answer by review
+    unparsed = make_result(item, parse_status="unparseable", answer=None, abstained=None)
+    with pytest.raises(ValueError):
+        stage_c.adjudicate(
+            stage_c.score(item, unparsed),
+            status="correct",
+            reviewer="R",
+            at_utc="2026-11-05T12:00:00Z",
+            rationale="x",
+        )

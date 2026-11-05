@@ -21,6 +21,7 @@ from biorag_repro.evaluation.analysis_models import (
     COLUMNS,
     MISSING,
     PRIMARY_REPEAT_INDEX,
+    PRIMARY_SELECTION,
     SCHEMA_VERSION,
     AnalysisInventory,
     AnalysisRow,
@@ -33,6 +34,8 @@ from biorag_repro.evaluation.analysis_models import (
     MatrixArm,
     OpenObservation,
     Phase,
+    PlannedRoster,
+    Role,
     analysis_role,
     column_type,
 )
@@ -61,9 +64,10 @@ SCORING_REFERENCE = {
 }
 ROW_GRAIN = "one planned observation: phase, matrix_arm, item_id, condition, repeat_index"
 PAIRING = (
-    "JATS and PDF_DOCLING rows pair on item_id, matrix_arm and repeat_index; primary_row is "
-    "repeat 1 and the only row per condition that counts toward a co-primary outcome; "
-    "CLOSED_BOOK rows are outside the paired representation comparison"
+    "JATS and PDF_DOCLING rows pair on item_id, matrix_arm and repeat_index; primary_row marks "
+    "repeat 1 of every arm; "
+    "CLOSED_BOOK rows are outside the paired representation comparison; the primary "
+    "comparison is selected by primary_selection, not by primary_row alone"
 )
 
 
@@ -87,7 +91,8 @@ class Observation:
     matrix_arm: MatrixArm
     condition: Condition
     repeat_index: int
-    resolved_config_sha256: str
+    resolved_config_sha256: str  # full observation identity (REPRODUCIBILITY_SPEC section 2)
+    retrieval_config_sha256: str | None = None  # Phase 5 retrieval/context identity it contains
     result: GenerationResult | None = None
     score: StageCScore | None = None
     evidence: Evidence | None = None
@@ -97,6 +102,7 @@ class Observation:
 @dataclass
 class Table:
     rows: list[AnalysisRow]
+    roster: PlannedRoster
     inputs: list[BuildInput] = field(default_factory=list)
 
 
@@ -120,7 +126,7 @@ def _check_evidence(obs: Observation, evidence: Evidence) -> None:
     ):
         raise ValueError("Stage B was judged from other item, document or Stage A inputs")
     validate_stage_b(b, inputs)
-    if b.configuration.resolved_sha256 != obs.resolved_config_sha256:
+    if b.configuration.resolved_sha256 != obs.retrieval_config_sha256:
         raise ValueError("retrieval and context configuration differs from the observation's")
     expected = ARM_RETRIEVAL.get(obs.matrix_arm)
     if expected is None or (inputs.ranked.scope, inputs.ranked.retriever) != expected:
@@ -182,6 +188,10 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
         validate_score(score, item, result)
 
     closed = obs.matrix_arm == "closed_book"
+    if (obs.retrieval_config_sha256 is None) != closed:
+        raise ValueError(
+            "a retrieval observation names its retrieval configuration; closed-book has none"
+        )
     evidence = obs.evidence
     if evidence is not None:
         _check_evidence(obs, evidence)
@@ -223,6 +233,7 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
         primary_row=obs.repeat_index == PRIMARY_REPEAT_INDEX,
         observation_key=key,
         config_sha256=obs.resolved_config_sha256,
+        retrieval_config_sha256=obs.retrieval_config_sha256,
         run_id=result.run_id if result else None,
         attempt_id=result.attempt_id if result else None,
         execution_status=_execution(result),
@@ -313,7 +324,7 @@ def _order(row: AnalysisRow) -> tuple[str, str, str, int, str]:
     return (row.matrix_arm, row.item_id, row.condition, row.repeat_index, row.observation_key)
 
 
-def build_table(observations: list[Observation]) -> Table:
+def build_table(observations: list[Observation], roster: PlannedRoster) -> Table:
     built = [build_row(o) for o in observations]
     rows = sorted((r for r, _ in built), key=_order)
     unique: dict[tuple[str, str], BuildInput] = {}
@@ -323,7 +334,56 @@ def build_table(observations: list[Observation]) -> Table:
             if previous != entry:
                 raise ValueError("one artifact id names two different references")
     check_rows(rows)
-    return Table(rows, [unique[k] for k in sorted(unique)])
+    check_roster(rows, roster)
+    return Table(rows, roster, [unique[k] for k in sorted(unique)])
+
+
+def check_roster(rows: list[AnalysisRow], roster: PlannedRoster) -> None:
+    """Rows are exactly the planned observations: none undeclared, none omitted.
+
+    A planned observation that was not executed must still be present as a
+    planned_not_executed row; this check never creates one.
+    """
+    for r in rows:
+        if (r.phase, r.benchmark_version, r.corpus_version) != (
+            roster.phase,
+            roster.benchmark_version,
+            roster.corpus_version,
+        ):
+            raise ValueError("table rows are outside the roster's phase, benchmark or corpus")
+    declared = {i.item_id: i for i in roster.items if i.state == "included"}
+    for r in rows:
+        item = declared.get(r.item_id)
+        if item is not None and (item.paper_id, item.item_sha256) != (r.paper_id, r.item_sha256):
+            raise ValueError(f"item {r.item_id} differs from the roster's paper or item hash")
+    seen = {(r.matrix_arm, r.item_id, r.condition, r.repeat_index) for r in rows}
+    expected = roster.coordinates()
+    if undeclared := sorted(seen - expected):
+        raise ValueError(f"observations outside the roster: {undeclared[:3]}")
+    if omitted := sorted(expected - seen):
+        raise ValueError(f"planned observations without a row ({len(omitted)}): {omitted[:3]}")
+
+
+def primary_pairs(
+    rows: list[AnalysisRow], role: Role
+) -> dict[str, tuple[AnalysisRow, AnalysisRow]]:
+    """JATS/PDF_DOCLING repeat-1 pairs of the confirmatory arm, by item, for one analysis role.
+
+    Robustness arms, closed-book rows and repeats 2-3 are never selected. Delivery and
+    correctness evaluability stay in the rows; this selects the comparison only.
+    """
+    chosen: dict[str, dict[str, AnalysisRow]] = defaultdict(dict)
+    for r in rows:
+        if (
+            r.matrix_arm == "confirmatory"
+            and r.primary_row
+            and r.analysis_role == role
+            and r.condition in {"JATS", "PDF_DOCLING"}
+        ):
+            chosen[r.item_id][r.condition] = r
+    return {
+        item: (by["JATS"], by["PDF_DOCLING"]) for item, by in sorted(chosen.items()) if len(by) == 2
+    }
 
 
 def check_rows(rows: list[AnalysisRow]) -> None:
@@ -339,6 +399,7 @@ def check_rows(rows: list[AnalysisRow]) -> None:
         raise ValueError("duplicate observation")
     items: dict[str, tuple[str, str, str, str]] = {}
     configs: dict[str, str] = {}
+    retrievals: dict[str, str | None] = {}
     groups: dict[tuple[str, str, str], tuple[Any, ...]] = {}
     for r in rows:
         identity = (r.item_sha256, r.paper_id, r.answer_class, r.split)
@@ -346,6 +407,10 @@ def check_rows(rows: list[AnalysisRow]) -> None:
             raise ValueError("one item appears with different identities")
         if configs.setdefault(r.matrix_arm, r.config_sha256) != r.config_sha256:
             raise ValueError("one matrix arm runs under one resolved configuration")
+        if retrievals.setdefault(r.matrix_arm, r.retrieval_config_sha256) != (
+            r.retrieval_config_sha256
+        ):
+            raise ValueError("one matrix arm runs under one retrieval configuration")
         shared = (
             r.stage_a_artifact,
             r.stage_b_artifact,
@@ -456,7 +521,9 @@ def parse_csv(data: bytes) -> list[AnalysisRow]:
 # ---- inventory -----------------------------------------------------------------------------
 
 
-def make_inventory(rows: list[AnalysisRow], csv_ref: ArtifactRef) -> AnalysisInventory:
+def make_inventory(
+    rows: list[AnalysisRow], csv_ref: ArtifactRef, roster: PlannedRoster, roster_ref: ArtifactRef
+) -> AnalysisInventory:
     counts: dict[str, int] = defaultdict(int)
     open_rows = []
     for r in rows:
@@ -488,6 +555,12 @@ def make_inventory(rows: list[AnalysisRow], csv_ref: ArtifactRef) -> AnalysisInv
         pairing=PAIRING,
         missing_token=MISSING,
         primary_repeat_index=PRIMARY_REPEAT_INDEX,
+        primary_selection=PRIMARY_SELECTION,
+        scope=roster.scope,
+        roster=roster_ref,
+        items=roster.items,
+        planned_observations=len(roster.coordinates()),
+        executed_observations=sum(r.execution_status != "planned_not_executed" for r in rows),
         scoring_reference=SCORING_REFERENCE,
         columns=[
             ColumnSpec(name=n, type=_TYPES[n], nullable=n in _NULLABLE)  # type: ignore[arg-type]
@@ -508,8 +581,10 @@ __all__ = [
     "build_row",
     "build_table",
     "check_references",
+    "check_roster",
     "check_rows",
     "make_inventory",
     "parse_csv",
+    "primary_pairs",
     "serialize_csv",
 ]

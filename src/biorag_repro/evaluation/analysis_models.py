@@ -6,7 +6,7 @@ correct) with separate evaluability, the earliest failure, and references to the
 validated Stage A/B/C records it was derived from.
 """
 
-from typing import Annotated, Literal, Self, get_args, get_origin
+from typing import Annotated, Final, Literal, Self, get_args, get_origin
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
@@ -88,6 +88,7 @@ class AnalysisRow(Record):
     primary_row: bool
     observation_key: Token
     config_sha256: Sha256
+    retrieval_config_sha256: Sha256 | None
     run_id: Token | None
     attempt_id: Token | None
     execution_status: Execution
@@ -131,6 +132,10 @@ class AnalysisRow(Record):
             raise ValueError("closed-book arm and condition must coincide")
         if self.repeat_index > 1 and self.matrix_arm not in {"confirmatory", "closed_book"}:
             raise ValueError("robustness arms have one generation")
+        if (self.retrieval_config_sha256 is None) != closed:
+            raise ValueError(
+                "a retrieval row names its retrieval configuration; closed-book has none"
+            )
         if self.primary_row != (self.repeat_index == PRIMARY_REPEAT_INDEX):
             raise ValueError("only the designated repeat is primary")
         expected_split = "final_test" if self.phase == "final_test" else "development"
@@ -216,6 +221,27 @@ class AnalysisRow(Record):
             raise ValueError("final-test execution needs the recorded generator input")
 
 
+# EXPERIMENT_PLAN sections 2 and 6: representation arms are JATS and PDF_DOCLING; confirmatory
+# and closed-book run three repeats, the three robustness cells one.
+REPRESENTATIONS: tuple[str, ...] = ("JATS", "PDF_DOCLING")
+FROZEN_MATRIX: dict[str, tuple[tuple[str, ...], tuple[int, ...]]] = {
+    "confirmatory": (REPRESENTATIONS, (1, 2, 3)),
+    "dense_robustness": (REPRESENTATIONS, (1,)),
+    "chunk_robustness": (REPRESENTATIONS, (1,)),
+    "scope_robustness": (REPRESENTATIONS, (1,)),
+    "closed_book": (("CLOSED_BOOK",), (1, 2, 3)),
+}
+MATRIX_ID: Final = "experiment_plan_v1"
+# The only rows that form the primary paired comparison. primary_row alone is a repeat
+# designation and is TRUE for repeat 1 of every arm.
+PRIMARY_SELECTION = (
+    "matrix_arm = confirmatory AND condition IN (JATS, PDF_DOCLING) AND primary_row = TRUE "
+    "AND analysis_role = confirmatory; paired on item_id; development tables carry "
+    "analysis_role = development and hold no confirmatory result; robustness arms are "
+    "secondary, closed_book is secondary and unpaired, repeats 2 and 3 are not primary"
+)
+
+
 def analysis_role(phase: str, arm: str) -> Role:
     if phase != "final_test":
         return "development"
@@ -238,6 +264,99 @@ class ColumnSpec(Record):
     name: str
     type: Literal["integer", "logical", "string"]
     nullable: bool
+
+
+ItemState = Literal["included", "missing", "unresolved", "excluded"]
+Scope = Literal["complete_matrix", "partial_development"]
+
+
+class RosterItem(Record):
+    """One declared candidate item. Only included items generate planned observations."""
+
+    item_id: Token
+    state: ItemState
+    paper_id: Token | None = None
+    item_sha256: Sha256 | None = None
+    reason: str | None = None
+
+    @model_validator(mode="after")
+    def valid_item(self) -> Self:
+        if self.state == "included":
+            if self.paper_id is None or self.item_sha256 is None or self.reason is not None:
+                raise ValueError("an included item carries its paper and item hash, no reason")
+        elif self.paper_id is not None or self.item_sha256 is not None:
+            raise ValueError("only included items carry paper and item hash")
+        elif not (self.reason and self.reason.strip()):
+            raise ValueError(f"a {self.state} item needs a reason")
+        return self
+
+
+class RosterArm(Record):
+    matrix_arm: MatrixArm
+    conditions: list[Condition] = Field(min_length=1)
+    repeats: list[int] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def inside_frozen_matrix(self) -> Self:
+        conditions, repeats = FROZEN_MATRIX[self.matrix_arm]
+        if self.conditions != [c for c in conditions if c in self.conditions]:
+            raise ValueError("conditions must be unique, in matrix order and inside the matrix")
+        if self.repeats != [n for n in repeats if n in self.repeats]:
+            raise ValueError("repeats must be unique, ascending and inside the matrix")
+        return self
+
+
+class PlannedRoster(Record):
+    """The declared scope of one table: which observations are planned and why.
+
+    Expected coordinates are the product of included items, declared arms, their
+    conditions and repeats, all inside the frozen matrix. A complete_matrix roster
+    declares the whole matrix; anything narrower is partial_development.
+    """
+
+    schema_version: Literal["1"] = "1"
+    matrix: Literal["experiment_plan_v1"] = MATRIX_ID
+    scope: Scope
+    phase: Phase
+    benchmark_version: Token
+    corpus_version: Token
+    declared_by: str = Field(min_length=1)
+    basis: str = Field(min_length=1)
+    arms: list[RosterArm] = Field(min_length=1)
+    items: list[RosterItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def valid_roster(self) -> Self:
+        if not (self.declared_by.strip() and self.basis.strip()):
+            raise ValueError("a roster names who declared it and on what basis")
+        names = [a.matrix_arm for a in self.arms]
+        if names != sorted(set(names), key=list(FROZEN_MATRIX).index):
+            raise ValueError("arms must be unique and in matrix order")
+        ids = [i.item_id for i in self.items]
+        if len(set(ids)) != len(ids) or ids != sorted(ids):
+            raise ValueError("roster items must be unique and sorted")
+        if not any(i.state == "included" for i in self.items):
+            raise ValueError("a roster includes at least one item")
+        if self.scope == "complete_matrix":
+            full = [
+                RosterArm(matrix_arm=a, conditions=list(c), repeats=list(r))  # type: ignore[arg-type]
+                for a, (c, r) in FROZEN_MATRIX.items()
+            ]
+            if self.arms != full:
+                raise ValueError("a complete_matrix roster declares every arm in full")
+            if any(i.state in {"missing", "unresolved"} for i in self.items):
+                raise ValueError("a roster with missing or unresolved items is partial")
+        return self
+
+    def coordinates(self) -> set[tuple[str, str, str, int]]:
+        included = [i.item_id for i in self.items if i.state == "included"]
+        return {
+            (a.matrix_arm, item, c, n)
+            for a in self.arms
+            for item in included
+            for c in a.conditions
+            for n in a.repeats
+        }
 
 
 class OpenObservation(Record):
@@ -265,6 +384,12 @@ class AnalysisInventory(Record):
     primary_repeat_index: int
     scoring_reference: dict[str, str]
     columns: list[ColumnSpec]
+    primary_selection: str
+    scope: Scope
+    roster: ArtifactRef
+    items: list[RosterItem]
+    planned_observations: int = Field(ge=0)
+    executed_observations: int = Field(ge=0)
     row_count: int = Field(ge=0)
     csv: ArtifactRef
     counts: dict[str, int]

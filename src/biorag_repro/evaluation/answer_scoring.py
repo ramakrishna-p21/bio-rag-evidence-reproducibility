@@ -184,6 +184,19 @@ def _case_only(text: str, names: dict[str, str]) -> str | None:
     return None
 
 
+def _contains_name(text: str, names: dict[str, str]) -> str | None:
+    """Referent whose approved name occurs in `text` as a whole token, case-exact.
+
+    Covers punctuation-only differences ("TP53.") and approved names inside longer
+    text. It is a routing test for review, never evidence of correctness: the text
+    may contradict the name ("not TP53").
+    """
+    for name, canonical in names.items():
+        if re.search(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])", text):
+            return canonical
+    return None
+
+
 def _score_entity(gold: EntityGold, answer: str) -> Verdict:
     text = normalize_text(answer)
     if not text:
@@ -194,6 +207,10 @@ def _score_entity(gold: EntityGold, answer: str) -> Verdict:
     if _case_only(text, names):
         return _unresolved(
             "case_only_difference", f"{text!r} differs from an approved name by case"
+        )
+    if _contains_name(text, names):
+        return _unresolved(
+            "approved_name_in_longer_text", f"{text!r} contains an approved name among other text"
         )
     return _incorrect("entity_not_approved", f"{text!r} is not an approved name", (text,))
 
@@ -245,7 +262,7 @@ def _score_set(gold: SetGold, answer: Answer) -> Verdict:
         return _incorrect(
             "set_incomplete", f"missing {sorted(required - matched - candidates)}", seen
         )
-    if candidates - matched:
+    if candidates:  # a case variant is never merged into an exact match of the same referent
         return _unresolved(
             "case_only_difference", "a member differs from approved names by case", seen
         )

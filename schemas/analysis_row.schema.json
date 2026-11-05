@@ -242,6 +242,18 @@
       "title": "Repeat Index",
       "type": "integer"
     },
+    "retrieval_config_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Retrieval Config Sha256"
+    },
     "run_id": {
       "anyOf": [
         {
@@ -394,6 +406,7 @@
     "primary_row",
     "observation_key",
     "config_sha256",
+    "retrieval_config_sha256",
     "run_id",
     "attempt_id",
     "execution_status",

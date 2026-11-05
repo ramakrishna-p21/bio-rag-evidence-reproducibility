@@ -14,7 +14,15 @@ from test_stage_c import failed_result, make_result, rekey
 
 from biorag_repro.core.hashing import HashMismatchError, sha256_bytes
 from biorag_repro.evaluation import stage_b, stage_c
-from biorag_repro.evaluation.analysis_models import COLUMNS, AnalysisRow, GeneratorInput
+from biorag_repro.evaluation.analysis_models import (
+    COLUMNS,
+    FROZEN_MATRIX,
+    AnalysisRow,
+    GeneratorInput,
+    PlannedRoster,
+    RosterArm,
+    RosterItem,
+)
 from biorag_repro.evaluation.analysis_storage import publish_table, read_table
 from biorag_repro.evaluation.analysis_table import (
     Evidence,
@@ -23,6 +31,7 @@ from biorag_repro.evaluation.analysis_table import (
     build_row,
     build_table,
     parse_csv,
+    primary_pairs,
     serialize_csv,
 )
 from biorag_repro.retrieval.storage import record_ref
@@ -77,6 +86,8 @@ def observation(w, *, case=None, result=..., evidence=..., gin=None, **plan):
         "repeat_index": 1,
         "resolved_config_sha256": CFG,
     } | plan
+    if fields["matrix_arm"] != "closed_book":
+        fields.setdefault("retrieval_config_sha256", CFG)
     if case is None and evidence is ...:
         case = deliver(w, [w.chunk(P_A)])
     if result is ...:
@@ -103,6 +114,54 @@ PLAN = {
     "repeat_index": 1,
     "resolved_config_sha256": CFG,
 }
+
+
+def _roster(cells, source, scope="partial_development", **changes):
+    """Smallest roster covering exactly `cells` {arm: (conditions, repeats)} and `items`."""
+    arms = [
+        RosterArm(matrix_arm=a, conditions=list(c), repeats=list(r))
+        for a, (c, r) in FROZEN_MATRIX.items()
+        if a in cells
+        for c, r in [cells[a]]
+    ]
+    fields = {
+        "scope": scope,
+        "phase": "development",
+        "benchmark_version": source[0].benchmark_version,
+        "corpus_version": source[0].corpus_version,
+        "declared_by": "Rama Krishna Pudota",
+        "basis": "synthetic test scope",
+        "arms": arms,
+        "items": sorted(
+            (
+                RosterItem(
+                    item_id=i.item_id,
+                    state="included",
+                    paper_id=i.paper_id,
+                    item_sha256=stage_c.item_digest(i),
+                )
+                for i in source
+            ),
+            key=lambda x: x.item_id,
+        ),
+    }
+    return PlannedRoster(**(fields | changes))
+
+
+def roster_of(obs):
+    """Partial roster that declares exactly the arms, conditions and repeats observed."""
+    cells = {}
+    for o in obs:
+        conditions, repeats = cells.setdefault(o.matrix_arm, (set(), set()))
+        conditions.add(o.condition)
+        repeats.add(o.repeat_index)
+    order = {a: list(FROZEN_MATRIX[a][0]) for a in FROZEN_MATRIX}
+    cells = {a: ([c for c in order[a] if c in cs], sorted(rs)) for a, (cs, rs) in cells.items()}
+    return _roster(cells, list({o.item.item_id: o.item for o in obs}.values()))
+
+
+def tbl(obs):
+    return build_table(obs, roster_of(obs))
 
 
 def row(obs):
@@ -366,10 +425,43 @@ def test_evidence_for_another_representation_is_rejected():
         build_row(observation(w, condition="PDF_DOCLING"))  # JATS evidence under a PDF arm
 
 
-def test_stage_b_configuration_must_be_the_observations():
+def test_full_configuration_is_distinct_from_the_retrieval_configuration_it_contains():
+    """D6: the observation's resolved configuration is not the Phase 5 retrieval hash."""
     w = world()
-    with pytest.raises(ValueError):
-        build_row(observation(w, resolved_config_sha256="d" * 64))
+    full = "d" * 64
+    r = row(observation(w, resolved_config_sha256=full))  # retrieval stays the Phase 5 hash (CFG)
+    assert (r.config_sha256, r.retrieval_config_sha256) == (full, CFG)
+    assert r.observation_key != row(observation(w)).observation_key  # full identity is in the key
+    both = serialize_csv([r]).decode()
+    assert full in both and CFG in both
+
+
+def test_stage_b_must_come_from_the_retrieval_configuration_the_observation_names():
+    w = world()
+    with pytest.raises(ValueError, match="retrieval and context configuration"):
+        build_row(observation(w, retrieval_config_sha256="e" * 64))
+
+
+def test_retrieval_configuration_is_required_for_retrieval_and_absent_for_closed_book():
+    w = world()
+    with pytest.raises(ValueError, match="retrieval configuration"):
+        build_row(observation(w, retrieval_config_sha256=None))
+    with pytest.raises(ValueError, match="retrieval configuration"):
+        build_row(closed_book(w, retrieval_config_sha256=CFG))
+    assert row(closed_book(w)).retrieval_config_sha256 is None
+
+
+def test_one_arm_runs_under_one_retrieval_configuration():
+    from biorag_repro.evaluation.analysis_table import check_rows
+
+    w = world()
+    first = row(observation(w, case=deliver(w, [w.chunk(P_A)])))
+    other = first.model_copy(
+        update={"repeat_index": 2, "primary_row": False, "observation_key": "k2"}
+        | {"retrieval_config_sha256": "e" * 64}
+    )
+    with pytest.raises(ValueError, match="retrieval configuration"):
+        check_rows([first, other])
 
 
 @pytest.mark.parametrize("arm", ["dense_robustness", "scope_robustness"])
@@ -552,7 +644,7 @@ def three_repeats(w, case):
 def test_repeats_two_and_three_do_not_inflate_the_primary_rows():
     w = world()
     case = deliver(w, [w.chunk(P_A)])
-    table = build_table(three_repeats(w, case) + [closed_book(w)])
+    table = tbl(three_repeats(w, case) + [closed_book(w)])
     assert len(table.rows) == 4
     assert sum(r.primary_row for r in table.rows if r.condition == "JATS") == 1
     assert sum(r.primary_row for r in table.rows) == 2  # JATS repeat 1 and closed-book repeat 1
@@ -562,32 +654,32 @@ def test_table_order_is_deterministic_whatever_the_input_order():
     w = world()
     case = deliver(w, [w.chunk(P_A)])
     obs = three_repeats(w, case) + [closed_book(w)]
-    first = serialize_csv(build_table(obs).rows)
+    first = serialize_csv(tbl(obs).rows)
     for seed in range(5):
         shuffled = obs[:]
         random.Random(seed).shuffle(shuffled)
-        assert serialize_csv(build_table(shuffled).rows) == first
+        assert serialize_csv(tbl(shuffled).rows) == first
 
 
 def test_duplicate_observation_is_rejected():
     w = world()
     o = observation(w)
     with pytest.raises(ValueError):
-        build_table([o, o])
+        tbl([o, o])
 
 
 def test_same_coordinates_under_another_configuration_are_a_duplicate_condition():
     w = world()
     other = observation(w, resolved_config_sha256="d" * 64, evidence=None)
     with pytest.raises(ValueError):
-        build_table([observation(w), other])
+        tbl([observation(w), other])
 
 
 def test_mixed_phases_are_rejected():
     w = world()
     case = deliver(w, [w.chunk(P_A)])
     with pytest.raises(ValueError):
-        build_table(
+        tbl(
             [
                 observation(w, case=case),
                 observation(w, case=case, phase="qualification", repeat_index=2),
@@ -603,7 +695,7 @@ def test_repeats_of_one_condition_share_one_evidence_outcome():
         w, evidence=None, repeat_index=2, result=result_for(w.item, repeat_index=2, attempt_id="a2")
     )
     with pytest.raises(ValueError):
-        build_table([first, second])
+        tbl([first, second])
 
 
 def test_pairing_columns_identify_item_and_paper():
@@ -616,7 +708,7 @@ def test_pairing_columns_identify_item_and_paper():
         condition="PDF_DOCLING",
         result=result_for(w.item, representation_or_condition="PDF_DOCLING"),
     )
-    table = build_table([jats, pdf])
+    table = tbl([jats, pdf])
     assert {(r.item_id, r.paper_id, r.item_sha256) for r in table.rows} == {
         (w.item.item_id, w.item.paper_id, jats.score.item_sha256)
     }
@@ -650,9 +742,10 @@ def sample_table():
             w, case=case, repeat_index=2, result=result_for(w.item, repeat_index=2, attempt_id="a2")
         ),
         observation(w, evidence=None, condition="PDF_DOCLING", result=None),
+        observation(w, evidence=None, condition="PDF_DOCLING", repeat_index=2, result=None),
         closed_book(w),
     ]
-    return build_table(obs)
+    return tbl(obs)
 
 
 def test_csv_layout_types_and_missing_values():
@@ -748,10 +841,11 @@ def test_publication_never_replaces_an_existing_table(tmp_path):
 def test_identity_follows_the_rows_and_their_sources(tmp_path):
     table = sample_table()
     first = publish_table(table, tmp_path / "a")
-    second = publish_table(Table(list(reversed(table.rows)), table.inputs), tmp_path / "b")
+    second = publish_table(
+        Table(list(reversed(table.rows)), table.roster, table.inputs), tmp_path / "b"
+    )
     assert first == second  # row order is canonicalized
-    changed_rows = table.rows[:-1]
-    third = publish_table(Table(changed_rows, table.inputs), tmp_path / "c")
+    third = publish_table(tbl([observation(world())]), tmp_path / "c")
     assert third[0].artifact_id != first[0].artifact_id
 
 
@@ -767,7 +861,7 @@ def test_tampered_inventory_or_manifest_is_detected(tmp_path):
     _, inventory_ref, build_ref = publish_table(sample_table(), tmp_path)
     inv = tmp_path / inventory_ref.logical_ref
     original = inv.read_bytes()
-    inv.write_bytes(original.replace(b'"row_count": 4', b'"row_count": 5'))
+    inv.write_bytes(original.replace(b'"row_count": 5', b'"row_count": 6'))
     with pytest.raises(HashMismatchError):
         read_table(build_ref, tmp_path)
     inv.write_bytes(original)
@@ -780,15 +874,17 @@ def test_tampered_inventory_or_manifest_is_detected(tmp_path):
 def test_rows_must_cite_exactly_the_published_inputs(tmp_path):
     table = sample_table()
     with pytest.raises(ValueError):
-        publish_table(Table(table.rows, table.inputs[:-1]), tmp_path / "missing")
+        publish_table(Table(table.rows, table.roster, table.inputs[:-1]), tmp_path / "missing")
     extra = table.inputs + [
         table.inputs[0].model_copy(update={"role": "stage_c_score", "artifact": ref("not_cited")})
     ]
     with pytest.raises(ValueError):
-        publish_table(Table(table.rows, extra), tmp_path / "extra")
+        publish_table(Table(table.rows, table.roster, extra), tmp_path / "extra")
     forged = table.rows[0].model_copy(update={"stage_c_artifact": "drv_" + "9" * 64})
     with pytest.raises(ValueError):
-        publish_table(Table([forged, *table.rows[1:]], table.inputs), tmp_path / "forged")
+        publish_table(
+            Table([forged, *table.rows[1:]], table.roster, table.inputs), tmp_path / "forged"
+        )
 
 
 def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
@@ -805,8 +901,10 @@ def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
         ),
         observation(w, case=case, repeat_index=3, result=failed),
         observation(w, evidence=None, condition="PDF_DOCLING", result=None),
+        observation(w, evidence=None, condition="PDF_DOCLING", repeat_index=2, result=None),
+        observation(w, evidence=None, condition="PDF_DOCLING", repeat_index=3, result=None),
     ]
-    table = build_table(obs)
+    table = tbl(obs)
     _, inventory_ref, build_ref = publish_table(table, tmp_path)
     from biorag_repro.core.storage import read_project_json
     from biorag_repro.evaluation.analysis_models import AnalysisInventory
@@ -814,7 +912,7 @@ def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
     inv = read_project_json(
         tmp_path / inventory_ref.logical_ref, inventory_ref.sha256, AnalysisInventory
     )
-    assert inv.row_count == 4
+    assert inv.row_count == 6
     by_state = {(e.condition, e.repeat_index): e for e in inv.not_evaluable}
     assert by_state[("JATS", 2)].answer_correct == "non_evaluable"
     assert by_state[("JATS", 3)].answer_correct == "missing"
@@ -824,7 +922,7 @@ def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
     assert [c.name for c in inv.columns] == COLUMNS
     assert {c.name: c.type for c in inv.columns}["repeat_index"] == "integer"
     assert {c.name: c.type for c in inv.columns}["primary_row"] == "logical"
-    assert sum(inv.counts.values()) == 4
+    assert sum(inv.counts.values()) == 6
     assert read_table(build_ref, tmp_path) == table.rows
 
 
@@ -880,16 +978,16 @@ def test_read_back_checks_the_inventory_against_the_rows(tmp_path, monkeypatch):
     _, _, build_ref = publish_table(sample_table(), tmp_path)
     honest = analysis_storage.make_inventory
 
-    def miscounted(rows, csv_ref):
-        return honest(rows, csv_ref).model_copy(update={"row_count": 99})
+    def miscounted(rows, csv_ref, roster, roster_ref):
+        return honest(rows, csv_ref, roster, roster_ref).model_copy(update={"row_count": 99})
 
     monkeypatch.setattr(analysis_storage, "make_inventory", miscounted)
     with pytest.raises(ValueError, match="inventory"):
         read_table(build_ref, tmp_path)
 
 
-def test_known_stage_c_limits_stay_visible_in_the_exported_reason():
-    """An entity inside a sentence scores incorrect (Pass 3 limit); the table says why."""
+def test_entity_inside_a_sentence_is_exported_as_unresolved_with_its_reason():
+    """An approved name inside longer text awaits adjudication; the table says why."""
     from test_stage_c import entity
     from test_stage_c import make_item as stage_c_item
 
@@ -903,8 +1001,304 @@ def test_known_stage_c_limits_stay_visible_in_the_exported_reason():
     plan = {**PLAN, "matrix_arm": "closed_book", "condition": "CLOSED_BOOK"}
     r = row(Observation(item=item, result=result, score=stage_c.score(item, result), **plan))
     assert (r.answer_correct, r.stage_c_reason, r.stage_c_basis) == (
-        "no",
-        "entity_not_approved",
+        "non_evaluable",
+        "approved_name_in_longer_text",
         "deterministic",
     )
-    assert "entity_not_approved" in serialize_csv([r]).decode()
+    assert "approved_name_in_longer_text" in serialize_csv([r]).decode()
+
+
+# ---- planned-observation roster (completeness and exclusions) ------------------------------
+
+
+def planned(w, condition="PDF_DOCLING", repeat_index=1, arm="confirmatory", **plan):
+    """A planned observation that has not been executed."""
+    return observation(
+        w,
+        evidence=None,
+        result=None,
+        condition=condition,
+        repeat_index=repeat_index,
+        matrix_arm=arm,
+        **plan,
+    )
+
+
+def full_pair(w, case, repeats=(1,)):
+    obs = []
+    for n in repeats:
+        obs.append(
+            observation(
+                w,
+                case=case,
+                repeat_index=n,
+                result=result_for(w.item, repeat_index=n, attempt_id=f"a{n}"),
+            )
+        )
+        obs.append(planned(w, repeat_index=n))
+    return obs
+
+
+def test_one_jats_row_cannot_stand_for_the_planned_experiment():
+    """The review's counterexample: a lone JATS repeat-1 row used to be published."""
+    w = world()
+    lone = observation(w, case=deliver(w, [w.chunk(P_A)]))
+    pair_scope = _roster({"confirmatory": (["JATS", "PDF_DOCLING"], [1])}, [w.item])
+    with pytest.raises(ValueError, match="without a row"):
+        build_table([lone], pair_scope)  # PDF_DOCLING counterpart missing
+    full = _roster({"confirmatory": (["JATS", "PDF_DOCLING"], [1, 2, 3])}, [w.item])
+    with pytest.raises(ValueError, match="without a row"):
+        build_table(full_pair(w, deliver(w, [w.chunk(P_A)])), full)  # repeats 2-3 omitted
+    every_arm = _roster({a: (list(c), list(r)) for a, (c, r) in FROZEN_MATRIX.items()}, [w.item])
+    with pytest.raises(ValueError, match="without a row"):
+        build_table([lone], every_arm)
+
+
+def test_declared_scope_with_every_planned_row_builds_without_inventing_attempts(tmp_path):
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    obs = full_pair(w, case)
+    table = build_table(obs, _roster({"confirmatory": (["JATS", "PDF_DOCLING"], [1])}, [w.item]))
+    pdf = next(r for r in table.rows if r.condition == "PDF_DOCLING")
+    assert (pdf.execution_status, pdf.run_id, pdf.attempt_id) == (
+        "planned_not_executed",
+        None,
+        None,
+    )
+    assert (pdf.answer_correct, pdf.stage_c_status) == ("not_executed", None)
+    _, inventory_ref, build_ref = publish_table(table, tmp_path)
+    assert read_table(build_ref, tmp_path) == table.rows
+    inv = _inventory(tmp_path, inventory_ref)
+    assert (inv.scope, inv.planned_observations, inv.executed_observations) == (
+        "partial_development",
+        2,
+        1,
+    )
+
+
+def test_unplanned_extra_and_wrong_identity_rows_are_rejected():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    jats_only = _roster({"confirmatory": (["JATS"], [1])}, [w.item])
+    with pytest.raises(ValueError, match="outside the roster"):
+        build_table(full_pair(w, case), jats_only)  # PDF row was never planned
+    with pytest.raises(ValueError, match="outside the roster"):
+        build_table([observation(w, case=case), closed_book(w)], jats_only)
+    foreign = _roster({"confirmatory": (["JATS"], [1])}, [w.item]).model_copy(
+        update={"phase": "qualification"}
+    )
+    with pytest.raises(ValueError, match="phase"):
+        build_table([observation(w, case=case)], foreign)
+    tampered = jats_only.model_copy(
+        update={"items": [jats_only.items[0].model_copy(update={"item_sha256": "0" * 64})]}
+    )
+    with pytest.raises(ValueError, match="paper or item hash"):
+        build_table([observation(w, case=case)], tampered)
+
+
+def test_missing_item_and_duplicate_coordinate_are_rejected():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    scope = _roster({"confirmatory": (["JATS"], [1])}, [w.item])
+    other = RosterItem(item_id="q_999", state="included", paper_id="paper_9", item_sha256="1" * 64)
+    two_items = scope.model_copy(
+        update={"items": sorted([*scope.items, other], key=lambda i: i.item_id)}
+    )
+    with pytest.raises(ValueError, match="without a row"):
+        build_table([observation(w, case=case)], two_items)
+    o = observation(w, case=case)
+    with pytest.raises(ValueError, match="duplicate"):
+        build_table([o, o], scope)
+
+
+def test_exclusions_are_accounted_with_reasons():
+    base = {"item_id": "q_900", "state": "excluded"}
+    with pytest.raises(ValidationError):
+        RosterItem(**base)  # no reason
+    with pytest.raises(ValidationError):
+        RosterItem(**base, reason="  ")
+    with pytest.raises(ValidationError):
+        RosterItem(**base, reason="withdrawn", paper_id="p1")
+    with pytest.raises(ValidationError):
+        RosterItem(item_id="q_900", state="included", paper_id="p1")  # no item hash
+    w = world()
+    scope = _roster({"confirmatory": (["JATS"], [1])}, [w.item])
+    with pytest.raises(ValidationError, match="unique"):
+        PlannedRoster.model_validate(
+            scope.model_dump() | {"items": [*scope.model_dump()["items"]] * 2}
+        )
+    excluded = RosterItem(item_id="q_000", state="excluded", reason="item withdrawn in review")
+    with_excluded = PlannedRoster(
+        **(
+            scope.model_dump()
+            | {"items": [excluded.model_dump(), *[i.model_dump() for i in scope.items]]}
+        )
+    )
+    # an excluded item contributes no planned observation, and a row for it is undeclared
+    assert {c[1] for c in with_excluded.coordinates()} == {w.item.item_id}
+
+
+def test_complete_matrix_claim_requires_the_whole_matrix_and_no_open_items():
+    w = world()
+    every_arm = {a: (list(c), list(r)) for a, (c, r) in FROZEN_MATRIX.items()}
+    assert _roster(every_arm, [w.item], scope="complete_matrix").scope == "complete_matrix"
+    for narrower in (
+        {**every_arm, "confirmatory": (["JATS", "PDF_DOCLING"], [1])},
+        {k: v for k, v in every_arm.items() if k != "closed_book"},
+        {**every_arm, "confirmatory": (["JATS"], [1, 2, 3])},
+    ):
+        with pytest.raises(ValidationError, match="complete_matrix"):
+            _roster(narrower, [w.item], scope="complete_matrix")
+    open_item = RosterItem(item_id="q_999", state="unresolved", reason="gold under review")
+    items = [i.model_dump() for i in _roster(every_arm, [w.item]).items]
+    with pytest.raises(ValidationError, match="partial"):
+        _roster(
+            every_arm,
+            [w.item],
+            scope="complete_matrix",
+            items=[RosterItem(**i) for i in items] + [open_item],
+        )
+    # the same open item is fine in a partial scope and is carried to the inventory
+    partial = _roster(every_arm, [w.item], items=[RosterItem(**i) for i in items] + [open_item])
+    assert partial.scope == "partial_development"
+    assert {c[1] for c in partial.coordinates()} == {w.item.item_id}
+
+
+@pytest.mark.parametrize(
+    "arms",
+    [
+        {"confirmatory": (["PDF_DOCLING", "JATS"], [1])},  # not in matrix order
+        {"confirmatory": (["JATS"], [1, 1])},
+        {"confirmatory": (["JATS"], [4])},
+        {"chunk_robustness": (["JATS"], [1, 2])},
+        {"closed_book": (["JATS"], [1])},
+    ],
+)
+def test_roster_arms_stay_inside_the_frozen_matrix(arms):
+    with pytest.raises(ValidationError):
+        _roster(arms, [world().item])
+
+
+def _inventory(root, ref):
+    from biorag_repro.core.storage import read_project_json
+    from biorag_repro.evaluation.analysis_models import AnalysisInventory
+
+    return read_project_json(root / ref.logical_ref, ref.sha256, AnalysisInventory)
+
+
+def test_inventory_records_item_states_scope_and_roster_reference(tmp_path):
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    scope = _roster({"confirmatory": (["JATS"], [1])}, [w.item])
+    extra = [
+        RosterItem(item_id="q_001a", state="missing", reason="no PDF counterpart ingested"),
+        RosterItem(item_id="q_001b", state="unresolved", reason="gold adjudication pending"),
+        RosterItem(item_id="q_001c", state="excluded", reason="split changed after review"),
+    ]
+    scope = scope.model_copy(
+        update={"items": sorted([*scope.items, *extra], key=lambda i: i.item_id)}
+    )
+    scope = PlannedRoster.model_validate(scope.model_dump())
+    _, inventory_ref, _ = publish_table(build_table([observation(w, case=case)], scope), tmp_path)
+    inv = _inventory(tmp_path, inventory_ref)
+    assert {(i.item_id, i.state, i.reason) for i in inv.items if i.state != "included"} == {
+        ("q_001a", "missing", "no PDF counterpart ingested"),
+        ("q_001b", "unresolved", "gold adjudication pending"),
+        ("q_001c", "excluded", "split changed after review"),
+    }
+    assert [i.item_id for i in inv.items if i.state == "included"] == [w.item.item_id]
+    assert inv.scope == "partial_development"
+    assert (tmp_path / inv.roster.logical_ref).is_file() and inv.roster.sha256
+
+
+def test_tampered_roster_is_detected_on_read_back(tmp_path):
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    scope = _roster({"confirmatory": (["JATS", "PDF_DOCLING"], [1])}, [w.item])
+    table = build_table(full_pair(w, case), scope)
+    _, inventory_ref, build_ref = publish_table(table, tmp_path)
+    inv = _inventory(tmp_path, inventory_ref)
+    path = tmp_path / inv.roster.logical_ref
+    original = path.read_bytes()
+    path.write_bytes(original.replace(b'"PDF_DOCLING"', b'"JATS"', 1))
+    with pytest.raises(HashMismatchError):
+        read_table(build_ref, tmp_path)
+    path.write_bytes(original)
+    assert read_table(build_ref, tmp_path) == table.rows
+
+
+def test_published_rows_must_match_the_roster_on_read_back(tmp_path):
+    """Dropping a planned row from a published table is caught by the roster, not only by hashes."""
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    scope = _roster({"confirmatory": (["JATS", "PDF_DOCLING"], [1])}, [w.item])
+    table = build_table(full_pair(w, case), scope)
+    smaller = Table(table.rows[:1], scope, table.inputs)
+    with pytest.raises(ValueError, match="without a row"):
+        publish_table(smaller, tmp_path)
+    assert not list(tmp_path.rglob("*.csv"))
+
+
+def test_publication_with_a_roster_never_replaces_an_existing_table(tmp_path):
+    table = sample_table()
+    publish_table(table, tmp_path)
+    with pytest.raises(FileExistsError):
+        publish_table(table, tmp_path)
+
+
+# ---- primary comparison selection (R handoff) ----------------------------------------------
+
+
+def mixed_arm_table():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    obs = [
+        *full_pair(w, case, repeats=(1, 2)),
+        observation(w, case=case, matrix_arm="chunk_robustness"),
+        planned(w, arm="chunk_robustness"),
+        closed_book(w),
+    ]
+    return tbl(obs)
+
+
+def test_primary_row_alone_is_not_the_primary_comparison():
+    table = mixed_arm_table()
+    flagged = {(r.matrix_arm, r.condition) for r in table.rows if r.primary_row}
+    assert flagged == {
+        ("confirmatory", "JATS"),
+        ("confirmatory", "PDF_DOCLING"),
+        ("chunk_robustness", "JATS"),
+        ("chunk_robustness", "PDF_DOCLING"),
+        ("closed_book", "CLOSED_BOOK"),
+    }
+
+
+def test_primary_pairs_select_only_confirmatory_repeat_one_pairs():
+    table = mixed_arm_table()
+    pairs = primary_pairs(table.rows, "development")
+    assert list(pairs) == [world().item.item_id]
+    jats, pdf = pairs[world().item.item_id]
+    assert (jats.matrix_arm, jats.condition, jats.repeat_index) == ("confirmatory", "JATS", 1)
+    assert (pdf.matrix_arm, pdf.condition, pdf.repeat_index) == ("confirmatory", "PDF_DOCLING", 1)
+    assert jats.paper_id == pdf.paper_id and jats.item_sha256 == pdf.item_sha256
+    # development rows are never confirmatory results
+    assert primary_pairs(table.rows, "confirmatory") == {}
+    assert primary_pairs(table.rows, "secondary") == {}
+
+
+def test_an_unpaired_representation_is_not_a_primary_pair():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    table = tbl([observation(w, case=case), closed_book(w)])
+    assert primary_pairs(table.rows, "development") == {}
+
+
+def test_inventory_states_the_primary_selection_rule(tmp_path):
+    from biorag_repro.evaluation.analysis_models import PRIMARY_SELECTION
+
+    _, inventory_ref, _ = publish_table(mixed_arm_table(), tmp_path)
+    inv = _inventory(tmp_path, inventory_ref)
+    assert inv.primary_selection == PRIMARY_SELECTION
+    assert "matrix_arm = confirmatory" in inv.primary_selection
+    assert "not primary" in inv.primary_selection
+    assert "primary_row alone" in inv.pairing
