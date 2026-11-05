@@ -24,6 +24,7 @@ from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
 from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
+from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.retrieval.models import (
     Bm25Index,
     CanonicalInput,
@@ -39,6 +40,8 @@ SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
     "stage_a_candidate.schema.json": StageACandidate,
     "stage_a_judgment.schema.json": StageAJudgment,
+    "stage_b_candidate.schema.json": StageBCandidate,
+    "stage_b_judgment.schema.json": StageBJudgment,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,
