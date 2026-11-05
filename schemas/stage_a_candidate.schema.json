@@ -28,8 +28,33 @@
     },
     "ComponentLocus": {
       "additionalProperties": false,
-      "description": "Canonical text occurrences carrying one benchmark evidence component.",
+      "description": "Canonical text occurrences carrying one benchmark evidence component.\n\nA component is located in one of four ways, never mixed:\nverbatim (the benchmark text occurs in the canonical text); `observed_text`\n(a genuine source-to-canonical alteration, recorded for analysis);\n`equivalence_note` (reviewer-attested: the benchmark descriptor is a\nparaphrase and the occurrences are the structural anchors that carry it);\nor `form=\"mean_sd\"` (the answer is the leading mean of a `mean ± SD` cell).\nOnly the first is machine-verified text identity.",
       "properties": {
+        "equivalence_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Equivalence Note"
+        },
+        "form": {
+          "anyOf": [
+            {
+              "const": "mean_sd",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form"
+        },
         "observed_text": {
           "anyOf": [
             {

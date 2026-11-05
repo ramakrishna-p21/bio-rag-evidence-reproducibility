@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 from typing import Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_serializer, model_validator
 
 from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import validate_sha256
@@ -30,12 +30,32 @@ SuggestionKind = Literal[
 
 
 class ComponentLocus(Record):
-    """Canonical text occurrences carrying one benchmark evidence component."""
+    """Canonical text occurrences carrying one benchmark evidence component.
+
+    A component is located in one of four ways, never mixed:
+    verbatim (the benchmark text occurs in the canonical text); `observed_text`
+    (a genuine source-to-canonical alteration, recorded for analysis);
+    `equivalence_note` (reviewer-attested: the benchmark descriptor is a
+    paraphrase and the occurrences are the structural anchors that carry it);
+    or `form="mean_sd"` (the answer is the leading mean of a `mean ± SD` cell).
+    Only the first is machine-verified text identity.
+    """
 
     role: str
     text: str
     occurrence_ids: list[str] = Field(min_length=1)
     observed_text: str | None = None  # None: the benchmark text occurs verbatim
+    equivalence_note: str | None = None
+    form: Literal["mean_sd"] | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_unused_attestation(self, handler):  # type: ignore[no-untyped-def]
+        # Records written before these fields existed keep their exact bytes and identity.
+        data = handler(self)
+        for name in ("equivalence_note", "form"):
+            if data.get(name) is None:
+                data.pop(name, None)
+        return data
 
     @model_validator(mode="after")
     def valid_observation(self) -> Self:
@@ -45,7 +65,19 @@ class ComponentLocus(Record):
             raise ValueError("observed text must be nonblank and differ from the component")
         if len(set(self.occurrence_ids)) != len(self.occurrence_ids):
             raise ValueError("duplicate occurrence in component locus")
+        if self.equivalence_note is not None and not self.equivalence_note.strip():
+            raise ValueError("reviewer equivalence needs an explanation")
+        if sum(x is not None for x in (self.observed_text, self.equivalence_note, self.form)) > 1:
+            raise ValueError("a component is verbatim, altered, equivalent or mean ± SD, not mixed")
+        if self.equivalence_note is not None and self.role == "answer":
+            raise ValueError("an answer value is never accepted as a reviewer equivalence")
+        if self.form is not None and self.role != "answer":
+            raise ValueError("mean ± SD form applies to the answer component only")
         return self
+
+    @property
+    def verbatim(self) -> bool:
+        return self.observed_text is None and self.equivalence_note is None and self.form is None
 
 
 class Placement(Record):
@@ -116,10 +148,7 @@ class StageACandidate(StageAIdentity):
         if (self.determination == "automatic_preserved") != bool(self.sets):
             raise ValueError("automatic preservation requires located sets and nothing else")
         if self.determination == "automatic_preserved" and any(
-            c.observed_text is not None
-            for s in self.sets
-            for p in s.placements
-            for c in p.components
+            not c.verbatim for s in self.sets for p in s.placements for c in p.components
         ):
             raise ValueError("automatic preservation requires verbatim components")
         return self
@@ -148,6 +177,8 @@ class StageAJudgment(StageAIdentity):
                     "deterministic basis is only a candidate-backed preserved label "
                     "without reviewer fields"
                 )
+            if any(not c.verbatim for s in self.sets for p in s.placements for c in p.components):
+                raise ValueError("a deterministic label carries verbatim components only")
         else:
             if not (self.reviewer and self.reviewer.strip()):
                 raise ValueError("reviewer judgment requires a reviewer")

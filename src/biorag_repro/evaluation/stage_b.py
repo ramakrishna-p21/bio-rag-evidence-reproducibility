@@ -181,7 +181,7 @@ def _confirm(
     """Check that the chunk supplying the evidence carries it faithfully and unambiguously."""
     _, chunk, offset = v.included[chunk_id]
     components = placement.components
-    if any(c.observed_text is not None for c in components):
+    if any(not c.verbatim for c in components):
         return _review(
             set_index, placement, "altered evidence is delivered; faithfulness needs review"
         ), None

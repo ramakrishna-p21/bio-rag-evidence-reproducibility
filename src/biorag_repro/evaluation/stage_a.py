@@ -29,6 +29,8 @@ TABLE_ROLES = {"answer", "row", "column"}
 _BEFORE = set(".,+-−_")
 _AFTER = set("_%^×⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
 _NUMBER = re.compile(r"\d[\d.,]*")
+_SD_TAIL = re.compile(r"\s*±\s*\d+(?:\.\d+)?\s*")
+_MEAN_STATEMENT = re.compile(r"\bmean\s*±", re.IGNORECASE)
 _SUGGESTION_LIMIT = 5
 
 
@@ -505,6 +507,80 @@ def validate_candidate(
         raise ValueError("candidate differs from the locator output for this item and document")
 
 
+def _mean_sd_matches(
+    index: Index, container: str, text: str
+) -> list[tuple[Unit, list[tuple[int, int]]]]:
+    """Cells that read exactly `<text> ± <SD>`; reviewer path only, never automatic."""
+    return [
+        (unit, [(0, len(text))])
+        for unit in index.units[container]
+        if unit.cell is not None
+        and unit.cell.is_header is False
+        and unit.text.startswith(text)
+        and _SD_TAIL.fullmatch(unit.text[len(text) :])
+    ]
+
+
+def _row_anchor(cell: TableCell, answer: TableCell) -> bool:
+    if cell.mapping.kind == "docling" and cell.is_header and not cell.native_row_header:
+        return False
+    return cell.row <= answer.row < cell.row + cell.row_span and (
+        cell.column + cell.column_span <= answer.column
+    )
+
+
+def _column_anchor(cell: TableCell, answer: TableCell) -> bool:
+    if cell.is_header is not True:
+        return False
+    if cell.mapping.kind == "docling" and not cell.native_column_header:
+        return False
+    return cell.column <= answer.column < cell.column + cell.column_span and (
+        cell.row + cell.row_span <= answer.row
+    )
+
+
+def _check_table_links(index: Index, placement: Placement) -> None:
+    """Reviewer anchors must be linked text or lie on the answer cell's own row and column."""
+    units = {
+        o.occurrence_id: u for u in index.units[placement.container_node_id] for _, _, o in u.spans
+    }
+    answers = [c for c in placement.components if c.role == "answer"]
+    cells: dict[str, TableCell] = {}
+    for c in answers:
+        for i in c.occurrence_ids:
+            owner = units[i].cell
+            if owner is None:
+                raise ValueError("a table answer must be carried by exactly one table cell")
+            cells[owner.node_id] = owner
+    if len(cells) != 1:
+        raise ValueError("a table answer must be carried by exactly one table cell")
+    answer = next(iter(cells.values()))
+    if answer.is_header is not False:
+        raise ValueError("the answer cell is not a data cell")
+    has_row = has_column = False
+    for component in placement.components:
+        if component.role == "answer":
+            continue
+        for occ_id in component.occurrence_ids:
+            cell = units[occ_id].cell
+            if cell is None:
+                continue  # linked caption or footnote text of this table
+            row, column = _row_anchor(cell, answer), _column_anchor(cell, answer)
+            if cell.node_id == answer.node_id or not (row or column):
+                raise ValueError("anchor is not linked to the answer cell by row or column")
+            has_row, has_column = has_row or row, has_column or column
+    if not (has_row and has_column):
+        raise ValueError("table evidence needs both a row and column anchor for the answer cell")
+    if any(c.form == "mean_sd" for c in answers):
+        stated = any(
+            _MEAN_STATEMENT.search(u.text)
+            for u in units.values()
+            if u.cell is None or _column_anchor(u.cell, answer)
+        )
+        if not stated:
+            raise ValueError("a linked caption, note or column header must state mean ± ")
+
+
 def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> None:
     for locus in judgment.sets:
         if locus.set_index >= len(item.evidence_sets):
@@ -524,7 +600,13 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                 for occ_id in component.occurrence_ids:
                     if index.where.get(occ_id) != placement.container_node_id:
                         raise ValueError("occurrence is not text in the named container")
-                if component.observed_text is None:
+                if component.equivalence_note is not None:
+                    continue  # attested; the anchors are checked structurally below
+                if component.form == "mean_sd":
+                    if not table:
+                        raise ValueError("mean ± SD applies to table cells only")
+                    found = _mean_sd_matches(index, placement.container_node_id, component.text)
+                elif component.observed_text is None:
                     found = _component_matches(
                         index, placement.container_node_id, component.role, component.text, table
                     )
@@ -537,6 +619,10 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                 allowed = {i for unit, spans in found for i in unit.ids(spans)}
                 if not allowed or not set(component.occurrence_ids) <= allowed:
                     raise ValueError("component occurrences do not carry the recorded text")
+            if table and any(
+                not c.verbatim and c.observed_text is None for c in placement.components
+            ):
+                _check_table_links(index, placement)
 
 
 def validate_judgment(

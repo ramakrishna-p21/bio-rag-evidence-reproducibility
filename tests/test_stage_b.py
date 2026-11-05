@@ -443,6 +443,19 @@ def test_altered_but_sufficient_evidence_requires_scientific_review():
     assert any(d.outcome == "review" for d in result.diagnoses)
 
 
+def test_reviewer_attested_equivalence_is_delivered_only_after_review():
+    document, _, _, _, result = build(prose_xml(P_A, P_B), counter=lambda s: len(s.split()) * 9)
+    item = make_item(document, PROSE_COMPONENTS)
+    sets = [locus(document, PROSE_COMPONENTS)]
+    subject = sets[0].placements[0].components[0]
+    subject.equivalence_note = "descriptor paraphrases the sentence subject"
+    stage_a = judgment(item, document, "preserved", sets=sets)
+    w = finish(document, result, item, stage_a)
+    outcome = deliver(w, [w.chunk(P_A)]).evaluate()
+    assert outcome.determination == "needs_review"
+    assert not outcome.delivered
+
+
 def test_altered_evidence_that_never_reached_the_context_is_still_not_delivered():
     w = altered_but_sufficient_world()
     result = deliver(w, [w.chunk(P_B)]).evaluate()
