@@ -105,6 +105,19 @@
       "title": "Context Candidates",
       "type": "integer"
     },
+    "context_rendering": {
+      "anyOf": [
+        {
+          "const": "whole_evidence_wrappers_qwen_no_special_tokens_v1",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Context Rendering"
+    },
     "duplicate_policy": {
       "const": "text_and_scientific_provenance",
       "default": "text_and_scientific_provenance",

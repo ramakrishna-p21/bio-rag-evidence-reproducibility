@@ -87,6 +87,8 @@ def record_ref(
             dependencies.append(("index_build_manifest", value.index_build_manifest))
     else:
         kind, dependencies = "context", [("retrieval", value.retrieval)]
+        if value.retrieval_build_manifest is not None:
+            dependencies.append(("retrieval_build_manifest", value.retrieval_build_manifest))
     dependencies.append(("configuration", value.configuration.artifact))
     digest = sha256_bytes(content)
     artifact_id = derived_artifact_id(

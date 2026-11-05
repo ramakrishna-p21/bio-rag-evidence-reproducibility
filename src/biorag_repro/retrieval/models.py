@@ -71,6 +71,9 @@ class Phase5Configuration(Record):
     k1: float = Field(default=1.5, ge=1.5, le=1.5)
     b: float = Field(default=0.75, ge=0.75, le=0.75)
     epsilon: float = Field(default=0.25, ge=0.25, le=0.25)
+    context_rendering: Literal["whole_evidence_wrappers_qwen_no_special_tokens_v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     context_candidates: Literal[20] = 20
     evidence_tokens: Literal[2048] = 2048
     duplicate_policy: Literal["text_and_scientific_provenance"] = "text_and_scientific_provenance"
@@ -417,6 +420,11 @@ class ContextRecord(Record):
     schema_version: Literal["1"] = "1"
     configuration: ConfigurationRef
     retrieval: ArtifactRef
+    retrieval_build_manifest: ArtifactRef | None = Field(
+        default=None, exclude_if=lambda v: v is None
+    )
+    packing_policy: Nonblank | None = Field(default=None, exclude_if=lambda v: v is None)
+    packing_tokenizer: Snapshot | None = Field(default=None, exclude_if=lambda v: v is None)
     representation: Representation
     decisions: list[ContextDecision] = Field(max_length=20)
     included_chunk_ids: list[Nonblank]

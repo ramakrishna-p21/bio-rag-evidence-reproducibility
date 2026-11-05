@@ -91,6 +91,56 @@
       ],
       "title": "ContextDecision",
       "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "description": "A recorded pin is not a claim of installed assets or qualification.",
+      "properties": {
+        "file_hashes": {
+          "patternProperties": {
+            "\\S": {
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "minLength": 1
+          },
+          "title": "File Hashes",
+          "type": "object"
+        },
+        "repository": {
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revision"
+        },
+        "state": {
+          "enum": [
+            "unresolved",
+            "pinned"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "state"
+      ],
+      "title": "Snapshot",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -125,6 +175,31 @@
       "title": "Included Chunk Ids",
       "type": "array"
     },
+    "packing_policy": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "pattern": "\\S",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Packing Policy"
+    },
+    "packing_tokenizer": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Snapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "representation": {
       "enum": [
         "JATS",
@@ -135,6 +210,17 @@
     },
     "retrieval": {
       "$ref": "#/$defs/ArtifactRef"
+    },
+    "retrieval_build_manifest": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ArtifactRef"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "schema_version": {
       "const": "1",

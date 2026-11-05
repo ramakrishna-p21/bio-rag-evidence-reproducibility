@@ -17,3 +17,17 @@ The frozen source files and production benchmark working artifacts remain outsid
 Run `python -m pytest -q`, `python -m ruff format --check .`, `python -m ruff check .`, `python -m mypy src/biorag_repro`, and `python scripts/export_schemas.py --check` for the current code and schema checks.
 
 Dense inference uses a verified local `BAAI/bge-base-en-v1.5` snapshot and CPU float32 execution. For the CPU dependency build, install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` before installing the project extras. Select the pinned snapshot directory with `BIORAG_BGE_ROOT` when running tests to include actual model checks. Without that setting, the model test is skipped and model behavior remains unverified by that test run. Model files and scientific data are acquired separately and kept outside Git.
+
+Evidence contexts use whole chunks from the original top 20 ranked results and
+stop at the first eligible chunk that exceeds 2,048 Qwen evidence tokens.
+Install the `context` extra for tokenizer support; assets must be acquired
+separately at the approved exact revision. No generator weights are required.
+
+`python -m biorag_repro.retrieval.cli --help` (or `biorag-context --help` after installation) exposes context assembly and scientific
+read-back. Both operations require explicit selection JSON (the `Selection`
+fields in `retrieval/context.py`), configuration reference/root, local tokenizer
+assets, and output root. BGE read-back additionally requires its verified model
+assets. Selected chunk, index and ranking artifacts pass their existing scientific
+readers; this command does not construct or replace those upstream artifacts.
+Output publication refuses to overwrite existing files. These development
+operations do not establish generator qualification or final-test readiness.
