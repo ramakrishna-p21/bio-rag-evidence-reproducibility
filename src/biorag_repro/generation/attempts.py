@@ -401,7 +401,9 @@ class RunStore:
         base = self.run_dir / "observations"
         if not base.is_dir():
             return []
-        return sorted(p.name for p in base.iterdir() if (p / "events" / "000001.json").exists())
+        # Any event file makes it an observation: a lost first event must surface as corruption
+        # when the log is read, not hide the observation.
+        return sorted(p.name for p in base.iterdir() if any((p / "events").glob("0*.json")))
 
     def _load(self, key: str) -> ObservationState:
         events_dir = self.run_dir / "observations" / key / "events"
@@ -760,6 +762,11 @@ class RunStore:
             at_utc=self.now(),
             **fields,
         )
+        if prior and event.at_utc < prior.events[-1].at_utc:
+            # Checked before writing: a published event cannot be removed from an append-only log.
+            raise LifecycleError(
+                f"clock moved backwards: {event.at_utc} precedes {prior.events[-1].at_utc}"
+            )
         content = serialize_project_json(event, AttemptEvent)
         digest = sha256_bytes(content)
         target = self.run_dir / "observations" / key / "events" / f"{event.sequence:06d}.json"

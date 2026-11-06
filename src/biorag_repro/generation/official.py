@@ -19,7 +19,7 @@ a hardware attestation. `APPROVED_CHECKPOINTS` is empty until Rama approves a ma
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from biorag_repro.benchmark.development_view import read_development_view
 from biorag_repro.core.config import ResolvedConfiguration
@@ -48,6 +48,7 @@ from biorag_repro.generation.inputs import (
     input_record_ref,
     read_input_record,
 )
+from biorag_repro.generation.receipt import ExecutionFacts, decode_output
 from biorag_repro.generation.roster import RosterRow
 from biorag_repro.generation.runner import decided_results
 from biorag_repro.retrieval import context as phase5
@@ -99,7 +100,7 @@ def _check_environment(
         raise NonOfficialBackend("configured context window exceeds the model's positions")
 
 
-def _row_key(completed: CompletedRun, row: RosterRow) -> str:
+def row_key(completed: CompletedRun, row: RosterRow) -> str:
     return completed.store.key_for(
         Coordinates(
             item_id=row.item_id,
@@ -111,7 +112,26 @@ def _row_key(completed: CompletedRun, row: RosterRow) -> str:
     )
 
 
-def _check_inputs(completed: CompletedRun, tokenizer: object) -> None:
+def _check_output(
+    completed: CompletedRun,
+    state: ObservationState,
+    facts: ExecutionFacts,
+    tokenizer: Any,
+    name: object,
+) -> None:
+    """The stored raw text must be what the reported output token ids decode to."""
+    if tokenizer.eos_token_id not in facts.generation.eos_token_ids:
+        raise NonOfficialBackend(f"{name}: the reported stop tokens omit the chat end token")
+    raw_ref = state.events[-1].raw_output
+    assert raw_ref is not None
+    raw = (completed.store.root / raw_ref.logical_ref).read_text(encoding="utf-8")
+    if decode_output(tokenizer, facts.output_token_ids, facts.stop_reason) != raw:
+        raise NonOfficialBackend(
+            f"{name}: the output token ids do not decode to the stored raw output"
+        )
+
+
+def _check_inputs(completed: CompletedRun, tokenizer: Any) -> None:
     states = {s.key: s for s in completed.states}
     run_dir = completed.store.run_dir
     for row in completed.roster.rows:
@@ -119,7 +139,7 @@ def _check_inputs(completed: CompletedRun, tokenizer: object) -> None:
         ref = row.input_record
         if ref is None:
             raise NonOfficialBackend(f"{name}: the roster cites no stored input")
-        key = _row_key(completed, row)
+        key = row_key(completed, row)
         try:
             record = read_input_record(run_dir, ref.sha256)
         except CorruptInput as error:
@@ -146,6 +166,7 @@ def _check_inputs(completed: CompletedRun, tokenizer: object) -> None:
                 raise NonOfficialBackend(f"{name}: completed without an execution receipt")
             if receipt.input_record_sha256 != ref.sha256:
                 raise NonOfficialBackend(f"{name}: the receipt names another stored input")
+            _check_output(completed, state, receipt.facts, tokenizer, name)
 
 
 def verify_official_run(
@@ -251,7 +272,7 @@ def _link(
         raise NotVerifiedOfficial("the result is not the completed attempt of its observation")
     if completed.store.receipt_of(state) is None:
         raise NoExecutionReceipt(f"{result.observation_key} has no execution receipt")
-    row = next(r for r in completed.roster.rows if _row_key(completed, r) == state.key)
+    row = next(r for r in completed.roster.rows if row_key(completed, r) == state.key)
     if row.context is None or row.context_sha256 is None or row.input_record is None:
         raise ValueError("a closed-book observation or a row without a stored input has no link")
     return GeneratorInput(

@@ -1,0 +1,50 @@
+{
+  "additionalProperties": false,
+  "description": "What must be retained outside the run to recognise it later.",
+  "properties": {
+    "backend_kind": {
+      "enum": [
+        "official",
+        "smoke",
+        "mock"
+      ],
+      "title": "Backend Kind",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "resolved_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resolved Config Sha256",
+      "type": "string"
+    },
+    "roster_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Roster Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "backend_kind",
+    "resolved_config_sha256",
+    "roster_sha256",
+    "manifest_sha256"
+  ],
+  "title": "Anchor",
+  "type": "object"
+}

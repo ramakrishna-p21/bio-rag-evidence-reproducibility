@@ -30,6 +30,7 @@ from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 from biorag_repro.generation.attempts import AttemptEvent, RunRecord
 from biorag_repro.generation.completion import RunCompletion
 from biorag_repro.generation.config import GeneratorConfiguration
+from biorag_repro.generation.driver import Anchor
 from biorag_repro.generation.environment import EnvironmentRecord
 from biorag_repro.generation.inputs import GeneratorInputRecord
 from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
@@ -69,6 +70,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generation_run_completion.schema.json": RunCompletion,
     "generation_input_record.schema.json": GeneratorInputRecord,
     "generation_execution_receipt.schema.json": ExecutionReceipt,
+    "generation_run_anchor.schema.json": Anchor,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,

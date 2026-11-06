@@ -111,10 +111,16 @@ class Scripted:
     """Stands in for a backend: it reports whatever its test says it did."""
 
     def __init__(self, renderer, tiny_dir, kind, *, name=SCRIPT, execution=None, gpu="ok",
-                 fail=(), receipts=True, with_execution=True):  # fmt: skip
+                 fail=(), receipts=True, with_execution=True, output_ids=None, eos_ids=(151645,)):  # fmt: skip
         self.identity = BackendIdentity(kind=kind, name=name, version=None)
         settings = renderer.config.settings
         self.config, self.gpu, self.fail, self.receipts = renderer.config, gpu, set(fail), receipts
+        self.eos_ids = list(eos_ids)
+        # token ids a real backend would report for GOOD: its decoding, then the stop token
+        self.output_ids = output_ids or [
+            *renderer.tokenizer(GOOD, add_special_tokens=False)["input_ids"],
+            151645,
+        ]
         fields = {
             "snapshot": inventory_snapshot(tiny_dir, REV),
             "tokenizer_file_sha256": dict(settings.tokenizer.file_sha256),
@@ -141,7 +147,13 @@ class Scripted:
             raise BackendFailure("bad_request", "refused")
         if not self.receipts:
             return GOOD
-        return GenerationOutput(GOOD, facts_for(SimpleNamespace(rendered=rendered), self.config))
+        facts = facts_for(
+            SimpleNamespace(rendered=rendered),
+            self.config,
+            output=self.output_ids,
+            generation={"eos_token_ids": self.eos_ids},
+        )
+        return GenerationOutput(GOOD, facts)
 
 
 def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, entry_edit=None,
@@ -150,7 +162,7 @@ def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, ent
     view_record, items = read_development_view(directory, record_sha)
     by_id = {i.item_id: i for i in items}
     purpose = "development_candidate" if kind == "official" else "synthetic_test"
-    renderer = make_renderer(purpose=purpose, repository="Qwen/Qwen3-8B")
+    renderer = make_renderer(purpose=purpose, repository="Qwen/Qwen3-8B", new_tokens=64)
     config = renderer.config
     store = RunStore.create(
         tmp_path / "run",
@@ -647,3 +659,18 @@ def test_a_recorded_link_is_refused_for_a_forged_result(tmp_path, view, tiny, re
     forged = GenerationResult.model_validate(genuine.model_dump() | {"answer": "0.99"})
     with pytest.raises(NotVerifiedOfficial):
         recorded_generator_input(verified, forged)
+
+
+def test_raw_text_that_the_reported_token_ids_do_not_decode_to_is_refused(
+    tmp_path, view, tiny, recognised
+):
+    world = build_world(tmp_path, view, tiny, output_ids=[11, 12, 151645])
+    with pytest.raises(NonOfficialBackend, match="output token ids"):
+        verify(world, anchored(world))
+
+
+def test_stop_tokens_that_omit_the_chat_end_token_are_refused(tmp_path, view, tiny, recognised):
+    ids = [11, 12, 151643]  # ends on <|endoftext|>, which this stop list names
+    world = build_world(tmp_path, view, tiny, output_ids=ids, eos_ids=(151643,))
+    with pytest.raises(NonOfficialBackend, match="stop tokens"):
+        verify(world, anchored(world))

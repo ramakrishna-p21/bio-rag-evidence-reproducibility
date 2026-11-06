@@ -31,7 +31,12 @@ from biorag_repro.generation.environment import (
 )
 from biorag_repro.generation.model_snapshot import SnapshotError, inventory_snapshot
 from biorag_repro.generation.prompt import RenderedInput
-from biorag_repro.generation.receipt import ExecutionFacts, GenerationSettings, token_ids_sha256
+from biorag_repro.generation.receipt import (
+    ExecutionFacts,
+    GenerationSettings,
+    decode_output,
+    token_ids_sha256,
+)
 from biorag_repro.generation.runner import BackendFailure, GenerationOutput
 from biorag_repro.retrieval import context as phase5
 from biorag_repro.retrieval.models import Snapshot
@@ -231,16 +236,14 @@ class HuggingFaceBackend:
             raise BackendFailure("early_stop_token", "a stop token occurs before the last token")
         stop: Literal["eos", "max_new_tokens"]
         if new and new[-1] in self.stop_ids:
-            stop, body = "eos", new[:-1]
+            stop = "eos"
         elif len(new) == max_new_tokens:
-            stop, body = "max_new_tokens", new
+            stop = "max_new_tokens"
         else:
             raise BackendFailure(
                 "unexpected_stop", f"stopped after {len(new)} tokens without cause"
             )
-        text = self.tokenizer.decode(
-            body, skip_special_tokens=False, clean_up_tokenization_spaces=False
-        )
+        text = decode_output(self.tokenizer, new, stop)
         facts = ExecutionFacts(
             input_token_ids_sha256=token_ids_sha256(ids),
             input_token_count=len(ids),

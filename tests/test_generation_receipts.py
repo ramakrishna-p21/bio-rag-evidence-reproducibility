@@ -327,3 +327,21 @@ def test_event_citing_a_receipt_on_a_failure_is_refused_by_the_model(tmp_path, r
         data[name] = None
     with pytest.raises(ValueError, match="receipt"):
         AttemptEvent.model_validate(data)
+
+
+# ---- the receipt must describe a generation that could have happened ----------------------
+
+
+def test_a_stop_token_inside_the_output_is_impossible(tmp_path, renderer):
+    store = new_store(tmp_path, renderer)
+    record = record_for(renderer, store, planned(store))
+    with pytest.raises(ValueError, match="stop token before the end"):
+        facts_for(record, renderer.config, output=(11, EOS, 12, EOS))
+
+
+def test_a_length_stop_cannot_end_on_a_stop_token(tmp_path, renderer):
+    store = new_store(tmp_path, renderer)
+    record = record_for(renderer, store, planned(store))
+    limit = renderer.config.settings.budgets.max_new_tokens
+    with pytest.raises(ValueError, match="stop token before the end"):
+        facts_for(record, renderer.config, output=[11] * (limit - 1) + [EOS], stop="max_new_tokens")

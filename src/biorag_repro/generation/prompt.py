@@ -14,8 +14,9 @@ from pydantic import JsonValue, StringConstraints, field_validator, model_valida
 from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, validate_sha256
-from biorag_repro.generation.config import GeneratorConfiguration
+from biorag_repro.generation.config import EVIDENCE_BUDGET_TOKENS, GeneratorConfiguration
 from biorag_repro.generation.parsing import OUTPUT_SCHEMAS, PARSER_VERSIONS
+from biorag_repro.generation.receipt import token_ids_sha256
 from biorag_repro.retrieval.context import QwenCounter
 from biorag_repro.retrieval.models import Snapshot
 
@@ -104,7 +105,7 @@ class RenderedInput(Record):
             assert self.context_tokens is not None
             if sha256_bytes(self.context.encode("utf-8")) != self.context_sha256:
                 raise ValueError("context does not match its hash")
-            if not 0 <= self.context_tokens <= 2048:
+            if not 0 <= self.context_tokens <= EVIDENCE_BUDGET_TOKENS:
                 raise ValueError("context tokens outside the evidence budget")
             if self.context not in self.rendered_text:
                 raise ValueError("context missing from the rendered text")
@@ -208,5 +209,5 @@ class InputRenderer:
             rendered_text=rendered,
             rendered_sha256=sha256_bytes(rendered.encode("utf-8")),
             input_tokens=len(ids),
-            input_token_ids_sha256=sha256_bytes(canonical_json_bytes(ids)),
+            input_token_ids_sha256=token_ids_sha256(ids),
         )

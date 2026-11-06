@@ -306,11 +306,16 @@ def _result(store: RunStore, state: ObservationState) -> GenerationResult:
             answer=last.answer,
             abstained=last.abstained,
         )
+    reason = (
+        "interrupted: the last attempt was closed after its worker stopped"
+        if last.state == "interrupted"
+        else f"{last.failure_kind}: {last.failure_detail}"
+    )
     return GenerationResult(
         **common,
         attempt_id=last.attempt_id,
         status="operational_failure",
-        failure=f"{last.failure_kind}: {last.failure_detail} (attempts: {state.attempts})",
+        failure=f"{reason} (attempts: {state.attempts})",
     )
 
 

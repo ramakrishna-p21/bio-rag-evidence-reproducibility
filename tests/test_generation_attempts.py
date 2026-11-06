@@ -1032,3 +1032,41 @@ def test_a_wellformed_seal_for_a_still_open_observation_is_detected(tmp_path):
     store._seal(store.observation(key))  # a seal that matches the newest event but is premature
     with pytest.raises(CorruptRecord, match="seal"):
         reopen(store, config)
+
+
+# --- findings of the independent review of the execution boundary ---------------------------
+
+
+def test_an_observation_that_lost_its_first_event_is_corrupt_not_absent(tmp_path):
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    finish(store, key)
+    event_files(store, key)[0].unlink()
+    with pytest.raises(CorruptRecord):
+        RunStore.open(tmp_path, store.run_id, config=config, backend_kind="mock")
+
+
+def test_a_clock_that_moved_backwards_writes_nothing(tmp_path):
+    clock = Clock()
+    store, _ = new_store(tmp_path, clock=clock)
+    key = store.plan(coordinates())
+    attempt = start(store, key)
+    clock.value -= timedelta(hours=1)
+    with pytest.raises(LifecycleError, match="clock"):
+        store.complete(key, attempt, GOOD_OUTPUT)
+    assert len(event_files(store, key)) == 2  # planned, running: no unreadable event is left
+    assert store.observation(key).status == "running"
+
+
+def test_an_attempt_ended_by_interruption_gets_a_failure_reason(tmp_path):
+    from biorag_repro.generation.runner import decided_results
+
+    store, _ = new_store(tmp_path)
+    key = store.plan(coordinates())
+    for _ in range(3):
+        start(store, key)
+        store.recover_interrupted(previous_worker_stopped=True)
+    assert store.observation(key).status == "retries_exhausted"
+    (result,) = decided_results(store)
+    assert result.failure is not None and "None" not in result.failure
+    assert "interrupted" in result.failure

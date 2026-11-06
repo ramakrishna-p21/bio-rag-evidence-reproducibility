@@ -68,14 +68,14 @@ def fake_loader(**options):
 
 
 def make_renderer(*, purpose="synthetic_test", repository="synthetic/tiny-qwen3", decoding=None,
-                  window=8192, revision=REV):  # fmt: skip
+                  window=8192, revision=REV, new_tokens=NEW_TOKENS):  # fmt: skip
     prompt = artifact()
     settings = synthetic_settings()
     settings["purpose"] = purpose
     settings["model"] = {"repository": repository, "revision": revision, "dtype": "bfloat16"}
     settings["prompt_sha256"] = prompt_sha256(prompt)
     settings["output_schema_sha256"] = output_schema_sha256(prompt)
-    settings["budgets"].update(max_new_tokens=NEW_TOKENS, context_window_tokens=window)
+    settings["budgets"].update(max_new_tokens=new_tokens, context_window_tokens=window)
     if decoding:
         settings["decoding"] = decoding
     return InputRenderer(ROOT, resolve(settings), prompt)
