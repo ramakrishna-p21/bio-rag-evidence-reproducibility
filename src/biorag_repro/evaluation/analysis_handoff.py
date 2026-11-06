@@ -299,7 +299,8 @@ def derive_accounting(rows: list[AnalysisRow], roster: PlannedRoster) -> list[Ou
                 and jats.state in evaluable
                 and pdf.state in evaluable
             )
-            assert item.paper_id is not None  # an included item always names its paper
+            if item.paper_id is None:
+                raise HandoffError(f"included item {item.item_id} does not name its paper")
             items.append(
                 ItemAccounting(
                     item_id=item.item_id,

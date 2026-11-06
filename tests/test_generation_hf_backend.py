@@ -68,9 +68,10 @@ def fake_loader(**options):
 
 
 def make_renderer(*, purpose="synthetic_test", repository="synthetic/tiny-qwen3", decoding=None,
-                  window=8192, revision=REV, new_tokens=NEW_TOKENS):  # fmt: skip
+                  window=8192, revision=REV, new_tokens=NEW_TOKENS, arm="confirmatory"):  # fmt: skip
     prompt = artifact()
     settings = synthetic_settings()
+    settings["matrix_arm"] = arm
     settings["purpose"] = purpose
     settings["model"] = {"repository": repository, "revision": revision, "dtype": "bfloat16"}
     settings["prompt_sha256"] = prompt_sha256(prompt)

@@ -170,12 +170,14 @@ def named_device(record):
 
 
 def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, entry_edit=None,
-                no_execution=False, run=True, evidence=True, **backend_options):  # fmt: skip
+                no_execution=False, run=True, evidence=True, matrix_arm="confirmatory", **backend_options):  # fmt: skip
     directory, record_sha = view
     view_record, items = read_development_view(directory, record_sha)
     by_id = {i.item_id: i for i in items}
     purpose = "development_candidate" if kind == "official" else "synthetic_test"
-    renderer = make_renderer(purpose=purpose, repository="Qwen/Qwen3-8B", new_tokens=64)
+    renderer = make_renderer(
+        purpose=purpose, repository="Qwen/Qwen3-8B", new_tokens=64, arm=matrix_arm
+    )
     config = renderer.config
     store = RunStore.create(
         tmp_path / "run",
@@ -194,7 +196,7 @@ def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, ent
         coordinates = Coordinates(
             item_id=item_id,
             paper_id=item.paper_id,
-            matrix_arm="confirmatory",
+            matrix_arm=matrix_arm,
             representation_or_condition=condition,
             repeat_index=1,
         )
@@ -237,7 +239,7 @@ def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, ent
         development_items=view_record.output_items,
         scope_sha256=SHA,
         resolved_config_sha256=config.configuration_sha256,
-        matrix_arm="confirmatory",
+        matrix_arm=matrix_arm,
         rows=rows,
     )
     backend = Scripted(renderer, tiny_dir, kind, with_execution=not no_execution, **backend_options)

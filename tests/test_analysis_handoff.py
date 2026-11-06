@@ -378,6 +378,17 @@ def test_counts_by_paper_and_independence_from_row_order(tmp_path):
     assert answer.state_counts["PDF_DOCLING|missing"] == 1
 
 
+def test_an_included_item_without_a_paper_is_refused_by_a_checked_error(tmp_path):
+    w = world()
+    obs = pair(w)
+    table, _, _ = rehearsal(tmp_path, obs)
+    roster = roster_of(obs)
+    unvalidated = roster.items[0].model_copy(update={"paper_id": None})  # skips model validation
+    broken = roster.model_copy(update={"items": [unvalidated]})
+    with pytest.raises(ah.HandoffError, match="paper"):
+        ah.derive_accounting(table.rows, broken)
+
+
 def handoff_roster(root, handoff):
     return PlannedRoster.model_validate_json((root / handoff.roster.logical_ref).read_bytes())
 

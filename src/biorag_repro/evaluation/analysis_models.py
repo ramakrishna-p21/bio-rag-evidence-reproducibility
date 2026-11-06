@@ -26,7 +26,8 @@ from biorag_repro.evaluation.attribution import (
 
 SCHEMA_VERSION = "1"
 PRIMARY_REPEAT_INDEX = 1  # EXPERIMENT_PLAN section 6: repeat 1 is the sole primary observation
-MISSING = "NA"  # the only missing-value token in the CSV; no data value may equal it
+MISSING = "NA"  # the CSV missing token; in nullable columns only. The non-nullable tri-state
+# column correct_without_evidence also has NA as a data value ("not evaluable"); it is never null.
 
 Phase = Literal["development", "qualification", "final_test"]
 MatrixArm = Literal[
