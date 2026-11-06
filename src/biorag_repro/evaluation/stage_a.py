@@ -562,6 +562,8 @@ def _check_table_links(index: Index, placement: Placement) -> None:
         if component.role == "answer":
             continue
         for occ_id in component.occurrence_ids:
+            if occ_id not in units:
+                continue  # native ancestor section title
             cell = units[occ_id].cell
             if cell is None:
                 continue  # linked caption or footnote text of this table
@@ -581,6 +583,29 @@ def _check_table_links(index: Index, placement: Placement) -> None:
             raise ValueError("a linked caption, note or column header must state mean ± ")
 
 
+def _scope_titles(index: Index, container: str) -> set[str]:
+    """Titles that are native children of a section containing `container`.
+
+    Only the parent chain recorded by the canonical document counts; a heading that
+    merely precedes the container in reading order, or sits in a generic group, does not.
+    """
+    nodes = {n.node_id: n for n in index.document.nodes}
+    titles: set[str] = set()
+    current = nodes[container].parent_node_id
+    while current is not None:
+        node = nodes[current]
+        if node.kind == "section":
+            titles |= {
+                n.node_id
+                for n in index.document.nodes
+                if n.parent_node_id == node.node_id
+                and n.kind == "title"
+                and n.node_id in index.units
+            }
+        current = node.parent_node_id
+    return titles
+
+
 def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> None:
     for locus in judgment.sets:
         if locus.set_index >= len(item.evidence_sets):
@@ -597,8 +622,13 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                 if n.node_id == placement.container_node_id
             )
             for component in placement.components:
+                scope = _scope_titles(index, placement.container_node_id)
                 for occ_id in component.occurrence_ids:
-                    if index.where.get(occ_id) != placement.container_node_id:
+                    owner = index.where.get(occ_id)
+                    if owner == placement.container_node_id:
+                        continue
+                    # An attested descriptor may cite the title of a native ancestor section.
+                    if component.equivalence_note is None or owner not in scope:
                         raise ValueError("occurrence is not text in the named container")
                 if component.equivalence_note is not None:
                     continue  # attested; the anchors are checked structurally below
