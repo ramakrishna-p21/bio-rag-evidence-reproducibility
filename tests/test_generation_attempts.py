@@ -34,7 +34,7 @@ from biorag_repro.generation.environment import BackendIdentity, capture_environ
 
 RENDERED = "c" * 64
 OTHER_RENDERED = "d" * 64
-POLICY = RetryPolicy(max_attempts=3, retryable_failures=["transport_error", "out_of_memory"])
+POLICY = RetryPolicy(max_attempts=3, retryable_failures=["out_of_memory", "transport_error"])
 GOOD_OUTPUT = json.dumps({"answer": "42.5 mg/L", "abstained": False})
 
 # Different papers and answer types; none refers to a real corpus paper.
@@ -74,6 +74,7 @@ def config_for(kind, **overrides):
     settings = synthetic_settings()
     settings["purpose"] = "development_candidate" if kind == "official" else "synthetic_test"
     settings["retry_max_attempts"] = 3
+    settings["retryable_failures"] = list(POLICY.retryable_failures)
     settings.update(overrides)
     return resolve(settings)
 
@@ -86,7 +87,6 @@ def new_store(tmp_path, kind="mock", sample=False, clock=None, **overrides):
         phase="development",
         benchmark_version="synthetic-bench-0",
         backend_kind=kind,
-        retry_policy=POLICY,
         now=clock or Clock(),
     )
     return store, config
@@ -838,3 +838,197 @@ def test_run_record_rejects_inconsistent_official_claims():
     with pytest.raises(ValidationError):
         RunRecord(**base, backend_kind="mock", purpose="development_candidate")
     assert RunRecord(**base, backend_kind="official", purpose="development_candidate").official
+
+
+# --- retry policy comes from the hashed configuration ------------------------------------------
+
+
+def test_run_retry_policy_is_derived_from_the_configuration(tmp_path):
+    store, config = new_store(tmp_path)
+    assert store.retry_policy == POLICY
+    assert store.record.retry.retryable_failures == config.settings.retryable_failures
+
+
+def test_explicit_retry_policy_that_contradicts_the_configuration_is_refused(tmp_path):
+    config = config_for("mock")
+    for policy in (
+        RetryPolicy(max_attempts=3, retryable_failures=["transport_error"]),
+        RetryPolicy(max_attempts=2, retryable_failures=list(POLICY.retryable_failures)),
+    ):
+        with pytest.raises(RunMismatch, match="retry"):
+            RunStore.create(
+                tmp_path,
+                config=config,
+                phase="development",
+                benchmark_version="b",
+                backend_kind="mock",
+                retry_policy=policy,
+            )
+    same = RunStore.create(
+        tmp_path,
+        config=config,
+        phase="development",
+        benchmark_version="b",
+        backend_kind="mock",
+        retry_policy=POLICY,
+    )
+    assert same.retry_policy == POLICY
+
+
+def test_different_retry_categories_mean_a_different_run_identity(tmp_path):
+    store, config = new_store(tmp_path)
+    other = config_for("mock", retryable_failures=["transport_error"])
+    assert other.configuration_sha256 != config.configuration_sha256
+    with pytest.raises(RunMismatch, match="configuration"):
+        RunStore.open(tmp_path, store.run_id, config=other, backend_kind="mock")
+    first = store.plan(coordinates())
+    second_store, _ = new_store(tmp_path / "other", retryable_failures=["transport_error"])
+    assert second_store.plan(coordinates()) != first  # the observation key carries the identity
+
+
+def test_run_record_retry_edited_on_disk_cannot_contradict_the_configuration(tmp_path):
+    store, config = new_store(tmp_path)
+    path = store.run_dir / "run.json"
+    data = json.loads(path.read_text())
+    data["retry"]["retryable_failures"] = ["invalid_prompt"]
+    path.write_text(json.dumps(data, sort_keys=True, indent=2) + "\n")
+    with pytest.raises(RunMismatch, match="retry"):
+        reopen(store, config)
+
+
+def test_failure_categories_follow_the_configuration(tmp_path):
+    store, _ = new_store(tmp_path, retryable_failures=["timeout"])
+    key = store.plan(coordinates())
+    a = start(store, key)
+    with pytest.raises(InvalidTransition, match="retryable"):
+        store.fail(key, a, kind="transport_error", detail="x", retryable=True)
+    store.fail(key, a, kind="timeout", detail="x", retryable=True)
+
+
+def test_a_planned_observation_consumes_no_attempt(tmp_path):
+    store, _ = new_store(tmp_path)
+    keys = [store.plan(coordinates(i)) for i in range(4)]
+    assert all(store.observation(k).attempts == 0 for k in keys)
+    start(store, keys[0])
+    assert [store.observation(k).attempts for k in keys] == [1, 0, 0, 0]
+
+
+# --- terminal-event integrity (seal) ---------------------------------------------------------------
+
+
+def seal_path(store, key):
+    return store.run_dir / "observations" / key / "final.build.json"
+
+
+def test_final_states_are_sealed_with_an_existing_build_manifest(tmp_path):
+    from biorag_repro.core.manifest import BuildManifest
+
+    store, _ = new_store(tmp_path)
+    done = store.plan(coordinates(0))
+    finish(store, done)
+    failed = store.plan(coordinates(1))
+    a = start(store, failed)
+    store.fail(failed, a, kind="invalid_prompt", detail="x", retryable=False)
+    for key in (done, failed):
+        manifest = BuildManifest.model_validate_json(seal_path(store, key).read_text())
+        final = event_files(store, key)[-1]
+        assert manifest.status == "complete"
+        assert manifest.outputs[0].artifact.sha256 == sha256_bytes(final.read_bytes())
+        assert manifest.outputs[0].artifact.logical_ref.endswith(final.name)
+
+
+def test_exhausted_retries_are_sealed_and_open_observations_are_not(tmp_path):
+    store, _ = new_store(tmp_path)
+    key = store.plan(coordinates())
+    for _ in range(3):
+        a = start(store, key)
+        assert not seal_path(store, key).exists()
+        store.fail(key, a, kind="out_of_memory", detail="x", retryable=True)
+    assert seal_path(store, key).exists()
+
+
+@pytest.mark.parametrize("final", ["complete", "terminal_failure"])
+def test_removing_a_sealed_final_event_is_detected(tmp_path, final):
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    a = start(store, key)
+    if final == "complete":
+        store.complete(key, a, GOOD_OUTPUT)
+    else:
+        store.fail(key, a, kind="invalid_prompt", detail="x", retryable=False)
+    event_files(store, key)[-1].unlink()  # the observation now looks as if it were still running
+    with pytest.raises(CorruptRecord, match="seal"):
+        reopen(store, config)
+
+
+def test_replacing_a_sealed_final_event_is_detected(tmp_path):
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    a = start(store, key)
+    store.complete(key, a, GOOD_OUTPUT)
+    last = event_files(store, key)[-1]
+    forged = json.loads(last.read_text())
+    forged["abstained"] = True
+    forged["answer"] = None
+    last.write_text(json.dumps(forged, sort_keys=True, indent=2) + "\n")
+    with pytest.raises(CorruptRecord):
+        reopen(store, config)
+
+
+def test_altered_or_foreign_seal_is_detected(tmp_path):
+    store, config = new_store(tmp_path)
+    key, other = store.plan(coordinates(0)), store.plan(coordinates(1))
+    finish(store, key)
+    finish(store, other)
+    original = seal_path(store, key).read_bytes()
+    seal_path(store, key).write_text("{}")
+    with pytest.raises(CorruptRecord, match="seal"):
+        reopen(store, config)
+    seal_path(store, key).write_bytes(seal_path(store, other).read_bytes())
+    with pytest.raises(CorruptRecord, match="seal"):
+        reopen(store, config)
+    seal_path(store, key).write_bytes(original)
+    reopen(store, config)
+
+
+def test_a_seal_on_an_unfinished_observation_is_detected(tmp_path):
+    store, config = new_store(tmp_path)
+    done = store.plan(coordinates(0))
+    finish(store, done)
+    other = store.plan(coordinates(1))
+    start(store, other)
+    seal_path(store, other).write_bytes(seal_path(store, done).read_bytes())
+    with pytest.raises(CorruptRecord, match="seal"):
+        reopen(store, config)
+
+
+def test_a_missing_seal_on_a_valid_final_log_is_completed_on_resume(tmp_path):
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    finish(store, key)  # crash between the final event and its seal looks like this
+    before = seal_path(store, key).read_bytes()
+    seal_path(store, key).unlink()
+    reopen(store, config)
+    assert seal_path(store, key).read_bytes() == before
+
+
+def test_known_limit_newest_unsealed_event_can_be_truncated_undetected(tmp_path):
+    """Characterization, not a guarantee: no later record mentions an open log's newest event."""
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    a = start(store, key)
+    store.fail(key, a, kind="transport_error", detail="x", retryable=True)
+    event_files(store, key)[-1].unlink()
+    resumed = reopen(store, config)  # no error: the log is a valid shorter log
+    assert resumed.observation(key).status == "running"
+    assert resumed.observation(key).attempts == 1  # the attempt still counts toward the limit
+
+
+def test_a_wellformed_seal_for_a_still_open_observation_is_detected(tmp_path):
+    store, config = new_store(tmp_path)
+    key = store.plan(coordinates())
+    a = start(store, key)
+    store.fail(key, a, kind="transport_error", detail="x", retryable=True)
+    store._seal(store.observation(key))  # a seal that matches the newest event but is premature
+    with pytest.raises(CorruptRecord, match="seal"):
+        reopen(store, config)

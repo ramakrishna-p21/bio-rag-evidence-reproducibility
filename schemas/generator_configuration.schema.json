@@ -212,6 +212,14 @@
       "title": "Retry Max Attempts",
       "type": "integer"
     },
+    "retryable_failures": {
+      "items": {
+        "pattern": "\\S",
+        "type": "string"
+      },
+      "title": "Retryable Failures",
+      "type": "array"
+    },
     "schema_version": {
       "const": "1",
       "title": "Schema Version",
@@ -263,6 +271,7 @@
     "seed_registry_version",
     "seed_registry_sha256",
     "retry_max_attempts",
+    "retryable_failures",
     "scoring_version"
   ],
   "title": "GeneratorConfiguration",

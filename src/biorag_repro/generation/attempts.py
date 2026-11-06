@@ -32,8 +32,13 @@ from biorag_repro.core.identity import (
     new_run_id,
     observation_key,
 )
-from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
+from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.storage import (
+    publish_bytes,
+    publish_manifest,
+    read_project_json,
+    serialize_project_json,
+)
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.environment import (
     BackendKind,
@@ -55,6 +60,8 @@ State = Literal[
 Status = Literal[
     "planned", "running", "complete", "retryable", "retries_exhausted", "terminal_failure"
 ]
+
+_FINAL = ("complete", "terminal_failure", "retries_exhausted")
 
 _NEXT: dict[str | None, set[str]] = {
     None: {"planned"},
@@ -96,7 +103,7 @@ class NotPlanned(LifecycleError): ...
 
 
 class RetryPolicy(Record):
-    """Retry limit comes from the generator configuration; failure kinds are named here."""
+    """The retry rule as recorded on a run. Its source is the hashed generator configuration."""
 
     max_attempts: int = Field(ge=1)
     retryable_failures: list[Nonblank]
@@ -106,6 +113,12 @@ class RetryPolicy(Record):
         if len(set(self.retryable_failures)) != len(self.retryable_failures):
             raise ValueError("duplicate retryable failure kind")
         return self
+
+
+def retry_policy_of(settings: GeneratorConfiguration) -> RetryPolicy:
+    return RetryPolicy(
+        max_attempts=settings.retry_max_attempts, retryable_failures=settings.retryable_failures
+    )
 
 
 def _check_backend_purpose(kind: str, purpose: str) -> None:
@@ -233,6 +246,7 @@ class ObservationState:
     last_event_sha256: str
     status: Status
     attempts: int
+    first_event_sha256: str
 
 
 def _load_json(path: Path, model: Any, what: str) -> tuple[Any, str]:
@@ -284,13 +298,14 @@ class RunStore:
         phase: Literal["development"],
         benchmark_version: str,
         backend_kind: BackendKind,
-        retry_policy: RetryPolicy,
+        retry_policy: RetryPolicy | None = None,
         now: Callable[[], str] = utc_now,
     ) -> Self:
         settings = config.settings
         _check_backend_purpose(backend_kind, settings.purpose)
-        if retry_policy.max_attempts != settings.retry_max_attempts:
-            raise RunMismatch("retry policy limit differs from the configuration's retry limit")
+        derived = retry_policy_of(settings)
+        if retry_policy is not None and retry_policy != derived:
+            raise RunMismatch("retry policy contradicts the retry settings of the configuration")
         record = RunRecord(
             run_id=new_run_id(),
             created_utc=now(),
@@ -301,7 +316,7 @@ class RunStore:
             purpose=settings.purpose,
             matrix_arm=settings.matrix_arm,
             backend_kind=backend_kind,
-            retry=retry_policy,
+            retry=derived,
         )
         run_dir = root / "runs" / record.run_id
         run_dir.mkdir(parents=True)
@@ -347,8 +362,10 @@ class RunStore:
             config.settings.matrix_arm,
         ):
             raise CorruptRecord("run record disagrees with its configuration")
-        if record.retry.max_attempts != config.settings.retry_max_attempts:
-            raise RunMismatch("retry policy limit differs from the configuration's retry limit")
+        if record.retry != retry_policy_of(config.settings):
+            raise RunMismatch(
+                "run retry policy contradicts the retry settings of the configuration"
+            )
         store = cls(root, record, digest, config, now)
         for name, expected in (
             ("config.canonical.json", record.resolved_config_sha256),
@@ -359,7 +376,9 @@ class RunStore:
                 raise CorruptRecord(
                     f"stored configuration file {name} does not match the run record"
                 )
-        store.verify()
+        for state in store.verify():
+            if state.status in _FINAL and not store._seal_path(state.key).exists():
+                store._seal(state)  # completes a publication interrupted after the final event
         return store
 
     # --- reading ------------------------------------------------------------------------
@@ -383,13 +402,17 @@ class RunStore:
 
         events: list[AttemptEvent] = []
         previous_sha: str | None = None
+        first_sha: str | None = None
         for name in names:
             event, digest = _load_json(events_dir / name, AttemptEvent, "event")
             self._check_event(key, event, events, previous_sha)
             events.append(event)
             previous_sha = digest
-        assert previous_sha is not None
-        return self._state(key, events, previous_sha)
+            first_sha = first_sha or digest
+        assert previous_sha is not None and first_sha is not None
+        state = self._state(key, events, previous_sha, first_sha)
+        self._check_seal(state)
+        return state
 
     def _check_event(
         self, key: str, event: AttemptEvent, before: list[AttemptEvent], previous_sha: str | None
@@ -531,7 +554,9 @@ class RunStore:
             resolved_config_sha256=self.record.resolved_config_sha256,
         )
 
-    def _state(self, key: str, events: list[AttemptEvent], last_sha: str) -> ObservationState:
+    def _state(
+        self, key: str, events: list[AttemptEvent], last_sha: str, first_sha: str
+    ) -> ObservationState:
         attempts = sum(e.state == "running" for e in events)
         last = events[-1].state
         status: Status
@@ -545,7 +570,91 @@ class RunStore:
             status = "terminal_failure"
         coordinates = events[0].coordinates
         assert coordinates is not None
-        return ObservationState(key, coordinates, events, last_sha, status, attempts)
+        return ObservationState(key, coordinates, events, last_sha, status, attempts, first_sha)
+
+    # --- seal -----------------------------------------------------------------------------
+    #
+    # A log is hash-chained, so only its newest event has no later record that cites it.
+    # When an observation reaches a final status (complete, terminal failure, retries
+    # exhausted) a build manifest, the project's existing lineage record, is published for
+    # that newest event. A sealed log can then not lose or change its final event unnoticed.
+    # Open logs stay unsealed: nothing yet exists that could anchor their newest event.
+
+    def _seal_path(self, key: str) -> Path:
+        return self.run_dir / "observations" / key / "final.build.json"
+
+    def _seal_manifest(self, state: ObservationState) -> BuildManifest:
+        key = state.key
+        base = f"runs/{self.run_id}/observations/{key}/events"
+        final = state.events[-1]
+        inputs = [
+            BuildInput(
+                role="planned_event",
+                artifact=ArtifactRef(
+                    artifact_id=f"{key}:000001",
+                    logical_ref=f"{base}/000001.json",
+                    sha256=state.first_event_sha256,
+                ),
+            )
+        ]
+        if final.raw_output is not None:
+            inputs.append(BuildInput(role="raw_output", artifact=final.raw_output))
+        lineage = [ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in inputs]
+        settings = self.record.resolved_config_sha256
+        artifact_id = derived_artifact_id(
+            artifact_kind="generation_final_event",
+            inputs=lineage,
+            transformation_id="generation_observation_seal_v1",
+            transformation_settings_sha256=settings,
+            output_sha256=state.last_event_sha256,
+            output_format="json",
+            serialization_version="1",
+        )
+        return BuildManifest(
+            schema_version="1",
+            inputs=inputs,
+            transformation_id="generation_observation_seal_v1",
+            transformation_settings_sha256=settings,
+            outputs=[
+                DerivedOutput(
+                    artifact=ArtifactRef(
+                        artifact_id=artifact_id,
+                        logical_ref=f"{base}/{final.sequence:06d}.json",
+                        sha256=state.last_event_sha256,
+                    ),
+                    artifact_kind="generation_final_event",
+                    output_format="json",
+                    serialization_version="1",
+                    identity_version="1",
+                )
+            ],
+            status="complete",
+        )
+
+    def _check_seal(self, state: ObservationState) -> None:
+        path = self._seal_path(state.key)
+        if not path.exists():
+            return
+        try:
+            if state.status not in _FINAL:
+                raise ValueError("the observation is not in a final status")
+            stored = BuildManifest.model_validate_json(path.read_bytes())
+            if stored != self._seal_manifest(state):
+                raise ValueError("the sealed final event is not the newest event")
+        except ValueError as error:
+            raise CorruptRecord(
+                f"seal of {state.key} does not match its event log: {error}"
+            ) from error
+
+    def _seal(self, state: ObservationState) -> None:
+        final_path = self.run_dir / "observations" / state.key / "events"
+        final_path = final_path / f"{state.events[-1].sequence:06d}.json"
+        manifest = self._seal_manifest(state)
+        logical = manifest.outputs[0].artifact.logical_ref
+        try:
+            publish_manifest(manifest, self._seal_path(state.key), {logical: final_path})
+        except FileExistsError:
+            pass  # sealed concurrently; the next read compares it with the log
 
     def observation(self, key: str) -> ObservationState:
         return self._load(key)
@@ -585,6 +694,9 @@ class RunStore:
             )
         except FileExistsError as error:
             raise PublicationConflict(f"event {event.sequence} of {key} already exists") from error
+        current = self._load(key)
+        if current.status in _FINAL:
+            self._seal(current)
         return event
 
     def plan(self, coordinates: Coordinates) -> str:

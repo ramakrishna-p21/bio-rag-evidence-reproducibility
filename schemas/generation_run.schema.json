@@ -2,7 +2,7 @@
   "$defs": {
     "RetryPolicy": {
       "additionalProperties": false,
-      "description": "Retry limit comes from the generator configuration; failure kinds are named here.",
+      "description": "The retry rule as recorded on a run. Its source is the hashed generator configuration.",
       "properties": {
         "max_attempts": {
           "minimum": 1,

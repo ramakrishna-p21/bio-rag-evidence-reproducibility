@@ -52,6 +52,7 @@ def synthetic_settings() -> dict:
         "seed_registry_version": "synthetic-seeds-0",
         "seed_registry_sha256": SHA_B,
         "retry_max_attempts": 2,
+        "retryable_failures": ["out_of_memory", "transport_error"],
         "scoring_version": "synthetic-scoring-0",
     }
 
@@ -114,6 +115,9 @@ def test_hash_ignores_toml_formatting_and_key_order():
         (("output_schema_sha256",), SHA_A),
         (("seed_registry_sha256",), SHA_A),
         (("retry_max_attempts",), 3),
+        (("retryable_failures",), ["transport_error"]),
+        (("retryable_failures",), ["out_of_memory", "timeout", "transport_error"]),
+        (("retryable_failures",), []),
         (("scoring_version",), "synthetic-scoring-1"),
         (("experiment_plan_version",), "synthetic-plan-1"),
     ],
@@ -167,6 +171,7 @@ def drop(settings: dict, *path: str) -> dict:
         ("parser_version",),
         ("seed_registry_sha256",),
         ("retry_max_attempts",),
+        ("retryable_failures",),
         ("scoring_version",),
         ("schema_version",),
     ],
@@ -280,3 +285,27 @@ def test_retrieval_reference_must_match_phase5_configuration():
     with pytest.raises(ValueError):
         check_retrieval_reference(resolve(closed).settings, SHA_A)
     check_retrieval_reference(resolve(closed).settings, None)
+
+
+# ---- retry policy is part of the configuration identity -----------------------------------
+
+
+def test_retryable_failure_order_does_not_change_identity_and_is_stored_sorted():
+    a = synthetic_settings() | {"retryable_failures": ["transport_error", "out_of_memory"]}
+    b = synthetic_settings() | {"retryable_failures": ["out_of_memory", "transport_error"]}
+    first, second = resolve(a), resolve(b)
+    assert first.configuration_sha256 == second.configuration_sha256
+    assert first.settings.retryable_failures == ["out_of_memory", "transport_error"]
+
+
+@pytest.mark.parametrize("value", [["a", "a"], [" "], [""], "transport_error", [1]])
+def test_invalid_retryable_failures_are_rejected(value):
+    with pytest.raises(ValueError):
+        resolve(synthetic_settings() | {"retryable_failures": value})
+
+
+def test_an_empty_retry_category_list_is_explicit_and_distinct():
+    none = resolve(synthetic_settings() | {"retryable_failures": []})
+    some = resolve(synthetic_settings())
+    assert none.settings.retryable_failures == []
+    assert none.configuration_sha256 != some.configuration_sha256

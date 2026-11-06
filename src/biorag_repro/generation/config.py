@@ -6,7 +6,7 @@ written out, so an omission fails validation instead of silently becoming a sett
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration, resolve_config
@@ -90,7 +90,16 @@ class GeneratorConfiguration(Record):
     seed_registry_version: Nonblank
     seed_registry_sha256: Sha256
     retry_max_attempts: int = Field(ge=1)
+    retryable_failures: list[Nonblank]  # explicit; an empty list means nothing is retried
     scoring_version: Nonblank
+
+    @field_validator("retryable_failures")
+    @classmethod
+    def sorted_distinct_categories(cls, value: list[str]) -> list[str]:
+        """The retry rule is a set; order must not change the configuration identity."""
+        if len(set(value)) != len(value):
+            raise ValueError("duplicate retryable failure category")
+        return sorted(value)
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
