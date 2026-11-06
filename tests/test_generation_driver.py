@@ -6,6 +6,7 @@ run is labelled a mock run throughout; nothing here is an observation of Qwen3-8
 
 import json
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -155,6 +156,45 @@ def test_plan_file_round_trip(world, tmp_path):
         json.dumps({k: (str(v) if v is not None else None) for k, v in vars(plan).items()})
     )
     assert load_plan(path) == plan
+
+
+def plan_json(plan, **extra):
+    data = {k: (str(v) if v is not None else None) for k, v in vars(plan).items()}
+    return json.dumps({**data, **extra})
+
+
+def test_context_sources_and_their_hash_come_together_or_not_at_all(world, tmp_path):
+    plan = make_plan(tmp_path, world)
+    path = tmp_path / "plan.json"
+    path.write_text(plan_json(plan, context_sources="sources.json"))
+    with pytest.raises(DriverError, match="together"):
+        load_plan(path)
+    path.write_text(
+        plan_json(plan, context_sources="sources.json", context_sources_sha256="a" * 64)
+    )
+    loaded = load_plan(path)
+    assert loaded.context_sources == tmp_path / "sources.json"
+    assert loaded.context_sources_sha256 == "a" * 64
+
+
+def test_sources_must_be_given_exactly_one_way(world, tmp_path):
+    plan = make_plan(tmp_path, world)
+    with pytest.raises(DriverError, match="needed"):
+        driver.resolve_sources(plan, None)
+    pinned = replace(plan, context_sources=tmp_path / "s.json", context_sources_sha256="a" * 64)
+    with pytest.raises(DriverError, match="not both"):
+        driver.resolve_sources(pinned, "pkg.mod:fn")
+    with pytest.raises(DriverError, match="unreadable"):  # a missing spec is a refusal, no fallback
+        driver.resolve_sources(pinned, None)
+
+
+def test_command_line_refuses_without_context_sources(world, tmp_path, capsys):
+    plan = make_plan(tmp_path, world)
+    path = tmp_path / "plan.json"
+    path.write_text(plan_json(plan))
+    assert driver.main(["dry-run", "--plan", str(path), "--mode", "mock"]) == 1
+    assert "context sources are needed" in capsys.readouterr().err
+    assert not plan.run_root.exists()
 
 
 # ---- execution, anchor and verification ------------------------------------------------------

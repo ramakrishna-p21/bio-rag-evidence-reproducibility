@@ -37,6 +37,7 @@ from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
 from biorag_repro.generation.receipt import ExecutionReceipt
 from biorag_repro.generation.roster import RosterRecord
 from biorag_repro.generation.seeds import GenerationSeedRegistry
+from biorag_repro.generation.sources import ContextSourceSpec
 from biorag_repro.retrieval.models import (
     Bm25Index,
     CanonicalInput,
@@ -71,6 +72,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generation_input_record.schema.json": GeneratorInputRecord,
     "generation_execution_receipt.schema.json": ExecutionReceipt,
     "generation_run_anchor.schema.json": Anchor,
+    "generation_context_sources.schema.json": ContextSourceSpec,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,

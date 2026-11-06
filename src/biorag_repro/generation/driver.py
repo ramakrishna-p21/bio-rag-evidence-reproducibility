@@ -58,6 +58,7 @@ from biorag_repro.generation.runner import (
     run_roster,
 )
 from biorag_repro.generation.seeds import GenerationSeedRegistry, check_seeds_for_configuration
+from biorag_repro.generation.sources import SourceError, load_context_sources
 
 Mode = Literal["mock", "smoke", "official"]
 MODES: tuple[str, ...] = get_args(Mode)
@@ -91,6 +92,8 @@ class DriverPlan:
     view_record_sha256: str
     scope: Path
     repository: Path  # checkout whose git state each environment record captures
+    context_sources: Path | None = None  # serialized Phase 5 context sources (generation.sources)
+    context_sources_sha256: str | None = None  # their pinned hash; required with the file
 
 
 @dataclass(frozen=True)
@@ -156,7 +159,8 @@ class MockBackend:
 
 
 _PLAN_KEYS = {f for f in DriverPlan.__dataclass_fields__}
-_OPTIONAL_KEYS = {"seeds"}
+_OPTIONAL_KEYS = {"seeds", "context_sources", "context_sources_sha256"}
+_LITERAL_KEYS = {"view_record_sha256", "context_sources_sha256"}
 
 
 def load_plan(path: Path) -> DriverPlan:
@@ -177,10 +181,12 @@ def load_plan(path: Path) -> DriverPlan:
         value = data.get(key)
         if value is None:
             values[key] = None
-        elif key == "view_record_sha256":
+        elif key in _LITERAL_KEYS:
             values[key] = value
         else:
             values[key] = base / str(value)
+    if (values["context_sources"] is None) != (values["context_sources_sha256"] is None):
+        raise DriverError("context_sources and context_sources_sha256 are given together")
     return DriverPlan(**values)  # type: ignore[arg-type]
 
 
@@ -441,11 +447,29 @@ def verify(
 # ---- command line -------------------------------------------------------------------------
 
 
+def resolve_sources(plan: DriverPlan, provider: str | None) -> Sequence[ContextSource]:
+    """The plan's pinned source file, or an explicit provider function; never both."""
+    if provider is not None and plan.context_sources is not None:
+        raise DriverError("give either --sources or plan context_sources, not both")
+    if provider is not None:
+        return _load_sources(provider)
+    if plan.context_sources is None or plan.context_sources_sha256 is None:
+        raise DriverError("context sources are needed: plan context_sources or --sources")
+    try:
+        return load_context_sources(
+            plan.context_sources,
+            plan.context_sources_sha256,
+            plan.view_directory,
+            plan.view_record_sha256,
+        )
+    except SourceError as error:
+        raise DriverError(str(error)) from error
+
+
 def _load_sources(spec: str) -> Sequence[ContextSource]:
     """`package.module:function`, called with no arguments, returns the context sources.
 
-    Context sources are Phase 5 objects with no serialized form yet, so the caller supplies
-    the function that rebuilds them from the published Phase 5 artifacts.
+    For sources a spec file cannot describe (dense retrieval needs an encoder object).
     """
     module, _, function = spec.partition(":")
     if not module or not function:
@@ -498,7 +522,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("operation", choices=["dry-run", "run", "verify"])
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--mode", choices=MODES, required=True)
-    parser.add_argument("--sources", help="package.module:function returning the context sources")
+    parser.add_argument(
+        "--sources", help="package.module:function returning sources (else the plan's pinned file)"
+    )
     parser.add_argument("--resume", help="run id to continue")
     parser.add_argument("--recover-interrupted", action="store_true")
     parser.add_argument("--run-id", help="run to verify")
@@ -517,9 +543,7 @@ def main(argv: list[str] | None = None) -> int:
             kind = "official" if isinstance(result, VerifiedOfficialRun) else args.mode
             print(f"verified {kind} run {args.run_id}: {len(result.results)} decided results")
             return 0
-        if not args.sources:
-            raise DriverError(f"{args.operation} needs --sources")
-        sources = _load_sources(args.sources)
+        sources = resolve_sources(plan, args.sources)
         if args.operation == "dry-run":
             report = dry_run(plan, sources, mode=args.mode)
             print(json.dumps(report.__dict__, indent=1))
