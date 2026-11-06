@@ -6,6 +6,7 @@ Backends are scripted. A stored input and a rendering are never treated as execu
 import json
 
 import pytest
+from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import Clock, environment
 from test_generation_config import resolve, synthetic_settings
 from test_generation_prompt import ROOT, artifact, needs_tokenizer
@@ -13,6 +14,7 @@ from test_generation_receipts import CONTEXT, CONTEXT_REF, facts_for
 
 from biorag_repro.generation.attempts import Coordinates, RunStore
 from biorag_repro.generation.environment import BackendIdentity
+from biorag_repro.generation.environment_gate import publish_environment_evidence
 from biorag_repro.generation.inputs import (
     CorruptInput,
     build_input_record,
@@ -50,7 +52,7 @@ def renderers():
 
 
 def new_store(tmp_path, renderer, kind="smoke"):
-    return RunStore.create(
+    store = RunStore.create(
         tmp_path,
         config=renderer.config,
         phase="development",
@@ -58,6 +60,9 @@ def new_store(tmp_path, renderer, kind="smoke"):
         backend_kind=kind,
         now=Clock(),
     )
+    if kind == "official":  # an official attempt cites the stored environment verification
+        publish_environment_evidence(store.run_dir, synthetic_evidence())
+    return store
 
 
 def entry_for(renderer, store, item="q1", paper="paperA", *, with_record=True, question=None):

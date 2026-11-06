@@ -42,6 +42,11 @@ from biorag_repro.generation.qualification import (
     read_report,
     report_sha256,
 )
+from biorag_repro.generation.receipt import (
+    CudaMemoryMeasured,
+    CudaMemoryUnavailable,
+    ExecutionMeasurements,
+)
 from biorag_repro.generation.runner import BackendFailure
 
 
@@ -80,10 +85,19 @@ def test_mock_run_has_no_model_measurements_and_says_not_applicable(tmp_path):
     for summary in (report.input_tokens_received, report.output_tokens):
         assert summary.status == "not_applicable" and summary.n == 0
         assert summary.total is None and summary.reason
-    assert report.gpu_peak_memory.status == "not_applicable" and report.gpu_peak_memory.reason
+    for series in (
+        report.generation_duration_ns,
+        report.peak_allocated_bytes,
+        report.peak_reserved_bytes,
+        report.device_used_after_bytes,
+    ):
+        assert series.status == "not_applicable" and series.n == 0 and series.reason
     assert report.stop_reasons == {}
     assert report.receipts.model_dump() == {"numerator": 0, "denominator": 6}
+    assert report.measurements.model_dump() == {"numerator": 0, "denominator": 0}
     assert report.generation_throughput.status == "not_applicable"
+    assert report.attempt_throughput.status == "not_applicable"
+    assert report.run.phase == "development"
 
 
 def test_planned_input_tokens_are_derived_from_the_roster(tmp_path):
@@ -236,8 +250,11 @@ def test_a_report_cannot_declare_a_gate_passed(tmp_path):
 def test_no_gpu_memory_value_can_be_invented(tmp_path):
     store, config, anchor = anchored_run(tmp_path)
     data = report_for(store, config, anchor).model_dump(mode="json")
-    # Nothing in the stored records measures GPU memory use, so no value or "observed" exists.
-    data["gpu_peak_memory"] = {"status": "observed", "reason": "made up", "mib": 20000}
+    # A mock run measured nothing: an "observed" series with values is not allowed to appear.
+    data["peak_allocated_bytes"] = {
+        "status": "unavailable", "reason": "made up", "n": 1,
+        "total": 20000, "minimum": 20000, "maximum": 20000,
+    }  # fmt: skip
     with pytest.raises(ValidationError):
         QualificationReport.model_validate(data)
 
@@ -274,10 +291,18 @@ def test_receipts_give_observed_tokens_stop_reasons_and_derived_throughput(
     assert report.output_tokens.status == "observed" and report.output_tokens.n == 4
     assert report.input_tokens_received.status == "observed"
     assert report.input_tokens_received.total == report.planned_input_tokens.total
-    assert report.generation_throughput.status == "derived"
-    assert report.generation_throughput.output_tokens == report.output_tokens.total
-    # No record measures GPU memory, even on a real-looking official run.
-    assert report.gpu_peak_memory.status == "unavailable"
+    assert report.attempt_throughput.status == "derived"
+    assert report.attempt_throughput.output_tokens == report.output_tokens.total
+    # This scripted backend attached no measurements: nothing is timed or sized, nothing is zero.
+    assert report.measurements.model_dump() == {"numerator": 0, "denominator": 4}
+    for series in (
+        report.generation_duration_ns,
+        report.peak_allocated_bytes,
+        report.peak_reserved_bytes,
+        report.device_used_after_bytes,
+    ):
+        assert series.status == "unavailable" and series.n == 0 and series.total is None
+    assert report.generation_throughput.status == "unavailable"
     env = report.environments[0]
     assert (env.backend_kind, env.device, env.dtype) == ("official", "cuda:0", "bfloat16")
     assert env.checkpoint_manifest_sha256 is not None
@@ -310,3 +335,97 @@ def test_a_closing_event_without_a_start_is_corruption_not_a_duration():
 
     with pytest.raises(CorruptRecord):
         _attempts([Event()])
+
+
+# ---- recorded measurements ---------------------------------------------------------------
+
+
+def measuring(memory):
+    """Successive calls take 1000, 2000, ... ns; `memory` is a function of the call number."""
+    count = iter(range(1, 100))
+
+    def measure():
+        n = next(count)
+        return ExecutionMeasurements(
+            clock="perf_counter_ns", generation_ns=1000 * n, cuda_memory=memory(n)
+        )
+
+    return measure
+
+
+def measured_memory(n):
+    return CudaMemoryMeasured(
+        device_index=0,
+        allocated_before_bytes=100,
+        peak_allocated_bytes=1000 * n,
+        peak_reserved_bytes=2000 * n,
+        device_total_bytes=100_000,
+        device_used_after_bytes=5000 * n,
+    )
+
+
+def test_recorded_durations_and_memory_are_summarised_exactly(tmp_path, view, tiny, recognised):
+    world = build_world(tmp_path, view, tiny, measure=measuring(measured_memory))
+    report = official_qualification_report(verify(world, anchored(world)))
+    assert report.measurements.model_dump() == {"numerator": 4, "denominator": 4}
+    duration = report.generation_duration_ns
+    assert (duration.status, duration.n) == ("observed", 4)
+    assert (duration.total, duration.minimum, duration.maximum) == (10_000, 1000, 4000)
+    assert report.peak_allocated_bytes.maximum == 4000
+    assert report.peak_reserved_bytes.total == 20_000
+    assert report.device_used_after_bytes.maximum == 20_000
+    throughput = report.generation_throughput
+    assert throughput.status == "derived"
+    assert (throughput.attempts, throughput.output_tokens, throughput.duration_ns) == (
+        4,
+        report.output_tokens.total,
+        10_000,
+    )
+    # the wall-clock quantity stays separate from the monotonic one
+    assert report.attempt_throughput.duration_ns != throughput.duration_ns
+
+
+def test_a_duration_without_a_memory_reading_leaves_memory_unavailable(
+    tmp_path, view, tiny, recognised
+):
+    cpu = lambda n: CudaMemoryUnavailable(reason="device cpu is not CUDA")
+    world = build_world(tmp_path, view, tiny, measure=measuring(cpu))
+    report = official_qualification_report(verify(world, anchored(world)))
+    assert report.generation_duration_ns.status == "observed"
+    for series in (
+        report.peak_allocated_bytes,
+        report.peak_reserved_bytes,
+        report.device_used_after_bytes,
+    ):
+        assert series.status == "unavailable" and series.n == 0 and series.total is None
+        assert "device cpu is not CUDA" in series.reason
+
+
+def test_a_report_with_measurements_is_deterministic(tmp_path, view, tiny, recognised):
+    world = build_world(tmp_path, view, tiny, measure=measuring(measured_memory))
+    verified = verify(world, anchored(world))
+    first, second = official_qualification_report(verified), official_qualification_report(verified)
+    assert report_sha256(first) == report_sha256(second)
+
+
+def test_a_measurement_without_a_memory_reading_is_not_counted_as_a_memory_reading(
+    tmp_path, view, tiny, recognised
+):
+    def cpu(n):
+        return CudaMemoryUnavailable(reason="device cpu is not CUDA")
+
+    world = build_world(tmp_path, view, tiny, measure=measuring(cpu))
+    report = official_qualification_report(verify(world, anchored(world)))
+    assert report.measurements.model_dump() == {"numerator": 4, "denominator": 4}
+    assert report.memory_readings.model_dump() == {"numerator": 0, "denominator": 4}
+    assert report.memory_device_indices == []
+
+
+def test_memory_readings_name_every_device_they_came_from(tmp_path, view, tiny, recognised):
+    def two_devices(n):
+        return measured_memory(n).model_copy(update={"device_index": n % 2})
+
+    world = build_world(tmp_path, view, tiny, measure=measuring(two_devices))
+    report = official_qualification_report(verify(world, anchored(world)))
+    assert report.memory_readings.model_dump() == {"numerator": 4, "denominator": 4}
+    assert report.memory_device_indices == [0, 1]  # pooled series are not hidden as one device

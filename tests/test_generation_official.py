@@ -115,11 +115,12 @@ class Scripted:
     """Stands in for a backend: it reports whatever its test says it did."""
 
     def __init__(self, renderer, tiny_dir, kind, *, name=SCRIPT, execution=None, gpu="ok",
-                 fail=(), receipts=True, with_execution=True, output_ids=None, eos_ids=(151645,)):  # fmt: skip
+                 fail=(), receipts=True, with_execution=True, output_ids=None, eos_ids=(151645,), measure=None):  # fmt: skip
         self.identity = BackendIdentity(kind=kind, name=name, version=None)
         settings = renderer.config.settings
         self.config, self.gpu, self.fail, self.receipts = renderer.config, gpu, set(fail), receipts
         self.eos_ids = list(eos_ids)
+        self.measure = measure  # a callable giving the measurements of each call, or None
         # token ids a real backend would report for GOOD: its decoding, then the stop token
         self.output_ids = output_ids or [
             *renderer.tokenizer(GOOD, add_special_tokens=False)["input_ids"],
@@ -157,6 +158,8 @@ class Scripted:
             output=self.output_ids,
             generation={"eos_token_ids": self.eos_ids},
         )
+        if self.measure is not None:
+            facts = facts.model_copy(update={"measurements": self.measure()})
         return GenerationOutput(GOOD, facts)
 
 

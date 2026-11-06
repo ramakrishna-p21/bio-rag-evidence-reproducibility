@@ -363,6 +363,9 @@ def execute(
     check_placement(plan.run_root, plan.anchor_dir)
     prepared = prepare(plan, sources)
     settings = prepared.config.settings
+    run_phase = prepared.scope.phase
+    if run_phase == "final_test":
+        raise DriverError("a final_test scope cannot be executed here")
     if mode == "official" and (blockers := official_blockers(settings)):
         raise OfficialDisabled("official execution is disabled: " + "; ".join(blockers))
     if mode == "official":
@@ -383,7 +386,7 @@ def execute(
             store = RunStore.create(
                 plan.run_root,
                 config=prepared.config,
-                phase="development",
+                phase=run_phase,
                 benchmark_version=built.record.benchmark_version,
                 backend_kind=mode,
             )

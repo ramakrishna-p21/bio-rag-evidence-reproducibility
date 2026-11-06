@@ -9,13 +9,14 @@ The report describes how a run behaved. It does not score answers, does not say 
 answer is correct, and never says that a Phase 7 gate is met. Failed attempts are operational
 facts, kept apart from answers that parsed but may be scientifically wrong.
 
-Timing limits: the only clock in the stored records is the wall-clock `at_utc` of each event.
-A duration is the difference between an attempt's start and closing events. It includes the
-cost of writing those records, it is not a monotonic measurement, and a system clock
-adjustment between two events would change it. Within one observation the store rejects an
-event dated earlier than its predecessor. An interrupted attempt has no trustworthy end (its
-closing event was written when the run was recovered) and is not timed. Peak GPU memory is
-not recorded by any existing record, so it is reported as unmeasured.
+Two durations are kept apart. The attempt duration is the difference between the wall-clock
+`at_utc` of an attempt's start and closing events: it includes the cost of writing those
+records, is not monotonic, and a system clock adjustment between two events would change it.
+An interrupted attempt has no trustworthy end and is not timed. The generation duration is
+the backend's monotonic reading around one `model.generate` call, carried by the receipt (see
+receipt.ExecutionMeasurements for the exact boundaries). Process memory peaks and the
+device-wide snapshot are likewise read from the receipt; a receipt without them gives an
+unavailable series, never a zero. All measurements are the executing process's own account.
 """
 
 from collections import Counter
@@ -62,8 +63,17 @@ EVIDENCE_CLASS: dict[str, str] = {
 _CLOSING = ("complete", "retryable_failure", "terminal_failure")
 LIMITATIONS = [
     "Descriptive qualification evidence; it does not evaluate any scientific gate.",
-    "Durations are wall-clock differences between event timestamps, not monotonic timings.",
-    "No record of GPU memory use exists; none is reported.",
+    (
+        "Attempt durations are differences between producer-written event timestamps: they "
+        "include record writes and are not monotonic. Generation durations are monotonic "
+        "readings around one generate call and exclude tokenization, decoding and record writing."
+    ),
+    (
+        "Memory peaks are torch counters of the generating process. Device-wide used memory is a "
+        "snapshot that includes other GPU users. A missing reading is reported unavailable, "
+        "never inferred."
+    ),
+    "Measurements are the executing process's own account and are not independently attested.",
     "Answers are not scored here; a parsed answer may be wrong and a failed attempt has no answer.",
 ]
 
@@ -102,28 +112,21 @@ class Series(Record):
         return self
 
 
-class Unmeasured(Record):
-    """A quantity no existing record measures. It cannot hold a value."""
-
-    status: Literal["unavailable", "not_applicable"]
-    reason: Nonblank
-
-
 class Throughput(Record):
-    """Output tokens over attempt time, kept as the two integers they come from."""
+    """Output tokens over a duration in nanoseconds, kept as the two integers they come from."""
 
     status: Provenance
     reason: str | None
     attempts: int = Field(ge=0)
     output_tokens: int | None
-    duration_us: int | None
+    duration_ns: int | None
 
     @model_validator(mode="after")
     def consistent(self) -> Self:
         measured = self.status in ("observed", "derived")
-        if measured != (self.attempts > 0) or measured != (self.duration_us is not None):
+        if measured != (self.attempts > 0) or measured != (self.duration_ns is not None):
             raise ValueError("throughput values are present exactly when it is measured")
-        if measured and (self.output_tokens is None or not self.duration_us):
+        if measured and (self.output_tokens is None or not self.duration_ns):
             raise ValueError("throughput needs tokens and a positive duration")
         if not measured and (self.reason is None or self.output_tokens is not None):
             raise ValueError("an unmeasured throughput states why and holds no value")
@@ -141,6 +144,7 @@ class RunIdentity(Record):
     matrix_arm: str
     backend_kind: BackendKind
     purpose: str
+    phase: Literal["development", "qualification"]
 
 
 class EnvironmentUse(Record):
@@ -207,7 +211,7 @@ class ParseCounts(Record):
 
 
 class QualificationReport(Record):
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     report_kind: Literal["descriptive_qualification_evidence"] = (
         "descriptive_qualification_evidence"
     )
@@ -224,9 +228,16 @@ class QualificationReport(Record):
     input_tokens_received: Series
     output_tokens: Series
     stop_reasons: dict[str, int]  # over observations with a receipt
-    attempt_duration_us: Series
-    generation_throughput: Throughput
-    gpu_peak_memory: Unmeasured
+    attempt_duration_us: Series  # wall-clock event differences
+    attempt_throughput: Throughput  # output tokens over attempt durations
+    measurements: Fraction  # receipts that carry execution measurements
+    memory_readings: Fraction  # receipts whose measurements include a CUDA memory reading
+    memory_device_indices: list[int]  # devices the memory readings came from
+    generation_duration_ns: Series  # monotonic, around one generate call
+    generation_throughput: Throughput  # output tokens over generation durations
+    peak_allocated_bytes: Series  # process counter
+    peak_reserved_bytes: Series  # process counter
+    device_used_after_bytes: Series  # device-wide snapshot, includes other GPU users
     limitations: list[str]
 
     @model_validator(mode="after")
@@ -294,6 +305,28 @@ def _microseconds(start: AttemptEvent, end: AttemptEvent) -> int:
     return delta // timedelta(microseconds=1)
 
 
+def _throughput(
+    pairs: list[tuple[int, int]], unmeasured: Provenance, why_none: str, why_zero: str
+) -> Throughput:
+    """Pairs of (output tokens, nanoseconds); only the sums are kept."""
+    tokens, nanoseconds = sum(t for t, _ in pairs), sum(n for _, n in pairs)
+    if pairs and nanoseconds > 0:
+        return Throughput(
+            status="derived",
+            reason=None,
+            attempts=len(pairs),
+            output_tokens=tokens,
+            duration_ns=nanoseconds,
+        )
+    return Throughput(
+        status=unmeasured,
+        reason=why_none if not pairs else why_zero,
+        attempts=0,
+        output_tokens=None,
+        duration_ns=None,
+    )
+
+
 def _environments(completed: CompletedRun) -> list[EnvironmentUse]:
     uses = []
     for digest in completed.completion.environments:
@@ -348,25 +381,32 @@ def _report(completed: CompletedRun, environment: EnvironmentEvidenceRef) -> Qua
         for s, start, close in timed
         if close.state == "complete" and s.key in held
     ]
-    tokens, micros = sum(t for t, _ in throughput_pairs), sum(m for _, m in throughput_pairs)
-    if throughput_pairs and micros > 0:
-        throughput = Throughput(
-            status="derived",
-            reason=None,
-            attempts=len(throughput_pairs),
-            output_tokens=tokens,
-            duration_us=micros,
-        )
-    else:
-        throughput = Throughput(
-            status="not_applicable" if mock else "unavailable",
-            reason=no_model
-            if not throughput_pairs
-            else "the timed attempts took no measurable time",
-            attempts=0,
-            output_tokens=None,
-            duration_us=None,
-        )
+    attempt_throughput = _throughput(
+        [(tokens, micros * 1000) for tokens, micros in throughput_pairs],
+        unmeasured,
+        no_model,
+        "the timed attempts took no measurable time",
+    )
+
+    measured = {key: r.facts.measurements for key, r in held.items() if r.facts.measurements}
+    no_measure = (
+        "a mock backend runs no model" if mock else "no execution receipt carries measurements"
+    )
+    generation_throughput = _throughput(
+        [(len(held[key].facts.output_token_ids), m.generation_ns) for key, m in measured.items()],
+        unmeasured,
+        no_measure,
+        "the measured generations took no measurable time",
+    )
+    readings = [m.cuda_memory for m in measured.values()]
+    taken = [r for r in readings if r.status == "measured"]
+    memory_why = no_measure
+    if measured and not taken:
+        why = sorted({r.reason for r in readings if r.status == "unavailable"})
+        memory_why = "the backend took no CUDA memory reading: " + "; ".join(why)
+
+    def memory(values: list[int]) -> Series:
+        return _series(values, "observed", unmeasured, memory_why, None)
 
     parsed = sum(1 for s in finals if s.events[-1].parse_status == "parsed")
     abstained = sum(1 for s in finals if s.events[-1].abstained)
@@ -383,6 +423,7 @@ def _report(completed: CompletedRun, environment: EnvironmentEvidenceRef) -> Qua
         matrix_arm=completion.matrix_arm,
         backend_kind=record.backend_kind,
         purpose=completion.purpose,
+        phase=record.phase,
     )
     return QualificationReport(
         evidence_class=EVIDENCE_CLASS[record.backend_kind],  # type: ignore[arg-type]
@@ -441,13 +482,21 @@ def _report(completed: CompletedRun, environment: EnvironmentEvidenceRef) -> Qua
             "no attempt has a start and a trustworthy end",
             "wall-clock difference between event timestamps; includes record writes",
         ),
-        generation_throughput=throughput,
-        gpu_peak_memory=Unmeasured(
-            status="not_applicable" if mock else "unavailable",
-            reason="a mock backend uses no GPU"
-            if mock
-            else "no existing record measures GPU memory use",
+        attempt_throughput=attempt_throughput,
+        measurements=Fraction(numerator=len(measured), denominator=len(held)),
+        memory_readings=Fraction(numerator=len(taken), denominator=len(held)),
+        memory_device_indices=sorted({r.device_index for r in taken}),
+        generation_duration_ns=_series(
+            [m.generation_ns for m in measured.values()],
+            "observed",
+            unmeasured,
+            no_measure,
+            None,
         ),
+        generation_throughput=generation_throughput,
+        peak_allocated_bytes=memory([r.peak_allocated_bytes for r in taken]),
+        peak_reserved_bytes=memory([r.peak_reserved_bytes for r in taken]),
+        device_used_after_bytes=memory([r.device_used_after_bytes for r in taken]),
         limitations=list(LIMITATIONS),
     )
 

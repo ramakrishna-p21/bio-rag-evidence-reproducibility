@@ -475,10 +475,11 @@ def test_resumed_run_keeps_phase_benchmark_and_policy(tmp_path):
     assert resumed.retry_policy == POLICY and resumed.record.phase == "development"
 
 
-def test_only_development_runs_are_supported(tmp_path):
-    for phase in ("final_test", "qualification"):
-        with pytest.raises(ValidationError):
-            RunRecord.model_validate({**_run_dict(tmp_path), "phase": phase})
+def test_only_development_and_qualification_runs_are_supported(tmp_path):
+    with pytest.raises(ValidationError):
+        RunRecord.model_validate({**_run_dict(tmp_path), "phase": "final_test"})
+    # qualification is a separate label for development-item runs (see the readiness tests)
+    RunRecord.model_validate({**_run_dict(tmp_path), "phase": "qualification"})
 
 
 def _run_dict(tmp_path):
@@ -779,7 +780,12 @@ def test_non_official_completions_are_never_accepted(tmp_path, kind):
 
 
 def test_official_run_yields_only_complete_observations(tmp_path):
+    from synthetic_environment import evidence
+
+    from biorag_repro.generation.environment_gate import publish_environment_evidence
+
     store, _ = new_store(tmp_path, kind="official")
+    publish_environment_evidence(store.run_dir, evidence())  # an official attempt cites it
     done = store.plan(coordinates(0))
     finish(store, done, kind="official")
     store.plan(coordinates(1))

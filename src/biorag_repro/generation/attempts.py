@@ -143,11 +143,20 @@ def _check_backend_purpose(kind: str, purpose: str) -> None:
         )
 
 
+RunPhase = Literal["development", "qualification"]
+
+# Environment evidence stored with an official run (see environment_gate).
+EVIDENCE_DIR = "environment_evidence"
+LOCK_FILE = f"{EVIDENCE_DIR}/lock.toml"
+VERIFICATION_FILE = f"{EVIDENCE_DIR}/verification.json"
+
+
 class RunRecord(Record):
     schema_version: Literal["1"] = "1"
     run_id: OpaqueId
     created_utc: str
-    phase: Literal["development"]  # qualification and final_test are not authorized here
+    # qualification runs use development items only; final_test is not authorized here
+    phase: RunPhase
     benchmark_version: Nonblank
     resolved_config_sha256: Sha256
     raw_config_sha256: Sha256
@@ -202,6 +211,11 @@ class AttemptEvent(Record):
     abstained: bool | None = None
     parse_reason: str | None = None
     execution_receipt_sha256: Sha256 | None = None
+    # Hash of the stored environment verification. Official running events only; omitted from
+    # the stored JSON when absent so that events written before this field keep their bytes.
+    environment_verification_sha256: Sha256 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     failure_kind: Nonblank | None = None
     failure_detail: Nonblank | None = None
 
@@ -226,6 +240,12 @@ class AttemptEvent(Record):
                 raise ValueError(
                     f"{self.state} event: {name} is {'missing' if name in required else 'not allowed'}"
                 )
+        if self.environment_verification_sha256 is not None and (
+            self.state != "running" or self.backend_kind != "official"
+        ):
+            raise ValueError(
+                "only a running event of an official backend cites an environment verification"
+            )
         if self.state == "planned":
             if self.sequence != 1 or self.previous_event_sha256 is not None:
                 raise ValueError("the planned event starts the log")
@@ -309,7 +329,7 @@ class RunStore:
         root: Path,
         *,
         config: ResolvedConfiguration[GeneratorConfiguration],
-        phase: Literal["development"],
+        phase: RunPhase,
         benchmark_version: str,
         backend_kind: BackendKind,
         retry_policy: RetryPolicy | None = None,
@@ -487,6 +507,7 @@ class RunStore:
             if event.seed != planned.seed:
                 raise LifecycleError(f"attempt seed differs from the planned seed in {key}")
             self._check_environment_file(event.environment_sha256)
+            self._check_verification_citation(event)
             return
         current = started[-1]
         if (event.attempt_id, event.attempt_number) != (current.attempt_id, current.attempt_number):
@@ -583,6 +604,27 @@ class RunStore:
             raise InvalidReceipt("generation settings in the receipt differ from the configuration")
         if g.seed != running.seed:
             raise InvalidReceipt("seed in the receipt differs from the planned seed")
+
+    def _verification_sha256(self) -> str | None:
+        path = self.run_dir / VERIFICATION_FILE
+        return sha256_bytes(path.read_bytes()) if path.is_file() else None
+
+    def _check_verification_citation(self, event: AttemptEvent) -> None:
+        """An official attempt cites the stored verification; any other attempt cites nothing.
+
+        The citation sits in the hash-chained event, so the verification must have been stored
+        before the event could be written, and replacing it later breaks every citing event.
+        This orders recorded events; the timestamps are not an independent clock.
+        """
+        if not self.record.official:
+            return  # the event model already refuses a citation from a non-official backend
+        stored = self._verification_sha256()
+        if stored is None:
+            raise LifecycleError("the environment verification stored with the run is missing")
+        if event.environment_verification_sha256 != stored:
+            raise LifecycleError(
+                "the attempt does not cite the environment verification stored with the run"
+            )
 
     def _check_environment_file(self, digest: str) -> EnvironmentRecord:
         path = self.run_dir / "environments" / f"{digest}.json"
@@ -815,6 +857,11 @@ class RunStore:
         if refusal:
             raise InvalidTransition(refusal)
         self._check_environment(environment)
+        verification = self._verification_sha256() if self.record.official else None
+        if self.record.official and verification is None:
+            raise NonOfficialBackend(
+                "an official attempt needs the environment verification stored with the run first"
+            )
         first = next((e for e in state.events if e.state == "running"), None)
         if first is not None and first.rendered_input_sha256 != rendered_input_sha256:
             raise InvalidTransition("a retry must use the identical rendered input")
@@ -836,6 +883,7 @@ class RunStore:
             environment_sha256=digest,
             rendered_input_sha256=rendered_input_sha256,
             seed=state.coordinates.seed,
+            environment_verification_sha256=verification,
         )
         return attempt_id
 

@@ -13,6 +13,7 @@ from pydantic import Field, JsonValue, StringConstraints, model_validator
 from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 
+Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 OpaqueId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{32}$")]
 
@@ -49,6 +50,57 @@ class GenerationSettings(Record):
     effective: dict[str, JsonValue]  # the complete generation configuration passed to the model
 
 
+class CudaMemoryUnavailable(Record):
+    """No CUDA memory reading was taken; the reason is stated and nothing is estimated."""
+
+    status: Literal["unavailable"] = "unavailable"
+    reason: Nonblank
+
+
+class CudaMemoryMeasured(Record):
+    """Memory around one call on one CUDA device, in bytes.
+
+    The allocated and reserved peaks are this process's torch counters, reset just before the
+    call. `device_used_after_bytes` is a device-wide snapshot taken after the call (total minus
+    free): it includes every other process on a shared GPU and is not a peak.
+    """
+
+    status: Literal["measured"] = "measured"
+    device_index: int = Field(ge=0)
+    allocated_before_bytes: int = Field(ge=0)
+    peak_allocated_bytes: int = Field(ge=0)
+    peak_reserved_bytes: int = Field(ge=0)
+    device_total_bytes: int = Field(gt=0)
+    device_used_after_bytes: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        if self.peak_allocated_bytes < self.allocated_before_bytes:
+            raise ValueError("the allocated peak is below the memory allocated before the call")
+        if self.peak_reserved_bytes < self.peak_allocated_bytes:
+            raise ValueError("reserved memory cannot be below the allocated peak")
+        if self.device_used_after_bytes > self.device_total_bytes:
+            raise ValueError("more device memory is used than the device has")
+        return self
+
+
+class ExecutionMeasurements(Record):
+    """What the backend measured around one `model.generate` call.
+
+    `generation_ns` is the monotonic interval from just before the call to just after it
+    returned, with the CUDA device synchronized before the clock started and again before it
+    was read, so queued GPU work is inside the interval and earlier work is not. It excludes
+    tokenization, the token check, decoding, validation, receipt writing and environment
+    capture. The overall attempt duration is a different quantity, taken from event times.
+    """
+
+    clock: Literal["perf_counter_ns"]
+    generation_ns: int = Field(ge=0)
+    cuda_memory: Annotated[
+        CudaMemoryMeasured | CudaMemoryUnavailable, Field(discriminator="status")
+    ]
+
+
 class ExecutionFacts(Record):
     """Reported by the backend for one call."""
 
@@ -57,6 +109,10 @@ class ExecutionFacts(Record):
     generation: GenerationSettings
     output_token_ids: list[int]
     stop_reason: Literal["eos", "max_new_tokens"]
+    # Omitted from stored JSON when absent, so receipts written before it keep their bytes.
+    measurements: ExecutionMeasurements | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def consistent(self) -> Self:

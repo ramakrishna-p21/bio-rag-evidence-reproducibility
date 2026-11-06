@@ -52,7 +52,10 @@
       "type": "string"
     },
     "phase": {
-      "const": "development",
+      "enum": [
+        "development",
+        "qualification"
+      ],
       "title": "Phase",
       "type": "string"
     },

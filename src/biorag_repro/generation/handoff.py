@@ -30,6 +30,10 @@ def official_observations(
     if not isinstance(verified, VerifiedOfficialRun):
         raise NotVerifiedOfficial("only a verified official run can be exported")
     completed = verified.completed
+    if completed.store.record.phase != "development":
+        raise NotVerifiedOfficial(
+            f"a {completed.store.record.phase} run is not a source of scientific observations"
+        )
     by_item = {item.item_id: item for item in items}
     results = {r.observation_key: r for r in verified.results}
     retrieval = completed.store.config.settings.retrieval_config_sha256

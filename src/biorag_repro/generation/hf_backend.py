@@ -13,10 +13,11 @@ process executed; see model_snapshot.
 
 import json
 import re
+import time
 from collections.abc import Callable
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.generation import config as generator_config
@@ -32,7 +33,10 @@ from biorag_repro.generation.environment import (
 from biorag_repro.generation.model_snapshot import SnapshotError, inventory_snapshot
 from biorag_repro.generation.prompt import RenderedInput
 from biorag_repro.generation.receipt import (
+    CudaMemoryMeasured,
+    CudaMemoryUnavailable,
     ExecutionFacts,
+    ExecutionMeasurements,
     GenerationSettings,
     decode_output,
     token_ids_sha256,
@@ -40,6 +44,8 @@ from biorag_repro.generation.receipt import (
 from biorag_repro.generation.runner import BackendFailure, GenerationOutput
 from biorag_repro.retrieval import context as phase5
 from biorag_repro.retrieval.models import Snapshot
+
+T = TypeVar("T")
 
 HF_BACKEND_NAME = "biorag_repro.generation.hf_backend.HuggingFaceBackend"
 PACKAGES = (
@@ -56,6 +62,44 @@ PACKAGES = (
 def is_official_device(device: str) -> bool:
     """The official condition is one explicitly named CUDA device."""
     return re.fullmatch(r"cuda:\d+", device) is not None
+
+
+def timed_call(
+    call: Callable[[], T], clock: Callable[[], int], sync: Callable[[], None]
+) -> tuple[T, int]:
+    """Run `call` and return its result with the elapsed nanoseconds of the monotonic clock.
+
+    `sync` runs before the clock starts and again before it is read, so work already queued on
+    a GPU is not charged to this call and this call's queued work is.
+    """
+    sync()
+    start = clock()
+    result = call()
+    sync()
+    return result, clock() - start
+
+
+def cpu_memory_reading(device: str) -> CudaMemoryUnavailable:
+    return CudaMemoryUnavailable(reason=f"device {device} is not CUDA; no CUDA memory to read")
+
+
+def cuda_allocated_before(torch: Any, index: int) -> int:
+    """Memory this process holds before the call; the peak counters restart from it."""
+    allocated: int = torch.cuda.memory_allocated(index)
+    torch.cuda.reset_peak_memory_stats(index)
+    return allocated
+
+
+def cuda_memory_after(torch: Any, index: int, allocated_before: int) -> CudaMemoryMeasured:
+    free, total = torch.cuda.mem_get_info(index)
+    return CudaMemoryMeasured(
+        device_index=index,
+        allocated_before_bytes=allocated_before,
+        peak_allocated_bytes=torch.cuda.max_memory_allocated(index),
+        peak_reserved_bytes=torch.cuda.max_memory_reserved(index),
+        device_total_bytes=total,
+        device_used_after_bytes=total - free,
+    )
 
 
 def load_local_model(directory: Path, device: str) -> Any:
@@ -87,6 +131,13 @@ def _stop_tokens(directory: Path) -> tuple[list[int], int | None]:
     return list(ids), pad
 
 
+def _cuda_index(torch: Any, device: str) -> int | None:
+    parsed = torch.device(device)
+    if parsed.type != "cuda":
+        return None
+    return parsed.index if parsed.index is not None else int(torch.cuda.current_device())
+
+
 class HuggingFaceBackend:
     def __init__(
         self,
@@ -96,9 +147,11 @@ class HuggingFaceBackend:
         tokenizer_root: Path,
         device: str,
         load_model: Callable[[Path, str], Any] = load_local_model,
+        clock: Callable[[], int] = time.perf_counter_ns,
     ) -> None:
         import torch
 
+        self.clock = clock
         self.config = config
         settings = config.settings
         self.device = device
@@ -217,16 +270,34 @@ class HuggingFaceBackend:
         if seed is not None:
             torch.manual_seed(seed)
         input_ids = torch.tensor([ids], device=self.device)
-        try:
+        cuda_index = _cuda_index(torch, self.device)
+        allocated_before = (
+            cuda_allocated_before(torch, cuda_index) if cuda_index is not None else None
+        )
+
+        def call() -> Any:
             with torch.inference_mode():
-                output = self.model.generate(
+                return self.model.generate(
                     input_ids=input_ids,
                     attention_mask=torch.ones_like(input_ids),
                     generation_config=generation_config,
                     use_model_defaults=False,  # the checkpoint's sampling defaults must not leak in
                 )
+
+        def sync() -> None:
+            if cuda_index is not None:
+                torch.cuda.synchronize(cuda_index)
+
+        try:
+            output, generation_ns = timed_call(call, self.clock, sync)
         except torch.cuda.OutOfMemoryError as error:
             raise BackendFailure("out_of_memory", str(error)) from error
+        # Read straight after the call, before any output is processed.
+        memory: CudaMemoryMeasured | CudaMemoryUnavailable = (
+            cuda_memory_after(torch, cuda_index, allocated_before)
+            if cuda_index is not None and allocated_before is not None
+            else cpu_memory_reading(self.device)
+        )
 
         row = output[0].tolist()
         new = row[len(ids) :]
@@ -260,5 +331,10 @@ class HuggingFaceBackend:
             ),
             output_token_ids=new,
             stop_reason=stop,
+            measurements=ExecutionMeasurements(
+                clock="perf_counter_ns",
+                generation_ns=generation_ns,
+                cuda_memory=memory,
+            ),
         )
         return GenerationOutput(text, facts)

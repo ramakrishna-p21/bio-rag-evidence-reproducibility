@@ -8,9 +8,12 @@ approval. The lock and its verification report are stored with the run, so the c
 inventory and the retained anchor bind them to it.
 
 What a match shows: the pinned Python, packages, torch build and GPU were present when the
-report was made. It does not show numerical determinism of generation. Whether the report
-was made before the first attempt is not recorded in any attempt event; the driver orders the
-steps, but nothing hash-chains them (see DECISIONS.md).
+report was made. It does not show numerical determinism of generation. Every running event
+of an official run cites the SHA-256 of the stored verification, so the verification was in
+the run directory before the first attempt event could be written and cannot be replaced
+afterwards. That is integrity and recorded-event ordering: the event timestamps are written
+by the producing process and are not an independent clock, and a producer could still store a
+fabricated report that matches an approved lock.
 """
 
 from dataclasses import dataclass
@@ -19,7 +22,14 @@ from pathlib import Path
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
 from biorag_repro.generation import config as generator_config
-from biorag_repro.generation.attempts import CorruptRecord, LifecycleError, NonOfficialBackend
+from biorag_repro.generation.attempts import (
+    EVIDENCE_DIR,
+    LOCK_FILE,
+    VERIFICATION_FILE,
+    CorruptRecord,
+    LifecycleError,
+    NonOfficialBackend,
+)
 from biorag_repro.generation.completion import CompletedRun
 from biorag_repro.generation.environment import EnvironmentRecord
 from biorag_repro.generation.environment_lock import (
@@ -29,10 +39,6 @@ from biorag_repro.generation.environment_lock import (
     normalise,
     parse_spec,
 )
-
-EVIDENCE_DIR = "environment_evidence"
-LOCK_FILE = f"{EVIDENCE_DIR}/lock.toml"
-VERIFICATION_FILE = f"{EVIDENCE_DIR}/verification.json"
 
 
 class EnvironmentNotApproved(LifecycleError):

@@ -323,6 +323,14 @@
           "title": "Matrix Arm",
           "type": "string"
         },
+        "phase": {
+          "enum": [
+            "development",
+            "qualification"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
         "purpose": {
           "title": "Purpose",
           "type": "string"
@@ -362,7 +370,8 @@
         "completion_manifest_sha256",
         "matrix_arm",
         "backend_kind",
-        "purpose"
+        "purpose",
+        "phase"
       ],
       "title": "RunIdentity",
       "type": "object"
@@ -444,14 +453,14 @@
     },
     "Throughput": {
       "additionalProperties": false,
-      "description": "Output tokens over attempt time, kept as the two integers they come from.",
+      "description": "Output tokens over a duration in nanoseconds, kept as the two integers they come from.",
       "properties": {
         "attempts": {
           "minimum": 0,
           "title": "Attempts",
           "type": "integer"
         },
-        "duration_us": {
+        "duration_ns": {
           "anyOf": [
             {
               "type": "integer"
@@ -460,7 +469,7 @@
               "type": "null"
             }
           ],
-          "title": "Duration Us"
+          "title": "Duration Ns"
         },
         "output_tokens": {
           "anyOf": [
@@ -500,34 +509,9 @@
         "reason",
         "attempts",
         "output_tokens",
-        "duration_us"
+        "duration_ns"
       ],
       "title": "Throughput",
-      "type": "object"
-    },
-    "Unmeasured": {
-      "additionalProperties": false,
-      "description": "A quantity no existing record measures. It cannot hold a value.",
-      "properties": {
-        "reason": {
-          "pattern": "\\S",
-          "title": "Reason",
-          "type": "string"
-        },
-        "status": {
-          "enum": [
-            "unavailable",
-            "not_applicable"
-          ],
-          "title": "Status",
-          "type": "string"
-        }
-      },
-      "required": [
-        "status",
-        "reason"
-      ],
-      "title": "Unmeasured",
       "type": "object"
     }
   },
@@ -536,8 +520,14 @@
     "attempt_duration_us": {
       "$ref": "#/$defs/Series"
     },
+    "attempt_throughput": {
+      "$ref": "#/$defs/Throughput"
+    },
     "attempts": {
       "$ref": "#/$defs/AttemptCounts"
+    },
+    "device_used_after_bytes": {
+      "$ref": "#/$defs/Series"
     },
     "environment_verification": {
       "$ref": "#/$defs/EnvironmentEvidenceRef"
@@ -558,11 +548,11 @@
       "title": "Evidence Class",
       "type": "string"
     },
+    "generation_duration_ns": {
+      "$ref": "#/$defs/Series"
+    },
     "generation_throughput": {
       "$ref": "#/$defs/Throughput"
-    },
-    "gpu_peak_memory": {
-      "$ref": "#/$defs/Unmeasured"
     },
     "input_tokens_received": {
       "$ref": "#/$defs/Series"
@@ -574,6 +564,19 @@
       "title": "Limitations",
       "type": "array"
     },
+    "measurements": {
+      "$ref": "#/$defs/Fraction"
+    },
+    "memory_device_indices": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Memory Device Indices",
+      "type": "array"
+    },
+    "memory_readings": {
+      "$ref": "#/$defs/Fraction"
+    },
     "observations": {
       "$ref": "#/$defs/ObservationCounts"
     },
@@ -582,6 +585,12 @@
     },
     "parse": {
       "$ref": "#/$defs/ParseCounts"
+    },
+    "peak_allocated_bytes": {
+      "$ref": "#/$defs/Series"
+    },
+    "peak_reserved_bytes": {
+      "$ref": "#/$defs/Series"
     },
     "planned_input_tokens": {
       "$ref": "#/$defs/Series"
@@ -599,8 +608,8 @@
       "$ref": "#/$defs/RunIdentity"
     },
     "schema_version": {
-      "const": "1",
-      "default": "1",
+      "const": "2",
+      "default": "2",
       "title": "Schema Version",
       "type": "string"
     },
@@ -632,8 +641,15 @@
     "output_tokens",
     "stop_reasons",
     "attempt_duration_us",
+    "attempt_throughput",
+    "measurements",
+    "memory_readings",
+    "memory_device_indices",
+    "generation_duration_ns",
     "generation_throughput",
-    "gpu_peak_memory",
+    "peak_allocated_bytes",
+    "peak_reserved_bytes",
+    "device_used_after_bytes",
     "limitations"
   ],
   "title": "QualificationReport",

@@ -26,6 +26,7 @@ from biorag_repro.generation.environment_gate import (
     publish_environment_evidence,
 )
 from biorag_repro.generation.environment_lock import verify_environment
+from biorag_repro.generation.runner import run_roster
 
 PROVISIONAL = Path("configs/environment.toml").read_bytes()
 
@@ -114,9 +115,9 @@ def test_an_official_run_with_registered_matching_evidence_verifies(
 
 
 def test_an_official_run_without_environment_evidence_is_refused(tmp_path, view, tiny, recognised):
-    world = build_world(tmp_path, view, tiny, evidence=False)
-    with pytest.raises(NonOfficialBackend, match="environment evidence"):
-        verify(world, anchored(world))
+    # The run cannot even start an attempt: every official attempt cites the stored verification.
+    with pytest.raises(NonOfficialBackend, match="environment verification"):
+        build_world(tmp_path, view, tiny, evidence=False)
 
 
 def test_evidence_for_a_lock_the_maintainer_has_not_approved_is_refused(
@@ -132,8 +133,11 @@ def test_evidence_for_a_lock_the_maintainer_has_not_approved_is_refused(
 def test_evidence_that_does_not_match_is_refused_even_if_stored_with_the_run(
     tmp_path, view, tiny, recognised
 ):
-    world = build_world(tmp_path, view, tiny, evidence=False)
+    world = build_world(tmp_path, view, tiny, evidence=False, run=False)
     publish_environment_evidence(world.store.run_dir, evidence(python_version="3.11.10"))
+    run_roster(
+        world.store, world.entries, world.backend, capture_environment=world.backend.environment
+    )
     with pytest.raises(EnvironmentNotApproved):
         verify(world, anchored(world))
 

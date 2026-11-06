@@ -361,7 +361,7 @@ def test_included_item_must_match_the_view_record(world, field):
 
 @pytest.mark.parametrize(
     "change",
-    [{"phase": "qualification"}, {"benchmark_version": "benchmark_v2"}, {"corpus_version": "c2"}],
+    [{"phase": "final_test"}, {"benchmark_version": "benchmark_v2"}, {"corpus_version": "c2"}],
 )
 def test_scope_must_belong_to_the_view_version_and_development_phase(world, change):
     directory, record_sha, _, _, _ = world

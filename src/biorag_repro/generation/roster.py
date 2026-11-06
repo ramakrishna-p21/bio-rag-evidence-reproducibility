@@ -93,8 +93,9 @@ class BuiltRoster:
 def _check_scope(
     scope: PlannedRoster, view_items: dict[str, BenchmarkItem], view_versions: tuple[str, str]
 ) -> None:
-    if scope.phase != "development":
-        raise RosterMismatch("the scope is not a development-phase scope")
+    # Qualification draws on development items only; the view check below enforces that.
+    if scope.phase not in ("development", "qualification"):
+        raise RosterMismatch("the scope phase is neither development nor qualification")
     if (scope.benchmark_version, scope.corpus_version) != view_versions:
         raise RosterMismatch("the scope names another benchmark or corpus version than the view")
     declared = {i.item_id: i for i in scope.items}
