@@ -1,0 +1,278 @@
+{
+  "$defs": {
+    "BackendIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "official",
+            "smoke",
+            "mock"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Version"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "version"
+      ],
+      "title": "BackendIdentity",
+      "type": "object"
+    },
+    "GitState": {
+      "additionalProperties": false,
+      "properties": {
+        "commit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Commit"
+        },
+        "dirty": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dirty"
+        },
+        "dirty_paths": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dirty Paths"
+        },
+        "status": {
+          "enum": [
+            "ok",
+            "not_a_repository",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "commit",
+        "dirty",
+        "dirty_paths"
+      ],
+      "title": "GitState",
+      "type": "object"
+    },
+    "GpuDevice": {
+      "additionalProperties": false,
+      "properties": {
+        "driver_version": {
+          "minLength": 1,
+          "title": "Driver Version",
+          "type": "string"
+        },
+        "index": {
+          "minimum": 0,
+          "title": "Index",
+          "type": "integer"
+        },
+        "memory_total_mib": {
+          "exclusiveMinimum": 0,
+          "title": "Memory Total Mib",
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "name",
+        "memory_total_mib",
+        "driver_version"
+      ],
+      "title": "GpuDevice",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "backend": {
+      "$ref": "#/$defs/BackendIdentity"
+    },
+    "captured_utc": {
+      "title": "Captured Utc",
+      "type": "string"
+    },
+    "cpu_count": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cpu Count"
+    },
+    "cuda_runtime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Cuda Runtime"
+    },
+    "git": {
+      "$ref": "#/$defs/GitState"
+    },
+    "gpu_status": {
+      "enum": [
+        "ok",
+        "no_nvidia_smi",
+        "failed"
+      ],
+      "title": "Gpu Status",
+      "type": "string"
+    },
+    "gpus": {
+      "items": {
+        "$ref": "#/$defs/GpuDevice"
+      },
+      "title": "Gpus",
+      "type": "array"
+    },
+    "hostname": {
+      "title": "Hostname",
+      "type": "string"
+    },
+    "machine": {
+      "title": "Machine",
+      "type": "string"
+    },
+    "model_repository": {
+      "minLength": 1,
+      "title": "Model Repository",
+      "type": "string"
+    },
+    "model_revision": {
+      "minLength": 1,
+      "title": "Model Revision",
+      "type": "string"
+    },
+    "operating_system": {
+      "title": "Operating System",
+      "type": "string"
+    },
+    "os_release": {
+      "title": "Os Release",
+      "type": "string"
+    },
+    "packages": {
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "title": "Packages",
+      "type": "object"
+    },
+    "python_implementation": {
+      "title": "Python Implementation",
+      "type": "string"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "ram_total_mib": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Ram Total Mib"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "tokenizer_repository": {
+      "minLength": 1,
+      "title": "Tokenizer Repository",
+      "type": "string"
+    },
+    "tokenizer_revision": {
+      "minLength": 1,
+      "title": "Tokenizer Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "captured_utc",
+    "backend",
+    "model_repository",
+    "model_revision",
+    "tokenizer_repository",
+    "tokenizer_revision",
+    "python_version",
+    "python_implementation",
+    "packages",
+    "operating_system",
+    "os_release",
+    "machine",
+    "hostname",
+    "cpu_count",
+    "ram_total_mib",
+    "gpu_status",
+    "gpus",
+    "cuda_runtime",
+    "git"
+  ],
+  "title": "EnvironmentRecord",
+  "type": "object"
+}

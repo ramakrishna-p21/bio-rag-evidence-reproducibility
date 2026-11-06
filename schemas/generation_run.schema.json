@@ -1,0 +1,106 @@
+{
+  "$defs": {
+    "RetryPolicy": {
+      "additionalProperties": false,
+      "description": "Retry limit comes from the generator configuration; failure kinds are named here.",
+      "properties": {
+        "max_attempts": {
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "retryable_failures": {
+          "items": {
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "title": "Retryable Failures",
+          "type": "array"
+        }
+      },
+      "required": [
+        "max_attempts",
+        "retryable_failures"
+      ],
+      "title": "RetryPolicy",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "backend_kind": {
+      "enum": [
+        "official",
+        "smoke",
+        "mock"
+      ],
+      "title": "Backend Kind",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "pattern": "\\S",
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "created_utc": {
+      "title": "Created Utc",
+      "type": "string"
+    },
+    "matrix_arm": {
+      "pattern": "\\S",
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "phase": {
+      "const": "development",
+      "title": "Phase",
+      "type": "string"
+    },
+    "purpose": {
+      "enum": [
+        "synthetic_test",
+        "development_candidate"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "raw_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Config Sha256",
+      "type": "string"
+    },
+    "resolved_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resolved Config Sha256",
+      "type": "string"
+    },
+    "retry": {
+      "$ref": "#/$defs/RetryPolicy"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "created_utc",
+    "phase",
+    "benchmark_version",
+    "resolved_config_sha256",
+    "raw_config_sha256",
+    "purpose",
+    "matrix_arm",
+    "backend_kind",
+    "retry"
+  ],
+  "title": "RunRecord",
+  "type": "object"
+}
