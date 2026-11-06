@@ -1,6 +1,6 @@
 # Load the analysis sources into the test environment (the analysis is plain scripts, not a package).
 r_dir <- normalizePath(test_path("..", "..", "R"))
-for (f in c("read_inputs.R", "accounting.R", "estimates.R")) {
+for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "inference.R")) {
   source(file.path(r_dir, f), local = TRUE)
 }
 
