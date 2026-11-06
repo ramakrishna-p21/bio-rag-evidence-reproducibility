@@ -28,6 +28,7 @@ from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 from biorag_repro.generation.attempts import AttemptEvent, RunRecord
+from biorag_repro.generation.checkpoint import CheckpointInventory, CheckpointManifest
 from biorag_repro.generation.completion import RunCompletion
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.driver import Anchor
@@ -64,6 +65,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generator_prompt.schema.json": PromptArtifact,
     "generator_rendered_input.schema.json": RenderedInput,
     "generation_seed_registry.schema.json": GenerationSeedRegistry,
+    "checkpoint_inventory.schema.json": CheckpointInventory,
+    "checkpoint_manifest.schema.json": CheckpointManifest,
     "generation_run.schema.json": RunRecord,
     "generation_attempt_event.schema.json": AttemptEvent,
     "generation_environment.schema.json": EnvironmentRecord,

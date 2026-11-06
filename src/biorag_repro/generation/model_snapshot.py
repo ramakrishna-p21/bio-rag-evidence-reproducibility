@@ -14,7 +14,7 @@ from biorag_repro.generation.environment import ModelFile, ModelSnapshot, manife
 
 PICKLE_SUFFIXES = {".bin", ".pt", ".pth", ".ckpt", ".pkl", ".pickle"}
 INDEX = "model.safetensors.index.json"
-_BOOKKEEPING = ".cache"  # Hugging Face download state, which changes between downloads
+BOOKKEEPING = ".cache"  # Hugging Face download state, which changes between downloads
 
 
 class SnapshotError(ValueError):
@@ -25,7 +25,7 @@ def _files(directory: Path) -> list[ModelFile]:
     found = []
     for path in sorted(directory.rglob("*")):
         relative = path.relative_to(directory)
-        if _BOOKKEEPING in relative.parts or path.is_dir():
+        if BOOKKEEPING in relative.parts or path.is_dir():
             continue
         if not path.is_file():  # broken symlinks and special files
             raise SnapshotError(f"{relative.as_posix()} is not a readable regular file")
