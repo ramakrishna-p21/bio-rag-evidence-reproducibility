@@ -21,7 +21,6 @@ from biorag_repro.generation.attempts import (
     RunMismatch,
     RunStore,
     UnsafeResume,
-    official_completions,
 )
 from biorag_repro.generation.environment import BackendIdentity, EnvironmentRecord
 from biorag_repro.generation.prompt import RenderedInput
@@ -241,7 +240,8 @@ def _result(store: RunStore, state: ObservationState) -> GenerationResult:
     )
 
 
-def _decided_results(store: RunStore) -> list[GenerationResult]:
+def decided_results(store: RunStore) -> list[GenerationResult]:
+    """Decided observations in a fixed order. Whether they are official is not decided here."""
     decided = [
         state
         for state in store.verify()
@@ -257,12 +257,6 @@ def _decided_results(store: RunStore) -> list[GenerationResult]:
     return [_result(store, state) for state in decided]
 
 
-def official_results(store: RunStore) -> list[GenerationResult]:
-    """Decided observations of an official development run. Undecided ones yield nothing."""
-    official_completions(store)  # refuses a run that is not an official development run
-    return _decided_results(store)
-
-
 @dataclass(frozen=True)
 class NonOfficialResults:
     """Results of a mock or smoke run, labelled so they are not mistaken for observations."""
@@ -273,5 +267,7 @@ class NonOfficialResults:
 
 def nonofficial_results(store: RunStore) -> NonOfficialResults:
     if store.record.official:
-        raise NonOfficialBackend("this is an official run; use official_results")
-    return NonOfficialResults(store.record.backend_kind, _decided_results(store))
+        raise NonOfficialBackend(
+            "this is an official run; official evidence comes from generation.official"
+        )
+    return NonOfficialResults(store.record.backend_kind, decided_results(store))

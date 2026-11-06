@@ -138,6 +138,7 @@ class InputRenderer:
             revision=pin.revision,
             file_hashes=dict(pin.file_sha256),
         )
+        self.tokenizer_root = tokenizer_root
         self.counter = QwenCounter(tokenizer_root, snapshot)  # verifies the asset hashes
         self.tokenizer: Any = self.counter.tokenizer
         template = self.tokenizer.chat_template

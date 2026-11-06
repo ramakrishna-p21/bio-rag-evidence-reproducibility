@@ -29,7 +29,6 @@ from biorag_repro.generation.runner import (
     RosterEntry,
     RosterMismatch,
     nonofficial_results,
-    official_results,
     run_roster,
 )
 from biorag_repro.generation.seeds import seed_registry_sha256
@@ -557,14 +556,12 @@ def test_corrupt_stored_records_stop_resume_before_any_generation(tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["mock", "smoke"])
-def test_nonofficial_results_cannot_be_obtained_as_official(tmp_path, kind):
+def test_nonofficial_results_are_labelled_with_their_backend(tmp_path, kind):
     store, config = make_store(tmp_path, kind=kind)
     roster = make_roster(config, conditions=("JATS",))
     backend = MockBackend(roster)
     backend.identity = BackendIdentity(kind=kind, name="x", version=None)
     go(store, config, roster, backend, kind=kind)
-    with pytest.raises(NonOfficialBackend, match="official"):
-        official_results(store)
     handoff = nonofficial_results(store)
     assert handoff.backend_kind == kind and len(handoff.results) == 3
 

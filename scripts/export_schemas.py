@@ -28,9 +28,11 @@ from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 from biorag_repro.generation.attempts import AttemptEvent, RunRecord
+from biorag_repro.generation.completion import RunCompletion
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.environment import EnvironmentRecord
 from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
+from biorag_repro.generation.roster import RosterRecord
 from biorag_repro.generation.seeds import GenerationSeedRegistry
 from biorag_repro.retrieval.models import (
     Bm25Index,
@@ -61,6 +63,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generation_run.schema.json": RunRecord,
     "generation_attempt_event.schema.json": AttemptEvent,
     "generation_environment.schema.json": EnvironmentRecord,
+    "generation_roster.schema.json": RosterRecord,
+    "generation_run_completion.schema.json": RunCompletion,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,

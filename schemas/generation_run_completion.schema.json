@@ -1,0 +1,184 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "FinalObservation": {
+      "additionalProperties": false,
+      "properties": {
+        "attempts": {
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "condition": {
+          "title": "Condition",
+          "type": "string"
+        },
+        "final_event_sequence": {
+          "title": "Final Event Sequence",
+          "type": "integer"
+        },
+        "final_event_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Final Event Sha256",
+          "type": "string"
+        },
+        "item_id": {
+          "title": "Item Id",
+          "type": "string"
+        },
+        "observation_key": {
+          "title": "Observation Key",
+          "type": "string"
+        },
+        "raw_output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repeat_index": {
+          "title": "Repeat Index",
+          "type": "integer"
+        },
+        "status": {
+          "enum": [
+            "complete",
+            "terminal_failure",
+            "retries_exhausted"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_key",
+        "item_id",
+        "condition",
+        "repeat_index",
+        "status",
+        "attempts",
+        "final_event_sequence",
+        "final_event_sha256",
+        "raw_output"
+      ],
+      "title": "FinalObservation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "backend_kind": {
+      "enum": [
+        "official",
+        "smoke",
+        "mock"
+      ],
+      "title": "Backend Kind",
+      "type": "string"
+    },
+    "environments": {
+      "items": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Environments",
+      "type": "array"
+    },
+    "files": {
+      "additionalProperties": {
+        "pattern": "^[0-9a-f]{64}$",
+        "type": "string"
+      },
+      "title": "Files",
+      "type": "object"
+    },
+    "matrix_arm": {
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/FinalObservation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "purpose": {
+      "title": "Purpose",
+      "type": "string"
+    },
+    "raw_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Config Sha256",
+      "type": "string"
+    },
+    "resolved_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resolved Config Sha256",
+      "type": "string"
+    },
+    "roster_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Roster Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "run_record_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Run Record Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "run_record_sha256",
+    "resolved_config_sha256",
+    "raw_config_sha256",
+    "backend_kind",
+    "purpose",
+    "matrix_arm",
+    "roster_sha256",
+    "environments",
+    "observations",
+    "files"
+  ],
+  "title": "RunCompletion",
+  "type": "object"
+}
