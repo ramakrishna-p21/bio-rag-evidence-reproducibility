@@ -37,6 +37,59 @@
       "title": "BackendIdentity",
       "type": "object"
     },
+    "ExecutionRecord": {
+      "additionalProperties": false,
+      "description": "What a backend actually loaded and where it put it.",
+      "properties": {
+        "device": {
+          "minLength": 1,
+          "title": "Device",
+          "type": "string"
+        },
+        "device_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Device Name"
+        },
+        "dtype": {
+          "minLength": 1,
+          "title": "Dtype",
+          "type": "string"
+        },
+        "max_position_embeddings": {
+          "exclusiveMinimum": 0,
+          "title": "Max Position Embeddings",
+          "type": "integer"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/ModelSnapshot"
+        },
+        "tokenizer_file_sha256": {
+          "additionalProperties": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "title": "Tokenizer File Sha256",
+          "type": "object"
+        }
+      },
+      "required": [
+        "snapshot",
+        "tokenizer_file_sha256",
+        "device",
+        "device_name",
+        "dtype",
+        "max_position_embeddings"
+      ],
+      "title": "ExecutionRecord",
+      "type": "object"
+    },
     "GitState": {
       "additionalProperties": false,
       "properties": {
@@ -124,6 +177,63 @@
       ],
       "title": "GpuDevice",
       "type": "object"
+    },
+    "ModelFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "path",
+        "size",
+        "sha256"
+      ],
+      "title": "ModelFile",
+      "type": "object"
+    },
+    "ModelSnapshot": {
+      "additionalProperties": false,
+      "description": "Hashes of every file in the local model directory that was loaded.",
+      "properties": {
+        "directory": {
+          "minLength": 1,
+          "title": "Directory",
+          "type": "string"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/ModelFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Manifest Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "directory",
+        "files",
+        "manifest_sha256"
+      ],
+      "title": "ModelSnapshot",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -156,6 +266,17 @@
         }
       ],
       "title": "Cuda Runtime"
+    },
+    "execution": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExecutionRecord"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "git": {
       "$ref": "#/$defs/GitState"

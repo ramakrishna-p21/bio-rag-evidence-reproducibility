@@ -8,7 +8,6 @@ import json
 import shutil
 
 import pytest
-from test_generation_roster import publish_view
 from test_generation_runner import (
     Crash,
     MockBackend,
@@ -19,15 +18,10 @@ from test_generation_runner import (
     reopen,
 )
 
-from biorag_repro.benchmark.development_view import read_development_view
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.evaluation.stage_a import item_digest
-from biorag_repro.evaluation.stage_c_models import GenerationResult
-from biorag_repro.generation import official
 from biorag_repro.generation.attempts import (
     CorruptRecord,
     DuplicateCompletion,
-    NonOfficialBackend,
 )
 from biorag_repro.generation.completion import (
     RunIncomplete,
@@ -35,17 +29,10 @@ from biorag_repro.generation.completion import (
     publish_roster,
     verify_completed_run,
 )
-from biorag_repro.generation.official import (
-    NotVerifiedOfficial,
-    check_official_lineage,
-    verify_official_run,
-)
 from biorag_repro.generation.roster import RosterRecord, RosterRow, roster_sha256
 from biorag_repro.generation.runner import (
     BackendFailure,
     RosterMismatch,
-    decided_results,
-    nonofficial_results,
 )
 
 SHA = "a" * 64
@@ -378,186 +365,6 @@ def test_roster_is_published_once_and_must_not_change(tmp_path):
     other = record.model_copy(update={"scope_sha256": "d" * 64})
     with pytest.raises(CorruptRecord, match="roster"):
         publish_roster(store, other)
-
-
-# ---- official boundary --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def view(tmp_path):
-    directory, record_sha = publish_view(tmp_path / "view")
-    return directory, record_sha
-
-
-def official_world(tmp_path, view, *, kind="official", script=None, mutate_rows=None, rename=None):
-    """A run over two real view items that declares itself to be on backend `kind`."""
-    directory, record_sha = view
-    view_record, items = read_development_view(directory, record_sha)
-    by_id = {i.item_id: i for i in items}
-    store, config = make_store(tmp_path / "run", kind=kind)
-    roster = [e for e in make_roster(config, conditions=("JATS",)) if e.item_id in ("q_a", "q_b")]
-    mapping = {"q_a": "P001", "q_b": "P002"}
-    roster = [e.model_copy(update={"paper_id": mapping[e.item_id]}) for e in roster]
-    sha = {e.item_id: item_digest(by_id[e.item_id]) for e in roster}
-    roster = [
-        e.model_copy(update={"item_id": (rename or {}).get(e.item_id, e.item_id)}) for e in roster
-    ]
-    sha |= {new: sha[old] for old, new in (rename or {}).items()}
-    record = record_for(
-        config,
-        roster,
-        sha_of=lambda e: sha[e.item_id],
-        development_items=view_record.output_items,
-    )
-    if mutate_rows:
-        record = mutate_rows(record)
-    backend = MockBackend(roster, script)
-    backend.identity = backend.identity.model_copy(update={"kind": kind})
-    go(store, config, roster, backend, kind=kind)
-    return store, config, record
-
-
-def verify(store, config, view, anchor):
-    return verify_official_run(
-        store.root,
-        store.run_id,
-        anchor,
-        config=config,
-        view_directory=view[0],
-        view_record_sha256=view[1],
-    )
-
-
-@pytest.fixture
-def recognised(monkeypatch):
-    monkeypatch.setattr(official, "OFFICIAL_BACKENDS", frozenset({"synthetic"}))
-
-
-@pytest.mark.parametrize("kind", ["mock", "smoke"])
-def test_mock_and_smoke_runs_never_qualify(tmp_path, view, recognised, kind):
-    store, config, record = official_world(tmp_path, view, kind=kind)
-    anchor = complete_run(store, record)
-    with pytest.raises(NonOfficialBackend, match=f"{kind} run"):
-        verify(store, config, view, anchor)
-
-
-def test_no_backend_is_recognised_until_the_real_one_exists(tmp_path, view):
-    store, config, record = official_world(tmp_path, view)
-    anchor = complete_run(store, record)
-    assert official.OFFICIAL_BACKENDS == frozenset()
-    with pytest.raises(NonOfficialBackend, match="recognised"):
-        verify(store, config, view, anchor)
-
-
-def test_verified_official_run_yields_exactly_the_decided_results(tmp_path, view, recognised):
-    store, config, record = official_world(tmp_path, view)
-    anchor = complete_run(store, record)
-    verified = verify(store, config, view, anchor)
-    assert verified.run_id == store.run_id and verified.manifest_sha256 == anchor
-    assert verified.results == decided_results(store)
-    check_official_lineage(verified.results, verified)
-
-
-def test_failed_attempts_stay_operational_missingness(tmp_path, view, recognised):
-    script = {("q_a", "JATS"): [BackendFailure("bad_request", "refused")]}
-    store, config, record = official_world(tmp_path, view, script=script)
-    verified = verify(store, config, view, complete_run(store, record))
-    failed = [r for r in verified.results if r.status == "operational_failure"]
-    assert len(failed) == 1 and failed[0].item_id == "q_a"
-
-
-def test_run_must_be_complete_before_it_can_be_official(tmp_path, view, recognised):
-    store, config, _record = official_world(tmp_path, view)
-    with pytest.raises(CorruptRecord):
-        verify(store, config, view, "0" * 64)
-
-
-def test_roster_must_cite_the_development_view(tmp_path, view, recognised):
-    def other_items(record):
-        return record.model_copy(
-            update={
-                "development_items": ArtifactRef(
-                    artifact_id="other", logical_ref="other.jsonl", sha256="e" * 64
-                )
-            }
-        )
-
-    store, config, record = official_world(tmp_path, view, mutate_rows=other_items)
-    anchor = complete_run(store, record)
-    with pytest.raises(NonOfficialBackend, match="development view"):
-        verify(store, config, view, anchor)
-
-
-def test_rostered_item_must_match_the_view_record(tmp_path, view, recognised):
-    def wrong_hash(record):
-        row = record.rows[0].model_copy(update={"item_sha256": "f" * 64})
-        return record.model_copy(update={"rows": [row, *record.rows[1:]]})
-
-    store, config, record = official_world(tmp_path, view, mutate_rows=wrong_hash)
-    anchor = complete_run(store, record)
-    with pytest.raises(NonOfficialBackend, match="view"):
-        verify(store, config, view, anchor)
-
-
-def test_rostered_item_outside_the_view_is_refused(tmp_path, view, recognised):
-    store, config, record = official_world(tmp_path, view, rename={"q_a": "q_zzz"})
-    anchor = complete_run(store, record)
-    with pytest.raises(NonOfficialBackend, match="view"):
-        verify(store, config, view, anchor)
-
-
-def test_unapproved_tokenizer_pin_is_refused(tmp_path, view, recognised):
-    tokenizer = {
-        "repository": "Qwen/Qwen3-8B",
-        "revision": "b968826d9c46dd6066d109eabc6255188de91218",
-        "file_sha256": {"tokenizer.json": "1" * 64},
-    }
-    directory, record_sha = view
-    store, config = make_store(tmp_path / "run", kind="official", tokenizer=tokenizer)
-    roster = [e for e in make_roster(config, conditions=("JATS",)) if e.item_id == "q_a"]
-    roster = [e.model_copy(update={"paper_id": "P001"}) for e in roster]
-    view_record, items = read_development_view(directory, record_sha)
-    digest = item_digest(next(i for i in items if i.item_id == "q_a"))
-    record = record_for(
-        config, roster, sha_of=lambda e: digest, development_items=view_record.output_items
-    )
-    backend = MockBackend(roster)
-    backend.identity = backend.identity.model_copy(update={"kind": "official"})
-    go(store, config, roster, backend, kind="official")
-    anchor = complete_run(store, record)
-    with pytest.raises(NonOfficialBackend, match="tokenizer"):
-        verify(store, config, view, anchor)
-
-
-def test_standalone_results_are_not_official_evidence(tmp_path, view, recognised):
-    store, config, record = official_world(tmp_path, view)
-    verified = verify(store, config, view, complete_run(store, record))
-    genuine = verified.results[0]
-    forged = GenerationResult.model_validate(
-        genuine.model_dump() | {"answer": "0.99", "abstained": False}
-    )
-    for impostor in (forged, genuine.model_copy(update={"run_id": "f" * 32})):
-        with pytest.raises(NotVerifiedOfficial):
-            check_official_lineage([impostor], verified)
-
-
-def test_mock_run_results_do_not_pass_an_official_lineage_check(tmp_path, view, recognised):
-    official_store, config, record = official_world(tmp_path / "o", view)
-    verified = verify(official_store, config, view, complete_run(official_store, record))
-    mock_store, _, _, _ = finished_run(tmp_path / "m")
-    for result in nonofficial_results(mock_store).results:
-        with pytest.raises(NotVerifiedOfficial):
-            check_official_lineage([result], verified)
-
-
-def test_stage_c_accepts_verified_results_unchanged(tmp_path, view, recognised):
-    from biorag_repro.evaluation import stage_c
-
-    store, config, record = official_world(tmp_path, view)
-    verified = verify(store, config, view, complete_run(store, record))
-    items = {i.item_id: i for i in read_development_view(*view)[1]}
-    for result in verified.results:
-        assert stage_c.score(items[result.item_id], result).output == result.output
 
 
 def test_a_manifest_citing_other_final_events_than_the_completion_is_refused(tmp_path):

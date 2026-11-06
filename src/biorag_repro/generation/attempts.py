@@ -47,7 +47,14 @@ from biorag_repro.generation.environment import (
     environment_sha256,
     utc_now,
 )
+from biorag_repro.generation.inputs import (
+    CorruptInput,
+    GeneratorInputRecord,
+    publish_input_record,
+    read_input_record,
+)
 from biorag_repro.generation.parsing import parse_output
+from biorag_repro.generation.receipt import ExecutionFacts, ExecutionReceipt, token_ids_sha256
 from biorag_repro.generation.seeds import MAX_SEED
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -100,6 +107,10 @@ class NonOfficialBackend(LifecycleError): ...
 
 
 class NotPlanned(LifecycleError): ...
+
+
+class InvalidReceipt(LifecycleError):
+    """An execution receipt disagrees with the attempt, the input record or the configuration."""
 
 
 class RetryPolicy(Record):
@@ -190,6 +201,7 @@ class AttemptEvent(Record):
     answer: str | list[str] | None = None
     abstained: bool | None = None
     parse_reason: str | None = None
+    execution_receipt_sha256: Sha256 | None = None
     failure_kind: Nonblank | None = None
     failure_detail: Nonblank | None = None
 
@@ -226,6 +238,8 @@ class AttemptEvent(Record):
             raise ValueError(f"{self.state} event needs its attempt")
         if self.state != "running" and self.seed is not None:
             raise ValueError("the seed is recorded when the attempt starts")
+        if self.execution_receipt_sha256 is not None and self.state != "complete":
+            raise ValueError("only a complete attempt cites an execution receipt")
         parsed_fields = (self.answer, self.abstained, self.parse_reason)
         if self.state != "complete":
             if any(v is not None for v in parsed_fields):
@@ -502,6 +516,71 @@ class RunStore:
             event.parse_reason,
         ):
             raise LifecycleError(f"parsed fields of {key} differ from its raw output")
+        if event.execution_receipt_sha256 is not None:
+            self._check_stored_receipt(key, event, current)
+
+    def _receipt_path(self, key: str, attempt_id: str) -> Path:
+        return self.run_dir / "observations" / key / "receipts" / f"{attempt_id}.json"
+
+    def _check_stored_receipt(self, key: str, event: AttemptEvent, current: AttemptEvent) -> None:
+        assert event.attempt_id and event.execution_receipt_sha256
+        path = self._receipt_path(key, event.attempt_id)
+        try:
+            receipt = read_project_json(path, event.execution_receipt_sha256, ExecutionReceipt)
+        except (OSError, ValueError) as error:
+            raise LifecycleError(
+                f"execution receipt of {key} is missing or altered: {error}"
+            ) from error
+        self._check_receipt(key, receipt, current)
+
+    def _check_receipt(self, key: str, receipt: ExecutionReceipt, running: AttemptEvent) -> None:
+        """Everything a receipt asserts must agree with records that exist independently of it."""
+        settings = self.config.settings
+        if (receipt.run_id, receipt.observation_key, receipt.attempt_id) != (
+            self.run_id,
+            key,
+            running.attempt_id,
+        ):
+            raise InvalidReceipt("receipt belongs to another run, observation or attempt")
+        if (receipt.environment_sha256, receipt.rendered_input_sha256) != (
+            running.environment_sha256,
+            running.rendered_input_sha256,
+        ):
+            raise InvalidReceipt("receipt names another environment or rendered input")
+        try:
+            record = read_input_record(self.run_dir, receipt.input_record_sha256)
+        except CorruptInput as error:
+            raise InvalidReceipt(f"input record cannot support the receipt: {error}") from error
+        rendered = record.rendered
+        if record.observation_key != key:
+            raise InvalidReceipt("input record belongs to another observation")
+        if rendered.rendered_sha256 != running.rendered_input_sha256:
+            raise InvalidReceipt(
+                "input record holds other rendered text than the attempt started with"
+            )
+        if rendered.resolved_config_sha256 != self.record.resolved_config_sha256:
+            raise InvalidReceipt("input record was rendered under another configuration")
+        if rendered.prompt_sha256 != settings.prompt_sha256:
+            raise InvalidReceipt("input record used another prompt than the configuration")
+        if record.tokenizer != settings.tokenizer:
+            raise InvalidReceipt("input record used another tokenizer than the configuration")
+        facts = receipt.facts
+        if (facts.input_token_ids_sha256, facts.input_token_count) != (
+            rendered.input_token_ids_sha256,
+            rendered.input_tokens,
+        ):
+            raise InvalidReceipt("token ids passed to the model differ from the input record")
+        g, decoding = facts.generation, settings.decoding
+        if (g.max_new_tokens, g.do_sample, g.temperature, g.top_p, g.top_k) != (
+            settings.budgets.max_new_tokens,
+            decoding.do_sample,
+            decoding.temperature,
+            decoding.top_p,
+            decoding.top_k,
+        ):
+            raise InvalidReceipt("generation settings in the receipt differ from the configuration")
+        if g.seed != running.seed:
+            raise InvalidReceipt("seed in the receipt differs from the planned seed")
 
     def _check_environment_file(self, digest: str) -> EnvironmentRecord:
         path = self.run_dir / "environments" / f"{digest}.json"
@@ -753,6 +832,24 @@ class RunStore:
         )
         return attempt_id
 
+    def receipt_of(self, state: ObservationState) -> ExecutionReceipt | None:
+        """The verified receipt of a completed observation, or None if it has none."""
+        last = state.events[-1]
+        if last.state != "complete" or last.execution_receipt_sha256 is None:
+            return None
+        assert last.attempt_id is not None
+        return read_project_json(
+            self._receipt_path(state.key, last.attempt_id),
+            last.execution_receipt_sha256,
+            ExecutionReceipt,
+        )
+
+    def publish_input(self, record: GeneratorInputRecord) -> ArtifactRef:
+        """Store a generator input with this run. Only an input of this run's configuration."""
+        if record.rendered.resolved_config_sha256 != self.record.resolved_config_sha256:
+            raise RunMismatch("generator input was rendered under another configuration")
+        return publish_input_record(self.run_dir, record)
+
     def _running(self, state: ObservationState, attempt_id: str) -> AttemptEvent:
         if state.status != "running" or state.events[-1].attempt_id != attempt_id:
             raise InvalidTransition("that attempt is not the running attempt of this observation")
@@ -774,8 +871,22 @@ class RunStore:
             sha256=raw_sha,
         )
 
-    def complete(self, key: str, attempt_id: str, raw_output: str) -> None:
-        """Store the raw text, then record the completion with fields parsed from it."""
+    def complete(
+        self,
+        key: str,
+        attempt_id: str,
+        raw_output: str,
+        *,
+        execution: ExecutionFacts | None = None,
+        input_record_sha256: str | None = None,
+    ) -> None:
+        """Store the raw text, then record the completion with fields parsed from it.
+
+        Execution facts, when given, become a receipt that is checked against the stored input
+        record and the configuration before anything is written.
+        """
+        if (execution is None) != (input_record_sha256 is None):
+            raise ValueError("execution facts and the input record hash are given together")
         state = self._load(key)
         if state.status == "complete":
             raise DuplicateCompletion(f"observation {key} is already complete")
@@ -783,6 +894,32 @@ class RunStore:
         assert running.rendered_input_sha256 is not None
         content = raw_output.encode("utf-8")
         ref = self._raw_ref(key, attempt_id, running.rendered_input_sha256, sha256_bytes(content))
+        receipt_sha: str | None = None
+        if execution is not None and input_record_sha256 is not None:
+            assert running.environment_sha256 is not None
+            receipt = ExecutionReceipt(
+                run_id=self.run_id,
+                observation_key=key,
+                attempt_id=attempt_id,
+                environment_sha256=running.environment_sha256,
+                input_record_sha256=input_record_sha256,
+                rendered_input_sha256=running.rendered_input_sha256,
+                raw_output_sha256=ref.sha256,
+                output_token_ids_sha256=token_ids_sha256(execution.output_token_ids),
+                facts=execution,
+            )
+            self._check_receipt(key, receipt, running)
+            receipt_content = serialize_project_json(receipt, ExecutionReceipt)
+            receipt_sha = sha256_bytes(receipt_content)
+            receipt_target = self._receipt_path(key, attempt_id)
+            receipt_target.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                publish_bytes(receipt_target, receipt_content, receipt_sha)
+            except FileExistsError:
+                if receipt_target.read_bytes() != receipt_content:
+                    raise PublicationConflict(
+                        "a different receipt is already stored for this attempt"
+                    ) from None
         target = self.root / ref.logical_ref
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -804,6 +941,7 @@ class RunStore:
             answer=parsed.answer,
             abstained=parsed.abstained,
             parse_reason=parsed.reason,
+            execution_receipt_sha256=receipt_sha,
         )
 
     def fail(self, key: str, attempt_id: str, *, kind: str, detail: str, retryable: bool) -> None:

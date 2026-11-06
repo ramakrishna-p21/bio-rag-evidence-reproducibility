@@ -56,6 +56,17 @@
           ],
           "title": "Context Sha256"
         },
+        "input_record": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ArtifactRef"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "input_tokens": {
           "title": "Input Tokens",
           "type": "integer"

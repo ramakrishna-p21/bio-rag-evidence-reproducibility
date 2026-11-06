@@ -15,6 +15,7 @@ from biorag_repro.benchmark.models import Record
 from biorag_repro.evaluation.stage_c_models import GenerationResult
 from biorag_repro.generation.attempts import (
     Coordinates,
+    InvalidReceipt,
     LifecycleError,
     NonOfficialBackend,
     ObservationState,
@@ -23,7 +24,9 @@ from biorag_repro.generation.attempts import (
     UnsafeResume,
 )
 from biorag_repro.generation.environment import BackendIdentity, EnvironmentRecord
+from biorag_repro.generation.inputs import GeneratorInputRecord
 from biorag_repro.generation.prompt import RenderedInput
+from biorag_repro.generation.receipt import ExecutionFacts
 from biorag_repro.generation.seeds import (
     GenerationSeedRegistry,
     check_seeds_for_configuration,
@@ -46,12 +49,20 @@ class BackendFailure(Exception):
         self.detail = detail
 
 
+@dataclass(frozen=True)
+class GenerationOutput:
+    """Raw text with the backend's own account of the call that produced it."""
+
+    text: str
+    execution: ExecutionFacts
+
+
 class GeneratorBackend(Protocol):
     identity: BackendIdentity
 
     def generate(
         self, rendered: RenderedInput, *, seed: int | None, max_new_tokens: int
-    ) -> str: ...
+    ) -> str | GenerationOutput: ...
 
 
 class RosterEntry(Record):
@@ -62,6 +73,7 @@ class RosterEntry(Record):
     representation_or_condition: str
     repeat_index: int
     rendered: RenderedInput
+    input_record: GeneratorInputRecord | None = None  # required for official runs
 
 
 @dataclass(frozen=True)
@@ -89,6 +101,24 @@ def _check_roster(store: RunStore, roster: list[RosterEntry]) -> None:
             raise RosterMismatch(
                 f"context of {name} does not match matrix arm {settings.matrix_arm}"
             )
+        record = entry.input_record
+        if record is None:
+            if store.record.official:
+                raise RosterMismatch(f"official run: {name} has no recorded generator input")
+            continue
+        coordinates = Coordinates(
+            item_id=entry.item_id,
+            paper_id=entry.paper_id,
+            matrix_arm=settings.matrix_arm,
+            representation_or_condition=entry.representation_or_condition,
+            repeat_index=entry.repeat_index,
+        )
+        if record.rendered.resolved_config_sha256 != store.record.resolved_config_sha256:
+            raise RosterMismatch(f"stored input of {name} was rendered under another configuration")
+        if record.rendered != rendered:
+            raise RosterMismatch(f"stored input of {name} differs from the rendered input")
+        if record.observation_key != store.key_for(coordinates):
+            raise RosterMismatch(f"stored input of {name} belongs to another observation")
 
 
 def run_roster(
@@ -139,6 +169,12 @@ def run_roster(
     if stray:
         raise RosterMismatch(f"{len(stray)} stored observations are not in the roster")
 
+    # The exact input is stored before any attempt starts, so an attempt always has one.
+    input_refs = {
+        entry.input_record.observation_key: store.publish_input(entry.input_record)
+        for entry, _ in planned
+        if entry.input_record is not None
+    }
     keys = [store.plan(coordinates) for _, coordinates in planned]
     if any(store.observation(key).status == "running" for key in keys):
         raise UnsafeResume("an attempt is still marked running; recover interrupted attempts first")
@@ -157,7 +193,7 @@ def run_roster(
             )
             attempts += 1
             try:
-                raw = backend.generate(
+                output = backend.generate(
                     entry.rendered,
                     seed=state.coordinates.seed,
                     max_new_tokens=settings.budgets.max_new_tokens,
@@ -180,6 +216,11 @@ def run_roster(
                     retryable=False,
                 )
                 continue
+            raw, facts = (
+                (output.text, output.execution)
+                if isinstance(output, GenerationOutput)
+                else (output, None)
+            )
             if not isinstance(raw, str):
                 store.fail(
                     key,
@@ -189,7 +230,40 @@ def run_roster(
                     retryable=False,
                 )
                 continue
-            store.complete(key, attempt_id, raw)
+            ref = input_refs.get(key)
+            if facts is None:
+                if store.record.official:
+                    store.fail(
+                        key,
+                        attempt_id,
+                        kind="missing_execution_receipt",
+                        detail="an official run keeps no output that the backend cannot account for",
+                        retryable=False,
+                    )
+                else:
+                    store.complete(key, attempt_id, raw)
+                continue
+            if ref is None:
+                store.fail(
+                    key,
+                    attempt_id,
+                    kind="receipt_without_input_record",
+                    detail="the backend reported execution but no generator input is stored",
+                    retryable=False,
+                )
+                continue
+            try:
+                store.complete(
+                    key, attempt_id, raw, execution=facts, input_record_sha256=ref.sha256
+                )
+            except InvalidReceipt as error:
+                store.fail(
+                    key,
+                    attempt_id,
+                    kind="invalid_execution_receipt",
+                    detail=str(error),
+                    retryable=False,
+                )
 
     states = [store.observation(key) for key in keys]
     return RunSummary(

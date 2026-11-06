@@ -465,3 +465,61 @@ def test_a_render_refusal_stops_the_roster_with_the_item_identity(world, monkeyp
     monkeypatch.setattr(world[3], "render", refuse)
     with pytest.raises(RosterMismatch, match=r"q_a.*exceeds the input limit"):
         build(world)
+
+
+# ---- stored generator inputs ---------------------------------------------------------------
+
+
+def test_every_entry_carries_the_stored_input_its_row_cites(world):
+    from biorag_repro.core.identity import observation_key
+    from biorag_repro.generation.inputs import check_tokenization, input_record_ref
+
+    built = build(world)
+    renderer = world[3]
+    rows = {(r.item_id, r.condition, r.repeat_index): r for r in built.record.rows}
+    assert built.entries and all(e.input_record is not None for e in built.entries)
+    for entry in built.entries:
+        record = entry.input_record
+        row = rows[(entry.item_id, entry.representation_or_condition, entry.repeat_index)]
+        assert record.rendered == entry.rendered
+        assert row.input_record == input_record_ref(record)
+        assert record.context == row.context
+        assert record.observation_key == observation_key(
+            phase="development",
+            benchmark_version=built.record.benchmark_version,
+            item_id=entry.item_id,
+            matrix_arm=built.record.matrix_arm,
+            representation_or_condition=entry.representation_or_condition,
+            repeat_index=entry.repeat_index,
+            resolved_config_sha256=renderer.config.configuration_sha256,
+        )
+        check_tokenization(record, renderer.tokenizer)
+
+
+def test_repeats_get_separate_inputs_because_they_are_separate_observations(world):
+    directory, record_sha, _, _, _ = world
+    scope = make_scope(directory, record_sha, {"q_a"}, repeats=(1, 2, 3))
+    built = build(world, scope=scope, sources=world[2][:1])
+    refs = {r.input_record.sha256 for r in built.record.rows}
+    keys = {e.input_record.observation_key for e in built.entries}
+    assert len(refs) == len(keys) == 3
+    assert len({e.input_record.rendered.rendered_sha256 for e in built.entries}) == 1
+
+
+def test_stored_inputs_are_part_of_the_roster_identity(world):
+    built = build(world)
+    row = built.record.rows[0]
+    other = row.model_copy(update={"input_record": built.record.rows[1].input_record})
+    changed = built.record.model_copy(update={"rows": [other, *built.record.rows[1:]]})
+    assert roster_sha256(changed) != built.sha256
+
+
+def test_closed_book_inputs_have_no_context_reference(world):
+    directory, record_sha, _, _, _ = world
+    renderer = make_renderer(None, arm="closed_book")
+    scope = make_scope(
+        directory, record_sha, {"q_a"}, arm="closed_book", conditions=("CLOSED_BOOK",)
+    )
+    built = build(world, scope=scope, sources=[], renderer=renderer)
+    assert built.entries[0].input_record.context is None
+    assert built.record.rows[0].input_record is not None

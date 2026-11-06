@@ -19,6 +19,11 @@ GitRevision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 OFFICIAL_REPOSITORY = "Qwen/Qwen3-8B"
 EVIDENCE_BUDGET_TOKENS = 2048  # EXPERIMENT_PLAN section 4; independent of the model window
 
+# Approved official checkpoints: (repository, revision) -> manifest hash of the local file
+# inventory (generation.environment.manifest_sha256). Empty on purpose. An entry is added
+# only after the downloaded files have been inventoried and the hash approved by Rama.
+APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {}
+
 
 class ModelPin(Record):
     repository: Nonblank

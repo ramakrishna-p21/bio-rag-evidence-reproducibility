@@ -158,6 +158,11 @@ def _describe(store: RunStore, roster: RosterRecord) -> RunCompletion:
 
     for key, row in rows.items():
         state = states[key]
+        if (
+            row.input_record is not None
+            and not (store.run_dir / row.input_record.logical_ref).is_file()
+        ):
+            raise RosterMismatch(f"the stored input cited for {key} is not in the run")
         c = state.coordinates
         if (c.item_id, c.paper_id, c.representation_or_condition, c.repeat_index) != (
             row.item_id,

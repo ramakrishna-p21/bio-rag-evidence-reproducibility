@@ -31,7 +31,9 @@ from biorag_repro.generation.attempts import AttemptEvent, RunRecord
 from biorag_repro.generation.completion import RunCompletion
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.environment import EnvironmentRecord
+from biorag_repro.generation.inputs import GeneratorInputRecord
 from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
+from biorag_repro.generation.receipt import ExecutionReceipt
 from biorag_repro.generation.roster import RosterRecord
 from biorag_repro.generation.seeds import GenerationSeedRegistry
 from biorag_repro.retrieval.models import (
@@ -65,6 +67,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generation_environment.schema.json": EnvironmentRecord,
     "generation_roster.schema.json": RosterRecord,
     "generation_run_completion.schema.json": RunCompletion,
+    "generation_input_record.schema.json": GeneratorInputRecord,
+    "generation_execution_receipt.schema.json": ExecutionReceipt,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,

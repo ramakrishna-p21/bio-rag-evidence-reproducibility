@@ -1,0 +1,211 @@
+{
+  "$defs": {
+    "ExecutionFacts": {
+      "additionalProperties": false,
+      "description": "Reported by the backend for one call.",
+      "properties": {
+        "generation": {
+          "$ref": "#/$defs/GenerationSettings"
+        },
+        "input_token_count": {
+          "exclusiveMinimum": 0,
+          "title": "Input Token Count",
+          "type": "integer"
+        },
+        "input_token_ids_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Input Token Ids Sha256",
+          "type": "string"
+        },
+        "output_token_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "title": "Output Token Ids",
+          "type": "array"
+        },
+        "stop_reason": {
+          "enum": [
+            "eos",
+            "max_new_tokens"
+          ],
+          "title": "Stop Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input_token_ids_sha256",
+        "input_token_count",
+        "generation",
+        "output_token_ids",
+        "stop_reason"
+      ],
+      "title": "ExecutionFacts",
+      "type": "object"
+    },
+    "GenerationSettings": {
+      "additionalProperties": false,
+      "description": "The decoding settings one call consumed, including the library defaults it ran with.",
+      "properties": {
+        "do_sample": {
+          "title": "Do Sample",
+          "type": "boolean"
+        },
+        "effective": {
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonValue"
+          },
+          "title": "Effective",
+          "type": "object"
+        },
+        "eos_token_ids": {
+          "items": {
+            "type": "integer"
+          },
+          "minItems": 1,
+          "title": "Eos Token Ids",
+          "type": "array"
+        },
+        "max_new_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max New Tokens",
+          "type": "integer"
+        },
+        "pad_token_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pad Token Id"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Seed"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Temperature"
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Top K"
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Top P"
+        }
+      },
+      "required": [
+        "max_new_tokens",
+        "do_sample",
+        "temperature",
+        "top_p",
+        "top_k",
+        "eos_token_ids",
+        "pad_token_id",
+        "seed",
+        "effective"
+      ],
+      "title": "GenerationSettings",
+      "type": "object"
+    },
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Attempt Id",
+      "type": "string"
+    },
+    "environment_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Environment Sha256",
+      "type": "string"
+    },
+    "facts": {
+      "$ref": "#/$defs/ExecutionFacts"
+    },
+    "input_record_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Record Sha256",
+      "type": "string"
+    },
+    "observation_key": {
+      "pattern": "^obs_[0-9a-f]{64}$",
+      "title": "Observation Key",
+      "type": "string"
+    },
+    "output_token_ids_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Output Token Ids Sha256",
+      "type": "string"
+    },
+    "raw_output_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Raw Output Sha256",
+      "type": "string"
+    },
+    "rendered_input_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Rendered Input Sha256",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "observation_key",
+    "attempt_id",
+    "environment_sha256",
+    "input_record_sha256",
+    "rendered_input_sha256",
+    "raw_output_sha256",
+    "output_token_ids_sha256",
+    "facts"
+  ],
+  "title": "ExecutionReceipt",
+  "type": "object"
+}

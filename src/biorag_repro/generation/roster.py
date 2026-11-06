@@ -17,11 +17,13 @@ from pydantic import StringConstraints, model_validator
 from biorag_repro.benchmark.development_view import read_development_view
 from biorag_repro.benchmark.models import BenchmarkItem, Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.identity import observation_key
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.evaluation.analysis_models import PlannedRoster
 from biorag_repro.evaluation.analysis_table import ARM_RETRIEVAL
 from biorag_repro.evaluation.stage_a import item_digest
+from biorag_repro.generation.inputs import build_input_record, input_record_ref
 from biorag_repro.generation.prompt import InputRenderer, RenderedInput
 from biorag_repro.generation.runner import RosterEntry, RosterMismatch
 from biorag_repro.retrieval import context as phase5
@@ -53,6 +55,7 @@ class RosterRow(Record):
     input_tokens: int
     context: ArtifactRef | None
     context_sha256: Sha256 | None
+    input_record: ArtifactRef | None = None  # run-relative reference to the stored exact input
 
 
 class RosterRecord(Record):
@@ -186,6 +189,21 @@ def build_roster(
             raise RosterMismatch(f"{item_id}/{condition}: rendered context differs from assembled")
         ref = None if assembled is None else sources_by_key[(item_id, condition)].context
         for repeat in arm.repeats:
+            obs_key = observation_key(
+                phase=scope.phase,
+                benchmark_version=view.benchmark_version,
+                item_id=item_id,
+                matrix_arm=settings.matrix_arm,
+                representation_or_condition=condition,
+                repeat_index=repeat,
+                resolved_config_sha256=renderer.config.configuration_sha256,
+            )
+            try:
+                stored = build_input_record(
+                    renderer, rendered, observation_key=obs_key, context=ref
+                )
+            except ValueError as error:
+                raise RosterMismatch(f"{item_id}/{condition}: {error}") from error
             entries.append(
                 RosterEntry(
                     item_id=item_id,
@@ -193,6 +211,7 @@ def build_roster(
                     representation_or_condition=condition,
                     repeat_index=repeat,
                     rendered=rendered,
+                    input_record=stored,
                 )
             )
             rows.append(
@@ -206,6 +225,7 @@ def build_roster(
                     input_tokens=rendered.input_tokens,
                     context=ref,
                     context_sha256=rendered.context_sha256,
+                    input_record=input_record_ref(stored),
                 )
             )
     rows.sort(key=lambda r: (r.item_id, r.condition, r.repeat_index))

@@ -15,15 +15,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from importlib import metadata
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from biorag_repro.benchmark.models import Record
-from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.storage import serialize_project_json
 
 BackendKind = Literal["official", "smoke", "mock"]
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 def utc_now() -> str:
@@ -88,6 +89,47 @@ class GitState(Record):
         return self
 
 
+class ModelFile(Record):
+    path: str = Field(min_length=1)  # relative to the snapshot, POSIX separators
+    size: int = Field(ge=0)
+    sha256: Sha256
+
+
+def manifest_sha256(files: list[ModelFile]) -> str:
+    """Identity of a file inventory. Independent of where the snapshot is stored."""
+    return sha256_bytes(canonical_json_bytes([f.model_dump(mode="json") for f in files]))
+
+
+class ModelSnapshot(Record):
+    """Hashes of every file in the local model directory that was loaded."""
+
+    directory: str = Field(min_length=1)
+    files: list[ModelFile]
+    manifest_sha256: Sha256
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        paths = [f.path for f in self.files]
+        if paths != sorted(set(paths)):
+            raise ValueError("snapshot files must be unique and sorted by path")
+        if "config.json" not in paths:
+            raise ValueError("snapshot has no config.json")
+        if manifest_sha256(self.files) != self.manifest_sha256:
+            raise ValueError("snapshot manifest hash does not match its files")
+        return self
+
+
+class ExecutionRecord(Record):
+    """What a backend actually loaded and where it put it."""
+
+    snapshot: ModelSnapshot
+    tokenizer_file_sha256: dict[str, Sha256]
+    device: str = Field(min_length=1)
+    device_name: str | None
+    dtype: str = Field(min_length=1)
+    max_position_embeddings: int = Field(gt=0)
+
+
 class EnvironmentRecord(Record):
     schema_version: Literal["1"] = "1"
     captured_utc: str
@@ -109,6 +151,7 @@ class EnvironmentRecord(Record):
     gpus: list[GpuDevice]
     cuda_runtime: str | None
     git: GitState
+    execution: ExecutionRecord | None = None  # absent for backends that load no local model
 
     _utc = field_validator("captured_utc")(check_utc)
 
@@ -133,6 +176,7 @@ def capture_environment(
     tokenizer: tuple[str, str],
     packages: Sequence[str],
     probes: EnvironmentProbes,
+    execution: ExecutionRecord | None = None,
     captured_utc: str | None = None,
 ) -> EnvironmentRecord:
     """Model and tokenizer references are supplied by the caller from the configuration."""
@@ -159,6 +203,7 @@ def capture_environment(
         gpus=gpus.devices,
         cuda_runtime=probes.cuda_runtime(),
         git=probes.git(),
+        execution=execution,
     )
 
 

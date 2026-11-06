@@ -11,6 +11,7 @@ import json
 
 import pytest
 from test_generation_attempts import Clock, environment
+from test_generation_prompt import ROOT
 from test_generation_roster import (
     build,
     make_renderer,
@@ -303,8 +304,9 @@ def test_a_mock_run_is_refused_at_the_official_boundary(world, tmp_path, monkeyp
             config=store.config,
             view_directory=world[0],
             view_record_sha256=world[1],
+            tokenizer_root=ROOT,
         )
-    never = VerifiedOfficialRun("x", "0" * 64, [], frozenset())
+    never = VerifiedOfficialRun("x", "0" * 64, [], frozenset(), None)  # type: ignore[arg-type]
     with pytest.raises(NotVerifiedOfficial):
         check_official_lineage(nonofficial_results(store).results, never)
 
@@ -331,3 +333,193 @@ def test_closed_book_path_has_no_context_anywhere(world, tmp_path):
     table = table_for(world, store, scope, renderer.config)
     assert {r.context_provenance for r in table.rows} == {"not_applicable"}
     assert {r.condition for r in table.rows} == {"CLOSED_BOOK"}
+
+
+# ---- stored inputs and execution receipts over the authoritative roster ------------------------
+
+
+class ScriptedReceipts(Scripted):
+    """Scripted answers with the execution account a real backend would give."""
+
+    def __init__(self, entries, config, script=None):
+        super().__init__(entries, script)
+        self.config = config
+
+    def generate(self, rendered, *, seed, max_new_tokens):
+        from types import SimpleNamespace
+
+        from test_generation_receipts import facts_for
+
+        from biorag_repro.generation.runner import GenerationOutput
+
+        text = super().generate(rendered, seed=seed, max_new_tokens=max_new_tokens)
+        return GenerationOutput(text, facts_for(SimpleNamespace(rendered=rendered), self.config))
+
+
+def receipt_setup(world, tmp_path, script=None, repeats=(1,)):
+    store, built, scope, _ = setup(world, tmp_path, repeats=repeats)
+    return store, built, scope, ScriptedReceipts(built.entries, store.config, script)
+
+
+def row_of(built, item_id, repeat=1):
+    return next(r for r in built.record.rows if (r.item_id, r.repeat_index) == (item_id, repeat))
+
+
+def test_each_completed_observation_has_a_receipt_for_its_rostered_input(world, tmp_path):
+    from biorag_repro.core.hashing import sha256_bytes
+    from biorag_repro.generation.official import simulated_generator_input
+
+    store, built, scope, backend = receipt_setup(world, tmp_path)
+    execute(store, built, backend)
+    anchor = complete_run(store, built.record)
+    done = verify_completed_run(
+        tmp_path, store.run_id, anchor, config=store.config, backend_kind="mock"
+    )
+    results, _, _ = score_all(world, store)
+    for state in done.states:
+        receipt = store.receipt_of(state)
+        row = row_of(built, state.coordinates.item_id)
+        assert receipt is not None and receipt.input_record_sha256 == row.input_record.sha256
+    for result in results:
+        link = simulated_generator_input(done, result)
+        row = row_of(built, result.item_id)
+        source = next(x for x in world[2] if x.selection.query.query_id == result.item_id)
+        assert link.provenance == "simulated" and link.context == source.context
+        entry = next(e for e in built.entries if e.item_id == result.item_id)
+        assert link.exact_context_sha256 == sha256_bytes(entry.rendered.context.encode())
+        assert link.input.sha256 == row.input_record.sha256
+    # A receipt alone does not upgrade a row: only an attached, verified link does.
+    table = table_for(world, store, scope, store.config)
+    assert {r.context_provenance for r in table.rows} == {"assembled_only"}
+
+
+def test_killed_run_keeps_finished_receipts_and_gives_the_retried_attempt_its_own(world, tmp_path):
+    store, built, _scope, first = receipt_setup(world, tmp_path, script={"q_b": [Killed()]})
+    with pytest.raises(Killed):
+        execute(store, built, first)
+    q_a_state = next(s for s in store.verify() if s.coordinates.item_id == "q_a")
+    receipt_file = store.run_dir / "observations" / q_a_state.key / "receipts"
+    before = {p.name: p.read_bytes() for p in receipt_file.iterdir()}
+    resumed = reopen(store, store.config)
+    resumed.recover_interrupted(previous_worker_stopped=True)
+    second = ScriptedReceipts(built.entries, store.config)
+    execute(resumed, built, second)
+    assert {p.name: p.read_bytes() for p in receipt_file.iterdir()} == before
+    q_b_state = next(s for s in resumed.verify() if s.coordinates.item_id == "q_b")
+    receipts = list((store.run_dir / "observations" / q_b_state.key / "receipts").iterdir())
+    assert [p.stem for p in receipts] == [q_b_state.events[-1].attempt_id]  # not the killed attempt
+    complete_run(resumed, built.record)
+
+
+def test_a_retry_after_a_backend_failure_receives_a_receipt_only_when_it_completes(world, tmp_path):
+    store, built, _, backend = receipt_setup(
+        world, tmp_path, script={"q_a": [BackendFailure("transport_error", "reset")]}
+    )
+    execute(store, built, backend)
+    state = next(s for s in store.verify() if s.coordinates.item_id == "q_a")
+    assert state.attempts == 2
+    receipts = list((store.run_dir / "observations" / state.key / "receipts").iterdir())
+    assert [p.stem for p in receipts] == [state.events[-1].attempt_id]
+
+
+def test_malformed_and_abstained_outputs_are_still_accounted_for_and_scored(world, tmp_path):
+    store, built, scope, backend = receipt_setup(
+        world, tmp_path, script={"q_a": ["not json at all"], "q_b": [answer(None, abstained=True)]}
+    )
+    execute(store, built, backend)
+    complete_run(store, built.record)
+    results, scores, _ = score_all(world, store)
+    by_item = {r.item_id: r for r in results}
+    assert by_item["q_a"].parse_status == "unparseable" and by_item["q_b"].abstained is True
+    assert all(store.receipt_of(s) is not None for s in store.verify())
+    assert scores[by_item["q_a"].observation_key].status != "correct"
+    assert len(table_for(world, store, scope, store.config).rows) == 2
+
+
+@pytest.mark.parametrize("damage", ["alter", "delete"])
+def test_a_damaged_stored_input_stops_read_back_and_resume(world, tmp_path, damage):
+    store, built, _, backend = receipt_setup(world, tmp_path)
+    execute(store, built, backend)
+    anchor = complete_run(store, built.record)
+    path = store.run_dir / built.record.rows[0].input_record.logical_ref
+    path.chmod(0o644)
+    if damage == "delete":
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes().replace(b"Question", b"Questiox", 1))
+    with pytest.raises(CorruptRecord):
+        verify_completed_run(
+            tmp_path, store.run_id, anchor, config=store.config, backend_kind="mock"
+        )
+    with pytest.raises(CorruptRecord):
+        reopen_unchecked(store)
+
+
+@pytest.mark.model_smoke
+def test_hugging_face_smoke_run_over_the_authoritative_roster(world, tmp_path):
+    """Tiny random weights on CPU. The outputs are noise and are never scientific."""
+    from test_generation_config import QWEN_REVISION
+    from test_generation_environment import cpu_probes
+    from tiny_model import build_tiny, load_once
+
+    from biorag_repro.generation.hf_backend import HuggingFaceBackend
+    from biorag_repro.generation.official import simulated_generator_input
+
+    renderer = world[3]
+    model_dir = tmp_path / "model" / QWEN_REVISION
+    model_dir.mkdir(parents=True)
+    build_tiny(model_dir)
+    scope = make_scope(world[0], world[1], {"q_a", "q_b"})
+    built = build(world, scope=scope)
+    store = RunStore.create(
+        tmp_path / "runs",
+        config=renderer.config,
+        phase="development",
+        benchmark_version="benchmark_v1",
+        backend_kind="smoke",
+        now=Clock(),
+    )
+    backend = HuggingFaceBackend(
+        renderer.config,
+        model_dir=model_dir,
+        tokenizer_root=ROOT,
+        device="cpu",
+        load_model=load_once,
+    )
+    assert backend.identity.kind == "smoke"
+    summary = run_roster(
+        store, built.entries, backend, capture_environment=lambda: backend.environment(cpu_probes())
+    )
+    assert summary.complete == 2
+    anchor = complete_run(store, built.record)
+    done = verify_completed_run(
+        tmp_path / "runs", store.run_id, anchor, config=renderer.config, backend_kind="smoke"
+    )
+    handoff = nonofficial_results(store)
+    assert handoff.backend_kind == "smoke"
+    assert {simulated_generator_input(done, r).provenance for r in handoff.results} == {"simulated"}
+    for state in done.states:
+        receipt = store.receipt_of(state)
+        assert receipt.facts.stop_reason in ("eos", "max_new_tokens")
+        assert (
+            receipt.facts.generation.max_new_tokens
+            == renderer.config.settings.budgets.max_new_tokens
+        )
+    table = table_for(world, store, scope, renderer.config)
+    assert {r.execution_status for r in table.rows} == {"completed"}
+    # Random weights do not write the answer schema, so nothing here can be scored correct.
+    assert "correct" not in {r.stage_c_status for r in table.rows}
+    monkey_manifest = backend.environment(cpu_probes()).execution.snapshot.manifest_sha256
+    from biorag_repro.generation import config as generator_config
+
+    assert (QWEN_REVISION and generator_config.APPROVED_CHECKPOINTS == {}) and monkey_manifest
+    with pytest.raises(NonOfficialBackend):
+        verify_official_run(
+            tmp_path / "runs",
+            store.run_id,
+            anchor,
+            config=renderer.config,
+            view_directory=world[0],
+            view_record_sha256=world[1],
+            tokenizer_root=ROOT,
+        )
