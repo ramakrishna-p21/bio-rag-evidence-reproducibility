@@ -10,6 +10,8 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from synthetic_environment import approved_locks
+from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import environment
 from test_generation_config import to_toml
 from test_generation_hf_backend import REV
@@ -34,6 +36,7 @@ from biorag_repro.generation.driver import (
     verify,
 )
 from biorag_repro.generation.environment import BackendIdentity
+from biorag_repro.generation.environment_gate import EnvironmentNotApproved
 from biorag_repro.generation.hf_backend import HF_BACKEND_NAME
 from biorag_repro.generation.model_snapshot import inventory_snapshot
 from biorag_repro.generation.official import VerifiedOfficialRun
@@ -118,6 +121,7 @@ def test_dry_run_reports_why_official_execution_is_not_possible(world, tmp_path)
     report = dry_run(make_plan(tmp_path, world), world[2], mode="official")
     assert any("approved" in blocker for blocker in report.official_blockers)
     assert any("purpose" in blocker for blocker in report.official_blockers)
+    assert any("environment lock" in blocker for blocker in report.official_blockers)
 
 
 def test_missing_scientific_setting_fails_clearly(world, tmp_path):
@@ -336,8 +340,8 @@ def test_official_mode_refuses_a_synthetic_configuration_even_when_approved(
         execute(make_plan(tmp_path, world), world[2], mode="official", start=never_started)
 
 
-def test_official_flow_end_to_end_with_a_scripted_backend(world, tmp_path, tiny, monkeypatch):
-    """With every approval simulated, the driver reaches a verified official handoff."""
+def official_setup(world, tmp_path, tiny, monkeypatch):
+    monkeypatch.setattr(generator_config, "APPROVED_ENVIRONMENT_LOCKS", approved_locks())
     monkeypatch.setattr(official, "OFFICIAL_BACKENDS", frozenset({HF_BACKEND_NAME, SCRIPT}))
     monkeypatch.setattr(
         generator_config,
@@ -348,13 +352,45 @@ def test_official_flow_end_to_end_with_a_scripted_backend(world, tmp_path, tiny,
     settings["purpose"] = "development_candidate"
     settings["model"]["revision"] = REV
     settings["budgets"]["max_new_tokens"] = 64
-    plan = make_plan(tmp_path, world, settings=settings)
+    return make_plan(tmp_path, world, settings=settings)
+
+
+def test_official_mode_needs_environment_evidence_before_anything_starts(
+    world, tmp_path, tiny, monkeypatch
+):
+    plan = official_setup(world, tmp_path, tiny, monkeypatch)
+    with pytest.raises(OfficialDisabled, match="environment"):
+        execute(plan, world[2], mode="official", start=never_started)
+    assert not plan.run_root.exists() and not plan.anchor_dir.exists()
+
+
+def test_unapproved_environment_evidence_is_refused_before_anything_starts(
+    world, tmp_path, tiny, monkeypatch
+):
+    plan = official_setup(world, tmp_path, tiny, monkeypatch)
+    monkeypatch.setattr(generator_config, "APPROVED_ENVIRONMENT_LOCKS", frozenset({"1" * 64}))
+    with pytest.raises(EnvironmentNotApproved):
+        execute(
+            plan,
+            world[2],
+            mode="official",
+            start=never_started,
+            environment_evidence=synthetic_evidence(),
+        )
+    assert not plan.run_root.exists() and not plan.anchor_dir.exists()
+
+
+def test_official_flow_end_to_end_with_a_scripted_backend(world, tmp_path, tiny, monkeypatch):
+    """With every approval simulated, the driver reaches a verified official handoff."""
+    plan = official_setup(world, tmp_path, tiny, monkeypatch)
 
     def start(prepared):
         backend = Scripted(prepared.renderer, tiny, "official")
         return backend, backend.environment
 
-    outcome = execute(plan, world[2], mode="official", start=start)
+    outcome = execute(
+        plan, world[2], mode="official", start=start, environment_evidence=synthetic_evidence()
+    )
     assert outcome.mode == "official" and outcome.summary.complete == 2
     verified = verify(plan, outcome.run_id, mode="official")
     assert isinstance(verified, VerifiedOfficialRun) and len(verified.results) == 2

@@ -24,6 +24,12 @@ EVIDENCE_BUDGET_TOKENS = 2048  # EXPERIMENT_PLAN section 4; independent of the m
 # only after the downloaded files have been inventoried and the hash approved by Rama.
 APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {}
 
+# SHA-256 of each environment lock file Rama has approved for official runs. A lock cannot
+# approve itself: its own status field and any hash a caller supplies prove nothing. Empty on
+# purpose; an entry is added by hand after the lock has been resolved and reviewed on the
+# execution machine.
+APPROVED_ENVIRONMENT_LOCKS: frozenset[str] = frozenset()
+
 
 class ModelPin(Record):
     repository: Nonblank

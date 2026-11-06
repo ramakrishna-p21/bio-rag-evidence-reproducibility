@@ -40,6 +40,7 @@ from biorag_repro.generation.environment_lock import (
 )
 from biorag_repro.generation.inputs import GeneratorInputRecord
 from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
+from biorag_repro.generation.qualification import QualificationReport
 from biorag_repro.generation.receipt import ExecutionReceipt
 from biorag_repro.generation.roster import RosterRecord
 from biorag_repro.generation.seeds import GenerationSeedRegistry
@@ -78,6 +79,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "environment_inventory.schema.json": EnvironmentInventory,
     "environment_spec.schema.json": EnvironmentSpec,
     "environment_verification.schema.json": EnvironmentVerification,
+    "generation_qualification_report.schema.json": QualificationReport,
     "generation_roster.schema.json": RosterRecord,
     "generation_run_completion.schema.json": RunCompletion,
     "generation_input_record.schema.json": GeneratorInputRecord,

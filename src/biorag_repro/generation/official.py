@@ -41,6 +41,7 @@ from biorag_repro.generation.attempts import (
 from biorag_repro.generation.completion import CompletedRun, verify_completed_run
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.environment import EnvironmentRecord
+from biorag_repro.generation.environment_gate import EnvironmentEvidence, verify_run_environment
 from biorag_repro.generation.hf_backend import HF_BACKEND_NAME
 from biorag_repro.generation.inputs import (
     CorruptInput,
@@ -73,6 +74,7 @@ class VerifiedOfficialRun:
     results: list[GenerationResult]
     digests: frozenset[str]
     completed: CompletedRun
+    environment: EnvironmentEvidence
 
 
 def _check_environment(
@@ -206,11 +208,15 @@ def verify_official_run(
         raise NonOfficialBackend(
             f"checkpoint {settings.model.repository}@{settings.model.revision} is not approved"
         )
-    for digest in completed.completion.environments:
-        environment = read_project_json(
+    environments = [
+        read_project_json(
             root / "runs" / run_id / "environments" / f"{digest}.json", digest, EnvironmentRecord
         )
+        for digest in completed.completion.environments
+    ]
+    for environment in environments:
         _check_environment(environment, settings, approved)
+    environment_evidence = verify_run_environment(completed, environments)
 
     view, items = read_development_view(view_directory, view_record_sha256)
     roster = completed.roster
@@ -238,6 +244,7 @@ def verify_official_run(
         results,
         frozenset(generation_digest(r) for r in results),
         completed,
+        environment_evidence,
     )
 
 

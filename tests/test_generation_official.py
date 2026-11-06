@@ -10,6 +10,8 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from synthetic_environment import approved_locks, run_probes
+from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import Clock
 from test_generation_environment import cpu_probes
 from test_generation_hf_backend import REV, fake_loader, make_renderer
@@ -39,6 +41,7 @@ from biorag_repro.generation.environment import (
     GpuReading,
     capture_environment,
 )
+from biorag_repro.generation.environment_gate import publish_environment_evidence
 from biorag_repro.generation.hf_backend import HF_BACKEND_NAME, HuggingFaceBackend
 from biorag_repro.generation.inputs import build_input_record, input_record_ref
 from biorag_repro.generation.model_snapshot import inventory_snapshot
@@ -92,6 +95,7 @@ def view(tmp_path):
 @pytest.fixture
 def recognised(monkeypatch, tiny):
     manifest = inventory_snapshot(tiny, REV).manifest_sha256
+    monkeypatch.setattr(generator_config, "APPROVED_ENVIRONMENT_LOCKS", approved_locks())
     monkeypatch.setattr(official, "OFFICIAL_BACKENDS", frozenset({HF_BACKEND_NAME, SCRIPT}))
     monkeypatch.setattr(
         generator_config, "APPROVED_CHECKPOINTS", {("Qwen/Qwen3-8B", REV): manifest}
@@ -104,7 +108,7 @@ def gpu_probes(status="ok"):
         if status == "ok"
         else []
     )
-    return cpu_probes(gpus=lambda: GpuReading(status=status, devices=devices))
+    return run_probes(cpu_probes(gpus=lambda: GpuReading(status=status, devices=devices)))
 
 
 class Scripted:
@@ -156,8 +160,14 @@ class Scripted:
         return GenerationOutput(GOOD, facts)
 
 
+def named_device(record):
+    """The CPU stand-in has no device name; give it the synthetic GPU the lock names."""
+    execution = record.execution.model_copy(update={"device_name": "Synthetic GPU"})
+    return record.model_copy(update={"execution": execution})
+
+
 def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, entry_edit=None,
-                no_execution=False, run=True, **backend_options):  # fmt: skip
+                no_execution=False, run=True, evidence=True, **backend_options):  # fmt: skip
     directory, record_sha = view
     view_record, items = read_development_view(directory, record_sha)
     by_id = {i.item_id: i for i in items}
@@ -172,6 +182,8 @@ def build_world(tmp_path, view, tiny_dir, kind="official", *, row_edit=None, ent
         backend_kind=kind,
         now=Clock(),
     )
+    if evidence and kind == "official":
+        publish_environment_evidence(store.run_dir, synthetic_evidence())
     entries, rows = [], []
     for (item_id, condition), text in sorted(CONTEXTS.items()):
         item = by_id[item_id]
@@ -290,6 +302,7 @@ def test_the_real_backend_over_a_tiny_model_can_be_official_only_when_approved(
     monkeypatch.setattr(
         generator_config, "APPROVED_CHECKPOINTS", {("Qwen/Qwen3-8B", REV): manifest}
     )
+    monkeypatch.setattr(generator_config, "APPROVED_ENVIRONMENT_LOCKS", approved_locks())
     monkeypatch.setattr(hf_backend, "is_official_device", lambda device: True)
     base = build_world(tmp_path / "w", view, tiny, run=False)
     backend = HuggingFaceBackend(
@@ -306,7 +319,7 @@ def test_the_real_backend_over_a_tiny_model_can_be_official_only_when_approved(
         base.store,
         base.entries,
         backend,
-        capture_environment=lambda: backend.environment(gpu_probes()),
+        capture_environment=lambda: named_device(backend.environment(gpu_probes())),
     )
     verified = verify(base, anchored(base))
     assert len(verified.results) == 4

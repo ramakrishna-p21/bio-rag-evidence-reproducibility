@@ -47,6 +47,11 @@ from biorag_repro.generation.environment import (
     capture_environment,
     system_probes,
 )
+from biorag_repro.generation.environment_gate import (
+    EnvironmentEvidence,
+    check_approved,
+    publish_environment_evidence,
+)
 from biorag_repro.generation.official import VerifiedOfficialRun, verify_official_run
 from biorag_repro.generation.prompt import InputRenderer, PromptArtifact, RenderedInput
 from biorag_repro.generation.roster import BuiltRoster, ContextSource, build_roster
@@ -240,6 +245,8 @@ def official_blockers(settings: GeneratorConfiguration) -> list[str]:
             f"checkpoint {settings.model.repository}@{settings.model.revision} has no "
             "approved weight manifest"
         )
+    if not generator_config.APPROVED_ENVIRONMENT_LOCKS:
+        blockers.append("no environment lock has been approved")
     return blockers
 
 
@@ -341,11 +348,14 @@ def execute(
     start: Callable[[Prepared], Engine],
     resume: str | None = None,
     recover_interrupted: bool = False,
+    environment_evidence: EnvironmentEvidence | None = None,
 ) -> ExecutionOutcome:
     """Run the authorized roster to completion, anchor it, and read the anchor back.
 
     `start` creates the backend and its environment capture; it is called only after
     every check that can refuse the run, so refused runs never load a model.
+    An official run also needs `environment_evidence`: an approved lock and its verification
+    against a live inventory, checked here and stored with the run before any attempt.
     `recover_interrupted` asserts that no worker other than this driver is still writing
     the run: the lock excludes other drivers, not other tools.
     """
@@ -355,6 +365,10 @@ def execute(
     settings = prepared.config.settings
     if mode == "official" and (blockers := official_blockers(settings)):
         raise OfficialDisabled("official execution is disabled: " + "; ".join(blockers))
+    if mode == "official":
+        if environment_evidence is None:
+            raise OfficialDisabled("official execution is disabled: no environment evidence")
+        check_approved(environment_evidence)
 
     plan.run_root.mkdir(parents=True, exist_ok=True)
     with single_writer(plan.run_root):
@@ -380,6 +394,8 @@ def execute(
                 config=prepared.config,
                 backend_kind=mode,
             )
+        if mode == "official" and environment_evidence is not None:
+            publish_environment_evidence(store.run_dir, environment_evidence)
         if recover_interrupted:
             store.recover_interrupted(previous_worker_stopped=True)
         summary = run_roster(

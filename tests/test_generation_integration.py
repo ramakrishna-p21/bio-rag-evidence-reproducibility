@@ -306,7 +306,7 @@ def test_a_mock_run_is_refused_at_the_official_boundary(world, tmp_path, monkeyp
             view_record_sha256=world[1],
             tokenizer_root=ROOT,
         )
-    never = VerifiedOfficialRun("x", "0" * 64, [], frozenset(), None)  # type: ignore[arg-type]
+    never = VerifiedOfficialRun("x", "0" * 64, [], frozenset(), None, None)  # type: ignore[arg-type]
     with pytest.raises(NotVerifiedOfficial):
         check_official_lineage(nonofficial_results(store).results, never)
 
