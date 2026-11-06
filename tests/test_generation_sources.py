@@ -175,3 +175,13 @@ def test_one_item_may_have_a_source_per_representation(world, tmp_path):
     spec = json.loads(spec_from_sources(describable(world[2]), retriever="bm25").model_dump_json())
     assert {e["representation"] for e in spec["entries"]} == {"JATS"}
     assert len({(e["item_id"], e["representation"]) for e in spec["entries"]}) == 2
+
+
+def test_an_entry_without_chunk_sets_is_refused(world, tmp_path):
+    spec = json.loads(spec_from_sources(describable(world[2]), retriever="bm25").model_dump_json())
+    spec["entries"][0]["chunk_sets"] = []
+    path = tmp_path / "s.json"
+    raw = json.dumps(spec).encode()
+    path.write_bytes(raw)
+    with pytest.raises(SourceError, match="chunk set"):
+        load_context_sources(path, sha256_bytes(raw), world[0], world[1])

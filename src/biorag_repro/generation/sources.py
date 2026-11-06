@@ -242,6 +242,8 @@ def load_context_sources(
         seen.add((entry.item_id, entry.representation))
         if entry.item_id not in questions:
             raise SourceError(f"{entry.item_id} is not in the development view")
+        if not entry.chunk_sets:
+            raise SourceError(f"{entry.item_id}: the entry names no chunk set")
         first_set = entry.chunk_sets[0].chunk_set
         try:
             stored = read_project_json(

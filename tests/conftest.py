@@ -1,8 +1,13 @@
-"""Opt-in engineering smoke tests that run a real (tiny) model.
+"""Test tiers.
 
-Default runs never load model weights. Set BIORAG_MODEL_SMOKE=1 to run tests marked
-`model_smoke`; BIORAG_SMOKE_TIMEOUT_S (default 120) bounds each one. The model is built
-once per session. Smoke results are engineering checks, never scientific evidence.
+fast        every test without a marker: synthetic fixtures, no weights, no local data.
+real_data   reads the authoritative local development artifacts; opt in with
+            BIORAG_REAL_DATA=<integration manifest> (see tests/test_real_data.py).
+model_smoke runs a real (tiny) model; opt in with BIORAG_MODEL_SMOKE=1. BIORAG_SMOKE_TIMEOUT_S
+            (default 120) bounds each one, and the model is built once per session.
+
+Unselected tiers are skipped with a reason, so `pytest -rs` always lists them and a tier can
+never disappear silently. Smoke results are engineering checks, never scientific evidence.
 """
 
 import os
@@ -15,12 +20,15 @@ TIMEOUT_S = int(os.environ.get("BIORAG_SMOKE_TIMEOUT_S", "120"))
 
 
 def pytest_collection_modifyitems(config, items):
-    if ENABLED:
-        return
-    skip = pytest.mark.skip(reason="model smoke test; set BIORAG_MODEL_SMOKE=1 to run")
+    skips = {}
+    if not ENABLED:
+        skips["model_smoke"] = "model smoke test; set BIORAG_MODEL_SMOKE=1 to run"
+    if not os.environ.get("BIORAG_REAL_DATA"):
+        skips["real_data"] = "real development artifacts; set BIORAG_REAL_DATA=<manifest> to run"
     for item in items:
-        if "model_smoke" in item.keywords:
-            item.add_marker(skip)
+        for marker, reason in skips.items():
+            if marker in item.keywords:
+                item.add_marker(pytest.mark.skip(reason=reason))
 
 
 @pytest.fixture(autouse=True)

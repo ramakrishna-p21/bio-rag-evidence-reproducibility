@@ -29,7 +29,10 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["model_smoke: runs a real tiny model; opt in with BIORAG_MODEL_SMOKE=1"]
+markers = [
+    "model_smoke: runs a real tiny model; opt in with BIORAG_MODEL_SMOKE=1",
+    "real_data: reads the local development artifacts; opt in with BIORAG_REAL_DATA=<manifest>",
+]
 
 [tool.ruff]
 target-version = "py311"
