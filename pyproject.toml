@@ -17,6 +17,7 @@ biorag-analysis = "biorag_repro.evaluation.analysis_cli:main"
 [project.optional-dependencies]
 context = ["transformers==4.57.6", "tokenizers==0.22.2", "huggingface-hub==0.36.2"]
 dense = ["transformers==4.57.6", "torch==2.15.0", "tokenizers==0.22.2", "numpy==2.4.6", "safetensors==0.8.0", "huggingface-hub==0.36.2"]
+generation = ["transformers==4.57.6", "tokenizers==0.22.2", "huggingface-hub==0.36.2", "jinja2==3.1.6"]
 bm25 = ["rank-bm25==0.2.2"]
 chunking = ["tokenizers==0.22.2"]
 benchmark = ["PyMuPDF==1.26.5"]

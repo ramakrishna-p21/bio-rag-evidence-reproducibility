@@ -1,0 +1,270 @@
+{
+  "$defs": {
+    "Decoding": {
+      "additionalProperties": false,
+      "properties": {
+        "do_sample": {
+          "title": "Do Sample",
+          "type": "boolean"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Temperature"
+        },
+        "top_k": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top K"
+        },
+        "top_p": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Top P"
+        }
+      },
+      "required": [
+        "do_sample"
+      ],
+      "title": "Decoding",
+      "type": "object"
+    },
+    "ModelPin": {
+      "additionalProperties": false,
+      "properties": {
+        "dtype": {
+          "const": "bfloat16",
+          "title": "Dtype",
+          "type": "string"
+        },
+        "repository": {
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "revision",
+        "dtype"
+      ],
+      "title": "ModelPin",
+      "type": "object"
+    },
+    "TokenBudgets": {
+      "additionalProperties": false,
+      "description": "The evidence cap is a context-assembly rule; the other limits bound the whole call.",
+      "properties": {
+        "context_window_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Context Window Tokens",
+          "type": "integer"
+        },
+        "evidence_tokens": {
+          "title": "Evidence Tokens",
+          "type": "integer"
+        },
+        "max_input_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max Input Tokens",
+          "type": "integer"
+        },
+        "max_new_tokens": {
+          "exclusiveMinimum": 0,
+          "title": "Max New Tokens",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "evidence_tokens",
+        "max_input_tokens",
+        "max_new_tokens",
+        "context_window_tokens"
+      ],
+      "title": "TokenBudgets",
+      "type": "object"
+    },
+    "TokenizerPin": {
+      "additionalProperties": false,
+      "properties": {
+        "file_sha256": {
+          "minProperties": 1,
+          "patternProperties": {
+            "\\S": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          },
+          "title": "File Sha256",
+          "type": "object"
+        },
+        "repository": {
+          "pattern": "\\S",
+          "title": "Repository",
+          "type": "string"
+        },
+        "revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repository",
+        "revision",
+        "file_sha256"
+      ],
+      "title": "TokenizerPin",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "budgets": {
+      "$ref": "#/$defs/TokenBudgets"
+    },
+    "decoding": {
+      "$ref": "#/$defs/Decoding"
+    },
+    "experiment_plan_version": {
+      "pattern": "\\S",
+      "title": "Experiment Plan Version",
+      "type": "string"
+    },
+    "matrix_arm": {
+      "enum": [
+        "confirmatory",
+        "dense_robustness",
+        "chunk_robustness",
+        "scope_robustness",
+        "closed_book"
+      ],
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "model": {
+      "$ref": "#/$defs/ModelPin"
+    },
+    "output_schema_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Output Schema Sha256",
+      "type": "string"
+    },
+    "parser_version": {
+      "const": "short_answer_json_v1",
+      "title": "Parser Version",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "purpose": {
+      "enum": [
+        "synthetic_test",
+        "development_candidate"
+      ],
+      "title": "Purpose",
+      "type": "string"
+    },
+    "retrieval_config_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Retrieval Config Sha256"
+    },
+    "retry_max_attempts": {
+      "minimum": 1,
+      "title": "Retry Max Attempts",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scoring_version": {
+      "pattern": "\\S",
+      "title": "Scoring Version",
+      "type": "string"
+    },
+    "seed_registry_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Seed Registry Sha256",
+      "type": "string"
+    },
+    "seed_registry_version": {
+      "pattern": "\\S",
+      "title": "Seed Registry Version",
+      "type": "string"
+    },
+    "serving_path": {
+      "const": "transformers",
+      "title": "Serving Path",
+      "type": "string"
+    },
+    "thinking_mode": {
+      "const": "non_thinking",
+      "title": "Thinking Mode",
+      "type": "string"
+    },
+    "tokenizer": {
+      "$ref": "#/$defs/TokenizerPin"
+    }
+  },
+  "required": [
+    "schema_version",
+    "purpose",
+    "experiment_plan_version",
+    "matrix_arm",
+    "model",
+    "tokenizer",
+    "serving_path",
+    "thinking_mode",
+    "budgets",
+    "decoding",
+    "prompt_sha256",
+    "output_schema_sha256",
+    "parser_version",
+    "seed_registry_version",
+    "seed_registry_sha256",
+    "retry_max_attempts",
+    "scoring_version"
+  ],
+  "title": "GeneratorConfiguration",
+  "type": "object"
+}

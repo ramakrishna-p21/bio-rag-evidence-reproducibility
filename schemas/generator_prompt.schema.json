@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "JsonValue": {}
+  },
+  "additionalProperties": false,
+  "description": "Representation-neutral prompt text plus the output schema its parser accepts.",
+  "properties": {
+    "closed_book": {
+      "pattern": "\\S",
+      "title": "Closed Book",
+      "type": "string"
+    },
+    "output_schema": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      },
+      "title": "Output Schema",
+      "type": "object"
+    },
+    "parser_version": {
+      "title": "Parser Version",
+      "type": "string"
+    },
+    "prompt_version": {
+      "pattern": "\\S",
+      "title": "Prompt Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "with_context": {
+      "pattern": "\\S",
+      "title": "With Context",
+      "type": "string"
+    }
+  },
+  "required": [
+    "prompt_version",
+    "with_context",
+    "closed_book",
+    "parser_version",
+    "output_schema"
+  ],
+  "title": "PromptArtifact",
+  "type": "object"
+}
