@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "GpuRequirement": {
+      "additionalProperties": false,
+      "properties": {
+        "min_count": {
+          "minimum": 1,
+          "title": "Min Count",
+          "type": "integer"
+        },
+        "name_contains": {
+          "minLength": 1,
+          "title": "Name Contains",
+          "type": "string"
+        },
+        "nvidia_driver": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Nvidia Driver"
+        }
+      },
+      "required": [
+        "min_count",
+        "name_contains"
+      ],
+      "title": "GpuRequirement",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "gpu": {
+      "$ref": "#/$defs/GpuRequirement"
+    },
+    "machine": {
+      "minLength": 1,
+      "title": "Machine",
+      "type": "string"
+    },
+    "packages": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Packages",
+      "type": "object"
+    },
+    "python": {
+      "pattern": "^3\\.\\d+(\\.\\d+)?$",
+      "title": "Python",
+      "type": "string"
+    },
+    "python_implementation": {
+      "const": "CPython",
+      "title": "Python Implementation",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "provisional",
+        "approved_lock"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "system": {
+      "minLength": 1,
+      "title": "System",
+      "type": "string"
+    },
+    "torch_cuda": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Torch Cuda"
+    },
+    "unresolved": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Unresolved",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "status",
+    "python",
+    "python_implementation",
+    "system",
+    "machine",
+    "unresolved",
+    "gpu",
+    "packages"
+  ],
+  "title": "EnvironmentSpec",
+  "type": "object"
+}

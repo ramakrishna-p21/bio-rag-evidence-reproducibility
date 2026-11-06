@@ -33,6 +33,11 @@ from biorag_repro.generation.completion import RunCompletion
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.driver import Anchor
 from biorag_repro.generation.environment import EnvironmentRecord
+from biorag_repro.generation.environment_lock import (
+    EnvironmentInventory,
+    EnvironmentSpec,
+    EnvironmentVerification,
+)
 from biorag_repro.generation.inputs import GeneratorInputRecord
 from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
 from biorag_repro.generation.receipt import ExecutionReceipt
@@ -70,6 +75,9 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "generation_run.schema.json": RunRecord,
     "generation_attempt_event.schema.json": AttemptEvent,
     "generation_environment.schema.json": EnvironmentRecord,
+    "environment_inventory.schema.json": EnvironmentInventory,
+    "environment_spec.schema.json": EnvironmentSpec,
+    "environment_verification.schema.json": EnvironmentVerification,
     "generation_roster.schema.json": RosterRecord,
     "generation_run_completion.schema.json": RunCompletion,
     "generation_input_record.schema.json": GeneratorInputRecord,

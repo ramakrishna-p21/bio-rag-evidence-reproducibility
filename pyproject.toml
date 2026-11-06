@@ -14,6 +14,7 @@ dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 biorag-context = "biorag_repro.retrieval.cli:main"
 biorag-analysis = "biorag_repro.evaluation.analysis_cli:main"
 biorag-checkpoint = "biorag_repro.generation.checkpoint:main"
+biorag-environment = "biorag_repro.generation.environment_lock:main"
 
 [project.optional-dependencies]
 context = ["transformers==4.57.6", "tokenizers==0.22.2", "huggingface-hub==0.36.2"]

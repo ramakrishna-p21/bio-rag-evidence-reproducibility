@@ -1,0 +1,37 @@
+# Intended GPU execution environment for the Qwen3-8B generator and BGE retrieval.
+#
+# PROVISIONAL. This is not a lock. It records the pins that pyproject.toml already declares
+# for the `generation` and `dense` extras and leaves every target-platform choice open.
+# `status` becomes "approved_lock" only after the environment has been resolved on the
+# workstation, a full installed-package list replaces [packages], and the lock's SHA-256 is
+# recorded outside this file. `biorag-environment verify` refuses to call a provisional file
+# approved.
+schema_version = "1"
+status = "provisional"
+python = "3.11"
+python_implementation = "CPython"
+system = "Linux"
+machine = "x86_64"
+
+# Choices that need the target platform or an approval. torch_cuda and gpu.nvidia_driver are
+# deliberately absent until resolved.
+unresolved = [
+    "torch CUDA build and local version label (the CPU wheel on the development laptop is not a GPU build)",
+    "NVIDIA driver version on the execution host",
+    "exact transitive package lock and package-source/artifact hashes",
+    "pydantic, rfc8785 and accelerate exact versions (pyproject gives ranges only)",
+]
+
+[gpu]
+min_count = 1
+name_contains = "RTX 3090"
+
+# torch is pinned to its base version only; the build label is one of the unresolved choices.
+[packages]
+huggingface-hub = "0.36.2"
+jinja2 = "3.1.6"
+numpy = "2.4.6"
+safetensors = "0.8.0"
+tokenizers = "0.22.2"
+torch = "2.15.0"
+transformers = "4.57.6"
