@@ -184,6 +184,103 @@ test_that("a publication that cannot be made read-only is reported, not accepted
   expect_run_error(publish_result(stage, target, chmod = function(...) invisible(FALSE)), "verify")
 })
 
+fresh_target <- function(envir = parent.frame()) {
+  root <- cleanup_dir(tempfile("o"), envir); dir.create(root)
+  file.path(root, "rehearsal_t")
+}
+recording_link <- function() {
+  calls <- character(0); target_seen <- logical(0)
+  list(link = function(from, to) {
+         calls <<- c(calls, basename(to)); target_seen <<- c(target_seen, dir.exists(dirname(to)))
+         file.link(from, to)
+       },
+       calls = function() calls, target_seen = function() target_seen)
+}
+
+test_that("the four data files are linked before the record, which is linked last", {
+  stage <- stage_copy(); target <- fresh_target(); rec <- recording_link()
+  publish_result(stage, target, link = rec$link)
+  expect_identical(rec$calls(), c(DATA_FILES, "run_record.json"))
+  expect_identical(utils::tail(rec$calls(), 1), RECORD_FILE)
+  expect_setequal(utils::head(rec$calls(), -1), DATA_FILES)
+  expect_true(verify_result(target, require_read_only = TRUE)$ok)
+})
+
+test_that("invalid staging content is rejected before any destination is created or linked", {
+  breakers <- list(
+    corrupt_data = function(s) flip_byte(file.path(s, "paper_counts.csv")),
+    stale_record = function(s) { r <- read_record(s); r$outputs$files[["state_counts.csv"]]$sha256 <- strrep("0", 64); write_record(s, r) },
+    missing_data = function(s) file.remove(file.path(s, "state_counts.csv")),
+    missing_record = function(s) file.remove(file.path(s, "run_record.json")),
+    extra_file = function(s) writeLines("x", file.path(s, "notes.txt"))
+  )
+  for (name in names(breakers)) {
+    stage <- stage_copy(); breakers[[name]](stage)
+    target <- fresh_target(); rec <- recording_link()
+    err <- tryCatch(publish_result(stage, target, link = rec$link), error = function(e) e)
+    expect_s3_class(err, "run_error"); expect_match(conditionMessage(err), "[verify]", fixed = TRUE)
+    expect_identical(rec$calls(), character(0), info = name)          # nothing was linked
+    expect_false(file.exists(target), info = name)                    # the destination never appeared
+  }
+})
+
+test_that("an existing destination file is never replaced and the call stops", {
+  stage <- stage_copy(); target <- fresh_target(); n <- 0
+  planted <- function(from, to) {
+    n <<- n + 1
+    if (n == 2) writeLines("foreign", to)                            # another writer wins the race for this name
+    suppressWarnings(file.link(from, to))                            # base R warns "File exists"; the FALSE result is what matters
+  }
+  expect_run_error(publish_result(stage, target, link = planted), "publish")
+  expect_identical(readLines(file.path(target, "paper_counts.csv")), "foreign")
+  expect_false("run_record.json" %in% list.files(target))
+  expect_verify_fails(target, pattern = "missing file")             # the leftover is not a result
+  expect_run_error(publish_result(stage, target), "publish")        # and the name cannot be used again
+})
+
+test_that("a failed link at any position leaves no destination", {
+  for (k in seq_along(RESULT_FILES)) {
+    stage <- stage_copy(); target <- fresh_target(); n <- 0
+    failing <- function(from, to) { n <<- n + 1; if (n == k) FALSE else file.link(from, to) }
+    expect_run_error(publish_result(stage, target, link = failing), "publish")
+    expect_false(file.exists(target), info = paste("failed link", k))
+  }
+})
+
+test_that("an interruption after any number of links leaves a directory the verifier rejects", {
+  for (k in 0:4) {
+    stage <- stage_copy(); target <- fresh_target(); n <- 0
+    interrupted <- function(from, to) { if (n == k) stop("interrupted"); n <<- n + 1; file.link(from, to) }
+    err <- tryCatch(publish_result(stage, target, link = interrupted), error = function(e) e)
+    expect_false(inherits(err, "run_error"))                          # an interrupt is not a handled failure: nothing cleans up
+    expect_identical(conditionMessage(err), "interrupted")
+    expect_identical(list.files(target), sort(DATA_FILES[seq_len(k)], method = "radix"), info = paste("links", k))
+    expect_false(file.exists(file.path(target, "run_record.json")))   # the record is the completion marker and is absent
+    expect_verify_fails(target, pattern = "missing file.*run_record.json")
+    expect_run_error(publish_result(stage, target), "publish")        # the leftover name is not reusable
+    expect_identical(list.files(target), sort(DATA_FILES[seq_len(k)], method = "radix"))   # and was not touched
+  }
+})
+
+test_that("a complete, hash-consistent directory without the read-only seal passes content verification only", {
+  stage <- stage_copy(); target <- fresh_target()
+  err <- tryCatch(publish_result(stage, target, chmod = function(...) invisible(FALSE)), error = function(e) e)
+  expect_s3_class(err, "run_error"); expect_match(conditionMessage(err), "read-only")
+  expect_identical(sort(list.files(target), method = "radix"), sort(RESULT_FILES, method = "radix"))
+  v <- verify_result(target)                                        # content integrity, as documented
+  expect_true(v$ok); expect_false(v$sealed); expect_false(v$record_authenticated)
+  expect_verify_fails(target, require_read_only = TRUE, pattern = "read-only")
+  sealed <- verify_result(base$result_dir)
+  expect_true(sealed$sealed)                                        # a sealed result reports it
+  expect_false(verify_result(copy_result())$sealed)
+  # Read-only files in a writable directory are not sealed: files could still be added or removed.
+  d <- copy_result(); Sys.chmod(list.files(d, full.names = TRUE), "0444")
+  expect_false(verify_result(d)$sealed)
+  expect_verify_fails(d, require_read_only = TRUE, pattern = "read-only")
+  Sys.chmod(d, "0555"); expect_true(verify_result(d)$sealed)
+  Sys.chmod(d, "0755")
+})
+
 test_that("a failed staging verification publishes nothing and cleans up", {
   out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
   broken <- function(...) stop("simulated failure")
@@ -392,7 +489,16 @@ test_that("the command line runs, verifies and re-executes a rehearsal", {
   expect_true(any(grepl("synthetic rehearsal", r$output, ignore.case = TRUE)))
   v <- cli("verify", "--result", dirs)
   expect_identical(v$status, 0L)
+  expect_true(any(grepl("content verified", v$output, fixed = TRUE)))
+  expect_true(any(grepl("read-only seal: present", v$output, fixed = TRUE)))
   expect_true(any(grepl("NOT authenticated", v$output, fixed = TRUE)))
+  expect_true(any(grepl("no scientific authority", v$output, fixed = TRUE)))
+  writable <- copy_result(dirs)
+  u <- cli("verify", "--result", writable)
+  expect_identical(u$status, 0L)                                                  # content integrity does not depend on the seal
+  expect_true(any(grepl("content verified", u$output, fixed = TRUE)))
+  expect_true(any(grepl("read-only seal: ABSENT", u$output, fixed = TRUE)))
+  expect_false(any(grepl("read-only seal: present", u$output, fixed = TRUE)))
   v2 <- cli("verify", "--result", dirs, "--record-sha256", rec_sha, "--lock-sha256", real_lock_sha())
   expect_identical(v2$status, 0L)
   expect_true(any(grepl("authenticated", v2$output)) && !any(grepl("NOT authenticated", v2$output, fixed = TRUE)))

@@ -58,7 +58,12 @@ main <- function(args) {
     cat("scientific_result_sha256: ", r$scientific_result_sha256, "\n", sep = "")
   } else {
     v <- verify_result(a$result, a[["record-sha256"]], a[["lock-sha256"]])
-    cat("verified: files, hashes and tables are internally consistent\n")
+    cat("content verified: files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    if (v$sealed) {
+      cat("read-only seal: present (local file permissions only; not proof of immutability)\n")
+    } else {
+      cat("read-only seal: ABSENT (content is still verified; the files can be modified locally)\n")
+    }
     if (v$record_authenticated) {
       cat("record authenticated against the supplied sha256 ", v$record_sha256, "\n", sep = "")
     } else {

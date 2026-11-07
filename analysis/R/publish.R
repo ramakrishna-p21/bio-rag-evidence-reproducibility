@@ -166,10 +166,10 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
   if (length(setdiff(present, RESULT_FILES))) verify_error(sprintf("unexpected file(s): %s", paste(setdiff(present, RESULT_FILES), collapse = ", ")))
   paths <- stats::setNames(file.path(dir, RESULT_FILES), RESULT_FILES)
   if (any(nzchar(Sys.readlink(paths))) || any(dir.exists(paths))) verify_error("every result file must be a regular file")
-  if (require_read_only) {
-    everything <- c(paths, dir)
-    if (any(bitwAnd(as.integer(file.mode(everything)), 146L) != 0L)) verify_error("published files and directory must be read-only")
-  }
+  # The read-only seal is a local file-permission measure. It is reported, and demanded only on request;
+  # content integrity does not depend on it and it proves neither authenticity nor scientific provenance.
+  sealed <- all(bitwAnd(as.integer(file.mode(c(paths, dir))), 146L) == 0L)
+  if (require_read_only && !sealed) verify_error("published files and directory must be read-only")
   record_bytes <- read_bytes(paths[[RECORD_FILE]])
   record_sha256 <- sha256_raw(record_bytes)
   if (!is.null(expected_record_sha256) && !identical(record_sha256, expected_record_sha256)) {
@@ -241,7 +241,7 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
   for (name in names(REQUIRED_PROVENANCE)) {
     if (!populated(get_path(record, REQUIRED_PROVENANCE[[name]]))) verify_error(sprintf("provenance field %s is empty", name))
   }
-  list(ok = TRUE, record_sha256 = record_sha256, record_authenticated = !is.null(expected_record_sha256),
+  list(ok = TRUE, sealed = sealed, record_sha256 = record_sha256, record_authenticated = !is.null(expected_record_sha256),
        scientific_result_sha256 = id, record = record, tables = tables)
 }
 
@@ -277,12 +277,21 @@ verify_rerun <- function(dir, handoff_path, handoff_sha256, csv_path, tolerance 
 
 # ---- publication ------------------------------------------------------------------------------
 
-# Publish a verified staging directory as `target` without being able to replace anything.
-# `dir.create` fails if the path exists and `file.link` fails if its destination exists; both are
-# decided by the file system in one step, so there is no check-then-act window. The record is
-# linked last. A failure removes only what this call created. Hard links need the staging area
-# and the target on one file system; where that is not so the publication fails closed.
+# Publish a staging directory as `target`. What this does and does not guarantee:
+#  * No artifact is ever replaced: `dir.create` fails if the path exists and `file.link` fails if its
+#    destination exists, each decided by the file system in one step (no check-then-act window).
+#  * Invalid staging content is rejected before the destination is created.
+#  * The complete result does NOT appear atomically. The directory is visible from `dir.create` on,
+#    with 0 to 4 files, until the record is linked. The record is linked last and `verify_result`
+#    requires the exact file set, so every such state, and any interruption, is rejected by the
+#    verifier. Callers must verify before using a result directory.
+#  * Read-only permissions are applied at the end and checked. They are a local protection only; a
+#    complete, hash-consistent directory without them still passes content verification.
+# An ordinary failure removes only what this call created; an interrupt leaves an inert partial
+# directory whose name cannot be reused. Hard links need staging and target on one file system.
 publish_result <- function(staging, target, link = file.link, chmod = Sys.chmod) {
+  # Nothing may become visible at the destination unless the staged content is already valid.
+  verify_result(staging)
   if (!dir.create(target, showWarnings = FALSE, mode = "0755")) {
     run_error("publish", "the result directory already exists or cannot be created; nothing was replaced")
   }
@@ -342,7 +351,6 @@ run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, se
   contents <- c(results$files, stats::setNames(list(results$inventory_bytes), INVENTORY_FILE),
                 stats::setNames(list(record_bytes), RECORD_FILE))
   for (f in RESULT_FILES) writeBin(contents[[f]], file.path(staging, f))
-  verify_result(staging)
 
   target <- file.path(out_root, paste0("rehearsal_", run_id))
   publish_result(staging, target)
