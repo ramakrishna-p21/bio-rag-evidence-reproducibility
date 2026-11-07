@@ -2,7 +2,8 @@
 # project's renv library is active; the run refuses to start otherwise.
 #
 #   Rscript run_analysis.R run --handoff F --handoff-sha256 H --csv F --lock-sha256 H \
-#           --seed N --seed-label synthetic_rehearsal --out-root DIR
+#           --seed N --seed-label synthetic_rehearsal --out-root DIR \
+#           [--preflight F --preflight-sha256 H]
 #   Rscript run_analysis.R verify --result DIR [--record-sha256 H] [--lock-sha256 H] \
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
 
@@ -13,10 +14,10 @@ for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "infe
 }
 
 OPTIONS <- list(
-  run = c("handoff", "handoff-sha256", "csv", "lock-sha256", "seed", "seed-label", "out-root"),
+  run = c("handoff", "handoff-sha256", "csv", "lock-sha256", "seed", "seed-label", "out-root", "preflight", "preflight-sha256"),
   verify = c("result", "record-sha256", "lock-sha256", "handoff", "handoff-sha256", "csv")
 )
-REQUIRED <- list(run = OPTIONS$run, verify = "result")
+REQUIRED <- list(run = setdiff(OPTIONS$run, c("preflight", "preflight-sha256")), verify = "result")
 
 parse_cli <- function(args) {
   command <- if (length(args)) args[1] else ""
@@ -39,6 +40,9 @@ parse_cli <- function(args) {
   }
   missing <- setdiff(REQUIRED[[command]], names(out))
   if (length(missing)) run_error("usage", sprintf("missing option(s): %s", paste0("--", missing, collapse = ", ")))
+  if (command == "run" && xor("preflight" %in% names(out), "preflight-sha256" %in% names(out))) {
+    run_error("usage", "--preflight and --preflight-sha256 are used together")
+  }
   if (command == "verify") {
     rerun_opts <- c("handoff", "handoff-sha256", "csv")
     if (isTRUE(out$rerun) && length(setdiff(rerun_opts, names(out)))) run_error("usage", "--rerun needs --handoff, --handoff-sha256 and --csv")
@@ -51,11 +55,15 @@ main <- function(args) {
   a <- parse_cli(args)
   if (a$command == "run") {
     r <- run_analysis(a$handoff, a[["handoff-sha256"]], a$csv, a[["lock-sha256"]], parse_seed(a$seed), a[["seed-label"]],
-                      a[["out-root"]], script_dir)
+                      a[["out-root"]], script_dir, preflight_path = a$preflight, preflight_sha256 = a[["preflight-sha256"]])
     cat("synthetic rehearsal: no scientific authority; the seed is not a registered or approved seed\n")
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("run_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("scientific_result_sha256: ", r$scientific_result_sha256, "\n", sep = "")
+    if (!is.null(a$preflight)) {
+      cat("python preflight cited: sha256 ", a[["preflight-sha256"]],
+          " (contents were not read; the verification was not repeated by R)\n", sep = "")
+    }
   } else {
     v <- verify_result(a$result, a[["record-sha256"]], a[["lock-sha256"]])
     cat("content verified: files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
@@ -63,6 +71,10 @@ main <- function(args) {
       cat("read-only seal: present (local file permissions only; not proof of immutability)\n")
     } else {
       cat("read-only seal: ABSENT (content is still verified; the files can be modified locally)\n")
+    }
+    if (identical(v$record$verification$python_preflight, PREFLIGHT_CITED)) {
+      cat("python preflight cited: sha256 ", v$record$inputs$python_preflight_sha256,
+          " (hash recorded by R; contents not read, verification not repeated by R)\n", sep = "")
     }
     if (v$record_authenticated) {
       cat("record authenticated against the supplied sha256 ", v$record_sha256, "\n", sep = "")

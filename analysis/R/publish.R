@@ -13,6 +13,12 @@ RESULT_FILES <- c(DATA_FILES, RECORD_FILE)
 RECORD_KIND <- "r_run_record"
 RECORD_SCHEMA_VERSION <- "1"
 
+# What a run record says when a Python preflight was cited. R hashed the file's bytes and recorded
+# the hash; it did not read the contents as evidence and did not repeat any Python verification.
+PREFLIGHT_NOT_RECORDED <- "not_recorded"
+PREFLIGHT_CITED <- "cited_bytes_hashed_not_interpreted"
+PREFLIGHT_SCOPE <- "bytes_hashed_by_r_only_contents_not_read_python_verification_not_repeated"
+
 # The nine facts the handoff requires from the R run, and where the record states each.
 REQUIRED_PROVENANCE <- list(
   analysis_script_git_sha = c("code", "git_commit"),
@@ -32,19 +38,42 @@ read_bytes <- function(path) readBin(path, "raw", file.size(path))
 
 iso_utc <- function(t) format(t, "%Y-%m-%dT%H:%M:%OS3Z", tz = "UTC")
 
+is_sha256_hex <- function(x) is.character(x) && length(x) == 1 && !is.na(x) && grepl("^[0-9a-f]{64}$", x)
+
+# Hash the bytes of a cited Python preflight. Both the path and the SHA-256 are required, the file
+# must be a non-empty regular file, and its bytes must match the hash. The contents are not read
+# as evidence: this proves only that these bytes existed and were the ones named.
+read_preflight_citation <- function(path, sha256) {
+  if (is.null(path) && is.null(sha256)) return(NULL)
+  if (is.null(path) || is.null(sha256)) run_error("preflight", "a preflight needs both its path and its SHA-256")
+  if (!is_sha256_hex(sha256)) run_error("preflight", "the preflight SHA-256 must be 64 lowercase hexadecimal characters")
+  if (!is.character(path) || length(path) != 1 || is.na(path) || !nzchar(path)) run_error("preflight", "the preflight path must be one file path")
+  link <- Sys.readlink(path)                                       # NA when the path does not exist
+  is_link <- !is.na(link) && nzchar(link)
+  if (!file.exists(path) && !is_link) run_error("preflight", "preflight file not found")
+  if (is_link || dir.exists(path)) run_error("preflight", "the preflight must be a regular file")
+  bytes <- read_bytes(path)
+  if (!length(bytes)) run_error("preflight", "the preflight file is empty")
+  actual <- sha256_raw(bytes)
+  if (!identical(actual, sha256)) {
+    run_error("preflight", sprintf("the preflight bytes (sha256 %s) differ from the SHA-256 supplied (%s)", actual, sha256))
+  }
+  list(sha256 = actual, bytes = length(bytes))
+}
+
 # ---- the record -------------------------------------------------------------------------------
 
-build_run_record <- function(results, seed, lock, environment, inventory_sha256, used_versions, code, execution) {
+build_run_record <- function(results, seed, lock, environment, inventory_sha256, used_versions, code, execution, preflight = NULL) {
   handoff <- results$inputs$handoff
   files <- lapply(c(results$files, list("package_inventory.csv" = results$inventory_bytes)),
                   function(b) list(bytes = length(b), sha256 = sha256_raw(b)))
-  list(
+  record <- list(
     kind = RECORD_KIND, schema_version = RECORD_SCHEMA_VERSION,
     purpose = "synthetic_rehearsal", scientific_authority = "none",
     verification = list(
       input_origin = results$inputs$input_origin,
       r_byte_verification = "handoff_and_csv_bytes_matched_supplied_sha256_and_reading_contract",
-      python_preflight = "not_recorded",
+      python_preflight = if (is.null(preflight)) PREFLIGHT_NOT_RECORDED else PREFLIGHT_CITED,
       lineage_verified_by_r = FALSE,
       official_source_runs = "not_applicable_synthetic_rehearsal",
       statistical_execution = "completed",
@@ -73,6 +102,13 @@ build_run_record <- function(results, seed, lock, environment, inventory_sha256,
     outputs = list(files = files, scientific_result_sha256 = results$scientific_result_sha256),
     provenance = list(required = as.list(unlist(handoff$execution_provenance_required)))
   )
+  if (!is.null(preflight)) {
+    at <- match("python_preflight", names(record$verification))
+    record$verification <- append(record$verification, list(python_preflight_scope = PREFLIGHT_SCOPE), after = at)
+    record$inputs <- c(record$inputs, list(python_preflight_sha256 = preflight$sha256,
+                                           python_preflight_bytes = as.integer(preflight$bytes)))
+  }
+  record
 }
 
 serialize_record <- function(record) {
@@ -183,7 +219,6 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
     list(c("kind"), RECORD_KIND), list(c("schema_version"), RECORD_SCHEMA_VERSION),
     list(c("purpose"), "synthetic_rehearsal"), list(c("scientific_authority"), "none"),
     list(c("verification", "input_origin"), "synthetic_rehearsal"),
-    list(c("verification", "python_preflight"), "not_recorded"),
     list(c("verification", "lineage_verified_by_r"), FALSE),
     list(c("verification", "official_source_runs"), "not_applicable_synthetic_rehearsal"),
     list(c("verification", "statistical_execution"), "completed"),
@@ -198,6 +233,23 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
     if (!identical(get_path(record, cl[[1]]), cl[[2]])) {
       verify_error(sprintf("record field %s must be %s in this pass", paste(cl[[1]], collapse = "."), format(cl[[2]])))
     }
+  }
+
+  # Either nothing about a preflight, or a citation of its bytes and hash; never a claim that
+  # R verified anything Python did.
+  pre_state <- get_path(record, c("verification", "python_preflight"))
+  pre_sha <- get_path(record, c("inputs", "python_preflight_sha256"))
+  pre_bytes <- get_path(record, c("inputs", "python_preflight_bytes"))
+  pre_scope <- get_path(record, c("verification", "python_preflight_scope"))
+  if (identical(pre_state, PREFLIGHT_CITED)) {
+    if (!is_sha256_hex(pre_sha) || !is.numeric(pre_bytes) || length(pre_bytes) != 1 || is.na(pre_bytes) ||
+        pre_bytes < 1 || pre_bytes != round(pre_bytes) || !identical(pre_scope, PREFLIGHT_SCOPE)) {
+      verify_error("a cited preflight needs its SHA-256, its size and the stated scope")
+    }
+  } else if (identical(pre_state, PREFLIGHT_NOT_RECORDED)) {
+    if (!is.null(pre_sha) || !is.null(pre_bytes) || !is.null(pre_scope)) verify_error("a record without a preflight must not carry a preflight citation")
+  } else {
+    verify_error(sprintf("record field verification.python_preflight must be %s or %s", PREFLIGHT_NOT_RECORDED, PREFLIGHT_CITED))
   }
 
   listed <- get_path(record, c("outputs", "files"))
@@ -320,10 +372,12 @@ active_renv_project <- function() if (requireNamespace("renv", quietly = TRUE)) 
 
 # The whole run: gates, computation, record, staging, verification, publication.
 run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, seed, seed_label, out_root, project_dir,
-                         now = Sys.time, synchronized = NULL, code_fn = code_state) {
+                         now = Sys.time, synchronized = NULL, code_fn = code_state,
+                         preflight_path = NULL, preflight_sha256 = NULL) {
   started <- now()
   seed <- check_seed(seed, seed_label)
   if (!dir.exists(out_root)) run_error("publish", "the output root must be an existing directory")
+  preflight <- read_preflight_citation(preflight_path, preflight_sha256)
 
   lock <- read_lock(file.path(project_dir, "renv.lock"), lock_sha256)
   inventory <- installed_inventory(.libPaths(), file.path(project_dir, "renv", "library"), lock$packages)
@@ -341,7 +395,7 @@ run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, se
   execution <- list(run_id = run_id, started_utc = iso_utc(started), finished_utc = iso_utc(finished),
                     hostname = Sys.info()[["nodename"]])
   record <- build_run_record(results, seed_rec, lock, execution_environment(), sha256_raw(results$inventory_bytes),
-                             loaded_package_versions(), code, execution)
+                             loaded_package_versions(), code, execution, preflight)
   record_bytes <- serialize_record(record)
 
   staging <- file.path(out_root, paste0(".staging-", run_id))

@@ -526,3 +526,150 @@ test_that("the command line refuses missing options, unknown options and a wrong
   expect_false(identical(r$status, 0L))
   expect_identical(list.files(out), character(0))
 })
+
+# ---- citing a Python preflight -------------------------------------------------------------------
+# R hashes the cited bytes and records the hash. It does not read them as Python's verification and
+# never claims to have repeated it. The scientific files, the seed and the RNG are not involved.
+
+PRE_SCOPE <- "bytes_hashed_by_r_only_contents_not_read_python_verification_not_repeated"
+preflight_file <- function(content = "preflight bytes", envir = parent.frame()) {
+  path <- write_text(content, tempfile("preflight"))
+  withr::defer(unlink(path), envir = envir)
+  list(path = path, sha = sha256_file(path))
+}
+run_cited <- function(out_root, pre, ...) {
+  a <- fixture_args()
+  run_analysis(a$handoff_path, a$handoff_sha256, a$csv_path, real_lock_sha(), TEST_SEED, "synthetic_rehearsal", out_root,
+               analysis_dir(), now = fixed_clock("2026-11-06T10:00:00.000"), synchronized = TRUE,
+               preflight_path = pre$path, preflight_sha256 = pre$sha, ...)
+}
+expect_preflight_refused <- function(out, ..., pattern = NULL) {
+  err <- tryCatch({ run_cited(out, ...); NULL }, run_error = function(e) e)
+  expect_false(is.null(err), info = "the run was not refused")
+  if (!is.null(err)) {
+    expect_match(conditionMessage(err), "[preflight]", fixed = TRUE)
+    if (!is.null(pattern)) expect_match(conditionMessage(err), pattern)
+  }
+  expect_identical(list.files(out, all.files = TRUE, no.. = TRUE), character(0))   # nothing staged or published
+}
+
+test_that("a run without a preflight keeps the previous record structure and behaviour", {
+  r <- read_record(base$result_dir)
+  expect_identical(names(r$inputs), c("handoff_sha256", "csv_sha256", "input_origin", "handoff_kind",
+                                      "handoff_schema_version", "analysis_spec_version"))
+  expect_identical(names(r$verification), c("input_origin", "r_byte_verification", "python_preflight", "lineage_verified_by_r",
+                                            "official_source_runs", "statistical_execution", "output_integrity",
+                                            "record_authentication"))
+  expect_identical(r$verification$python_preflight, "not_recorded")
+})
+
+test_that("a cited preflight is hashed and recorded without being interpreted", {
+  out <- cleanup_dir(tempfile("cited"), environment()); dir.create(out)
+  pre <- preflight_file()
+  res <- run_cited(out, pre)
+  r <- read_record(res$result_dir)
+  expect_identical(r$verification$python_preflight, "cited_bytes_hashed_not_interpreted")
+  expect_identical(r$verification$python_preflight_scope, PRE_SCOPE)
+  expect_identical(r$inputs$python_preflight_sha256, pre$sha)
+  expect_identical(r$inputs$python_preflight_bytes, as.integer(file.size(pre$path)))
+  expect_false(r$verification$lineage_verified_by_r)                              # R still claims no lineage check
+  expect_identical(r$verification$official_source_runs, "not_applicable_synthetic_rehearsal")
+  expect_identical(r$scientific_authority, "none")
+  v <- verify_result(res$result_dir, expected_record_sha256 = res$record_sha256)
+  expect_true(v$record_authenticated)
+  # Science is untouched: same identity, same scientific bytes, same seed record as the run without one.
+  expect_identical(res$scientific_result_sha256, "17c44709e57fd9ac259f3d239498693d31e34258f8577d9e73d0e6cb86b01e36")
+  expect_identical(res$scientific_result_sha256, base$scientific_result_sha256)
+  for (f in names(SCIENTIFIC_SCHEMAS)) {
+    expect_identical(read_bytes(file.path(res$result_dir, f)), read_bytes(file.path(base$result_dir, f)))
+  }
+  expect_identical(r$seed, read_record(base$result_dir)$seed)
+  expect_identical(r$outputs$files, read_record(base$result_dir)$outputs$files)
+})
+
+test_that("a preflight needs both its path and its hash", {
+  out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
+  pre <- preflight_file()
+  expect_preflight_refused(out, list(path = pre$path, sha = NULL), pattern = "both its path and its SHA-256")
+  expect_preflight_refused(out, list(path = NULL, sha = pre$sha), pattern = "both its path and its SHA-256")
+})
+
+test_that("a cited preflight must exist, be a regular file and match its hash exactly", {
+  out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
+  pre <- preflight_file()
+  for (bad in c("", "abc", strrep("A", 64), substr(pre$sha, 1, 63), paste0(pre$sha, "0"), toupper(pre$sha), NA_character_)) {
+    expect_preflight_refused(out, list(path = pre$path, sha = bad), pattern = "hexadecimal")
+  }
+  expect_preflight_refused(out, list(path = pre$path, sha = strrep("0", 64)), pattern = "differ")
+  expect_preflight_refused(out, list(path = file.path(tempdir(), "no-such-preflight"), sha = pre$sha), pattern = "not found")
+  expect_preflight_refused(out, list(path = tempdir(), sha = pre$sha), pattern = "regular file")
+  link <- file.path(tempfile("link")); file.symlink(pre$path, link); withr::defer(unlink(link))
+  expect_preflight_refused(out, list(path = link, sha = pre$sha), pattern = "regular file")
+  other <- preflight_file("different bytes")
+  expect_preflight_refused(out, list(path = pre$path, sha = other$sha), pattern = "differ")
+})
+
+test_that("an empty preflight file is refused", {
+  out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
+  empty <- preflight_file("")
+  expect_preflight_refused(out, empty, pattern = "empty")
+})
+
+test_that("a changed preflight file is detected by its hash, not by reading it", {
+  out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
+  pre <- preflight_file()
+  write_text("tampered", pre$path)
+  expect_preflight_refused(out, pre, pattern = "differ")
+})
+
+test_that("the verifier accepts exactly the two preflight forms and a consistent citation", {
+  out <- cleanup_dir(tempfile("o"), environment()); dir.create(out)
+  res <- run_cited(out, preflight_file())
+  ok <- function(f) { d <- forge(copy_result(res$result_dir), record_edit = f); verify_result(d)$ok }
+  expect_true(ok(identity))
+  bad <- list(
+    function(r) { r$verification$python_preflight <- "verified"; r },
+    function(r) { r$verification$python_preflight <- "passed"; r },
+    function(r) { r$inputs$python_preflight_sha256 <- NULL; r },
+    function(r) { r$inputs$python_preflight_sha256 <- "abc"; r },
+    function(r) { r$inputs$python_preflight_sha256 <- toupper(r$inputs$python_preflight_sha256); r },
+    function(r) { r$inputs$python_preflight_bytes <- 0L; r },
+    function(r) { r$inputs$python_preflight_bytes <- NULL; r },
+    function(r) { r$verification$python_preflight_scope <- "python_verified_lineage"; r },
+    function(r) { r$verification$python_preflight_scope <- NULL; r },
+    function(r) { r$verification$lineage_verified_by_r <- TRUE; r }
+  )
+  for (edit in bad) expect_verify_fails(forge(copy_result(res$result_dir), record_edit = edit))
+  # A record that says nothing was recorded must not carry a citation.
+  stray <- list(
+    function(r) { r$inputs$python_preflight_sha256 <- strrep("a", 64); r },
+    function(r) { r$inputs$python_preflight_bytes <- 5L; r },
+    function(r) { r$verification$python_preflight_scope <- PRE_SCOPE; r }
+  )
+  for (edit in stray) expect_verify_fails(forge(copy_result(), record_edit = edit))
+  forged_to_uncited <- function(r) { r$verification$python_preflight <- "not_recorded"; r }
+  expect_verify_fails(forge(copy_result(res$result_dir), record_edit = forged_to_uncited))
+})
+
+test_that("the command line cites a preflight and refuses incomplete or wrong pairs", {
+  skip_if(Sys.which("Rscript") == "")
+  a <- fixture_args(); pre <- preflight_file()
+  out <- cleanup_dir(tempfile("cli"), environment()); dir.create(out)
+  base_args <- c("run", "--handoff", a$handoff_path, "--handoff-sha256", a$handoff_sha256, "--csv", a$csv_path,
+                 "--lock-sha256", real_lock_sha(), "--seed", "20260601", "--seed-label", "synthetic_rehearsal", "--out-root", out)
+  expect_false(identical(cli(base_args, "--preflight", pre$path)$status, 0L))
+  expect_false(identical(cli(base_args, "--preflight-sha256", pre$sha)$status, 0L))
+  expect_true(any(grepl("[usage]", cli(base_args, "--preflight", pre$path)$output, fixed = TRUE)))
+  wrong <- cli(base_args, "--preflight", pre$path, "--preflight-sha256", strrep("0", 64))
+  expect_false(identical(wrong$status, 0L)); expect_true(any(grepl("[preflight]", wrong$output, fixed = TRUE)))
+  expect_identical(list.files(out, all.files = TRUE, no.. = TRUE), character(0))
+  r <- cli(base_args, "--preflight", pre$path, "--preflight-sha256", pre$sha)
+  expect_identical(r$status, 0L)
+  expect_true(any(grepl(pre$sha, r$output, fixed = TRUE)))
+  expect_true(any(grepl("contents were not read", r$output, fixed = TRUE)))
+  dirs <- list.files(out, full.names = TRUE)
+  v <- cli("verify", "--result", dirs)
+  expect_identical(v$status, 0L)
+  expect_true(any(grepl("preflight cited", v$output, fixed = TRUE)) && any(grepl("not repeated by R", v$output, fixed = TRUE)))
+  unlock_tree(dirs)
+})
