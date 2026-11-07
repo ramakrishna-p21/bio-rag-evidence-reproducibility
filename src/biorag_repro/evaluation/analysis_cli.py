@@ -6,6 +6,8 @@ records what Python verified about a rehearsal handoff before R is run; `verify-
 reads such a record back against its handoff. After R has run, `verify-r-result` checks the
 published R result directory, `record-result` publishes the Python result record, and
 `verify-result-record` reads that record back against the R files and the preflight.
+`rehearse` runs the whole chain for a synthetic rehearsal handoff in that order and stops at the
+first failure.
 """
 
 import argparse
@@ -17,6 +19,7 @@ from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import read_manifest
 from biorag_repro.evaluation.analysis_handoff import OfficialProvenanceNotVerified, read_handoff
 from biorag_repro.evaluation.analysis_preflight import publish_preflight, read_preflight
+from biorag_repro.evaluation.analysis_rehearsal import RehearsalError, rehearse
 from biorag_repro.evaluation.analysis_result import (
     AnalysisResultRecord,
     Rerun,
@@ -222,6 +225,38 @@ def verify_result_record(args: argparse.Namespace) -> int:
     return 0
 
 
+def rehearse_command(args: argparse.Namespace) -> int:
+    try:
+        done = rehearse(
+            args.root,
+            _ref(args.handoff_build, args.handoff_sha256),
+            analysis_dir=args.repository / "analysis",
+            code=system_probes(args.repository).git(),
+            seed=args.seed,
+            lock_sha256=args.lock_sha256,
+            out_root=args.out_root,
+            rerun=args.rerun,
+        )
+    except OfficialProvenanceNotVerified:
+        print(
+            "this handoff claims an official origin; a rehearsal accepts a synthetic handoff "
+            "only. Nothing is written.",
+            file=sys.stderr,
+        )
+        return 2
+    except RehearsalError as error:
+        print(f"rehearsal stopped: {error}", file=sys.stderr)
+        return 1
+    print(f"rehearsal complete: scientific_result_sha256 {done.scientific_result_sha256}")
+    print(f"preflight build: {done.preflight_build.logical_ref} {done.preflight_build.sha256}")
+    print(f"R result directory: {args.root / done.result_dir}")
+    print(f"run_record.json sha256: {done.run_record_sha256}; R rerun: {done.rerun}")
+    print(f"result record build: {done.record.build.logical_ref} {done.record.build.sha256}")
+    print(f"result record file: {args.root / done.record.ref.logical_ref} {done.record.ref.sha256}")
+    print(f"The seed {args.seed} is a rehearsal seed, not the approved production seed. " + LIMITS)
+    return 0
+
+
 def _result_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--preflight-build", required=True)
@@ -291,6 +326,22 @@ def main(argv: list[str] | None = None) -> int:
     read_back.add_argument("--repository", type=Path, default=Path.cwd())
     read_back.add_argument("--compare-current", action="store_true")
     read_back.set_defaults(run=verify_result_record)
+
+    rehearsal = operations.add_parser(
+        "rehearse",
+        help="preflight, run R, verify and record a synthetic rehearsal in one controlled sequence",
+    )
+    rehearsal.add_argument("--root", type=Path, required=True)
+    rehearsal.add_argument("--handoff-build", required=True)
+    rehearsal.add_argument("--handoff-sha256", required=True)
+    rehearsal.add_argument("--seed", type=int, required=True, help="rehearsal seed, no default")
+    rehearsal.add_argument("--lock-sha256", required=True, help="approved renv.lock SHA-256")
+    rehearsal.add_argument("--out-root", required=True, help="R output root, inside --root")
+    rehearsal.add_argument(
+        "--repository", type=Path, default=Path.cwd(), help="Git repository to record"
+    )
+    rehearsal.add_argument("--rerun", action="store_true", help="also ask R to recompute")
+    rehearsal.set_defaults(run=rehearse_command)
 
     args = parser.parse_args(argv)
     return int(args.run(args))

@@ -1014,10 +1014,24 @@ def _check_accounting_tables(
         )
 
 
+def _cr2_test_ran(coprimary: list[dict[str, Any]]) -> bool:
+    """True when at least one outcome had a complete-case test, so R must have called clubSandwich."""
+    return any(r["test_status"] != "inference_undefined" for r in coprimary)
+
+
 def _check_environment(
-    run: RRunRecord, inventory: list[dict[str, Any]], handoff: AnalysisHandoff
+    run: RRunRecord,
+    inventory: list[dict[str, Any]],
+    handoff: AnalysisHandoff,
+    *,
+    test_ran: bool,
 ) -> str:
-    """Internal consistency of the recorded lock, inventory and versions; returns the method package version."""
+    """Internal consistency of the recorded lock, inventory and versions; returns the method package version.
+
+    The method package must be locked and installed at the required version. It must also appear
+    among the packages R used, unless no outcome had a complete-case test to run: R loads it
+    only when it calls it, so a run whose tests are all undefined legitimately never loads it.
+    """
 
     def bad(why: str) -> ResultError:
         return ResultError("environment", why)
@@ -1042,11 +1056,8 @@ def _check_environment(
     if not run.environment_actual.r_version.startswith("R version 4.6.1 "):
         raise bad("the recorded R version is not the required 4.6.1")
     method_version = installed.get(handoff.analysis_spec.package)
-    if (
-        method_version != REQUIRED_CLUBSANDWICH_VERSION
-        or run.environment_actual.package_versions_used.get(handoff.analysis_spec.package)
-        != method_version
-    ):
+    used = run.environment_actual.package_versions_used.get(handoff.analysis_spec.package)
+    if method_version != REQUIRED_CLUBSANDWICH_VERSION or (test_ran and used != method_version):
         raise bad(
             f"{handoff.analysis_spec.package} {REQUIRED_CLUBSANDWICH_VERSION} must be locked, installed and used"
         )
@@ -1138,7 +1149,12 @@ def verify_r_result(
         for r in coprimary
     ]
     _check_holm(coprimary)
-    package_version = _check_environment(run, tables["package_inventory.csv"], handoff)
+    package_version = _check_environment(
+        run,
+        tables["package_inventory.csv"],
+        handoff,
+        test_ran=_cr2_test_ran(coprimary),
+    )
 
     spec = handoff.analysis_spec
     pre = checked.preflight
