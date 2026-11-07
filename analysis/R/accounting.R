@@ -21,6 +21,13 @@ as_state_counts <- function(x) {
   counts[order(names(counts), method = "radix")]
 }
 
+# The handoff's complete-case ids as a character vector. A JSON [] is list() and unlist() would turn
+# it into NULL, so an empty list is mapped to character(0); a missing field, a non-list or
+# non-string ids are returned unchanged and so fail the comparison.
+stated_ids <- function(x) {
+  if (is.list(x) && length(x) == 0) character(0) else unname(unlist(x))
+}
+
 cell_matches <- function(cell, key, state, status, reason) {
   identical(cell$observation_key, key) && identical(cell$state, state) &&
     identical(cell$execution_status, status) &&
@@ -94,7 +101,7 @@ derive_accounting <- function(rows, handoff) {
       input_error("accounting", sprintf("%s: complete-case flags differ from the handoff", outcome))
     }
     complete_ids <- items$item_id[items$complete]
-    if (!identical(complete_ids, unname(unlist(stated$complete_item_ids)))) {
+    if (!identical(complete_ids, stated_ids(stated$complete_item_ids))) {
       input_error("accounting", sprintf("%s: complete item ids differ from the handoff", outcome))
     }
     counts <- table(c(sprintf("JATS|%s", items$jats_state), sprintf("PDF_DOCLING|%s", items$pdf_state)))

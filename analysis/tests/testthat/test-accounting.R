@@ -102,3 +102,88 @@ test_that("any disagreement with Python's accounting stops the run", {
   key <- fixture()$rows$observation_key[1]
   expect_input_error(disagree(edit(paste0('"', key, '"'), '"obs_other"')), "accounting")
 })
+
+# An outcome with no paired complete case. Python publishes `complete_item_ids: []`, which R reads
+# as list(); a plain unlist() turned that into NULL and the comparison with character(0) failed.
+# Every PDF_DOCLING cell of the chosen outcome becomes non_evaluable, in the rows and in the handoff alike.
+no_complete <- function(read, outcome = "evidence_delivered") {
+  rows <- read$rows
+  pdf <- rows$matrix_arm == "confirmatory" & rows$repeat_index == 1L & rows$condition == "PDF_DOCLING"
+  rows[[outcome]][pdf] <- "non_evaluable"
+  handoff <- read$handoff
+  for (k in seq_along(handoff$accounting)) {
+    if (!identical(handoff$accounting[[k]]$outcome, outcome)) next
+    a <- handoff$accounting[[k]]
+    for (i in seq_along(a$eligible_items)) {
+      a$eligible_items[[i]]$pdf_docling$state <- "non_evaluable"
+      a$eligible_items[[i]]$complete_case <- FALSE
+    }
+    a$complete_item_ids <- list()
+    a$state_counts <- a$state_counts[!startsWith(names(a$state_counts), "PDF_DOCLING|")]
+    a$state_counts[["PDF_DOCLING|non_evaluable"]] <- length(a$eligible_items)
+    for (j in seq_along(a$papers)) a$papers[[j]]$complete <- 0L
+    handoff$accounting[[k]] <- a
+  }
+  list(rows = rows, handoff = handoff)
+}
+
+test_that("a valid empty complete-case list reconciles as an empty character vector", {
+  z <- no_complete(fixture())
+  acc <- derive_accounting(z$rows, z$handoff)
+  expect_identical(acc$evidence_delivered$complete_item_ids, character(0))
+  expect_identical(sum(acc$evidence_delivered$items$complete), 0L)
+  expect_identical(acc$evidence_delivered$papers$complete, rep(0L, 5L))
+  # The other outcome is unaffected.
+  expect_identical(acc$answer_correct$complete_item_ids, derive_accounting(fixture()$rows, fixture()$handoff)$answer_correct$complete_item_ids)
+})
+
+test_that("empty-list handling does not let wrong complete-case ids through", {
+  z <- no_complete(fixture())
+  claim <- function(ids) {
+    h <- z$handoff
+    k <- which(vapply(h$accounting, function(a) identical(a$outcome, "evidence_delivered"), logical(1)))
+    h$accounting[[k]]$complete_item_ids <- ids
+    h
+  }
+  expect_input_error(derive_accounting(z$rows, claim(list("q_001"))), "accounting")
+  expect_input_error(derive_accounting(z$rows, claim(list(1L))), "accounting")
+  expect_input_error(derive_accounting(z$rows, claim(NULL)), "accounting")
+  # A handoff that lists nothing while the rows hold a complete case is also refused.
+  r <- fixture()
+  h <- r$handoff
+  k <- which(vapply(h$accounting, function(a) identical(a$outcome, "evidence_delivered"), logical(1)))
+  h$accounting[[k]]$complete_item_ids <- list()
+  expect_input_error(derive_accounting(r$rows, h), "accounting")
+})
+
+test_that("a zero-complete outcome reaches inference with its existing undefined statuses", {
+  read <- fixture()
+  z <- no_complete(read)
+  acc <- derive_accounting(z$rows, z$handoff)
+  res <- coprimary_inference(acc, z$handoff, 20260101L)
+  ev <- res$outcomes$evidence_delivered
+  expect_identical(ev$summary$status, "no_complete_pairs")
+  expect_true(is.na(ev$summary$rd))
+  expect_identical(ev$bootstrap$status, "no_complete_pairs")
+  expect_identical(ev$test$status, "inference_undefined")
+  expect_identical(ev$test$reason, "no_complete_pairs")
+  expect_true(is.null(ev$test$p_value) || is.na(ev$test$p_value))
+  expect_identical(res$holm$status, "holm_undefined")
+  expect_true(all(is.na(res$holm$adjusted)))
+  # The other outcome is estimated exactly as before.
+  base <- coprimary_inference(derive_accounting(read$rows, read$handoff), read$handoff, 20260101L)
+  expect_identical(res$outcomes$answer_correct$summary, base$outcomes$answer_correct$summary)
+})
+
+test_that("either outcome alone can have no complete case", {
+  read <- fixture()
+  z <- no_complete(read, "answer_correct")
+  acc <- derive_accounting(z$rows, z$handoff)
+  expect_identical(acc$answer_correct$complete_item_ids, character(0))
+  expect_identical(acc$evidence_delivered$complete_item_ids,
+                   derive_accounting(read$rows, read$handoff)$evidence_delivered$complete_item_ids)
+  res <- coprimary_inference(acc, z$handoff, 20260101L)
+  expect_identical(res$outcomes$answer_correct$summary$status, "no_complete_pairs")
+  expect_identical(res$holm$status, "holm_undefined")
+  expect_false(is.na(res$outcomes$evidence_delivered$summary$rd))
+})
