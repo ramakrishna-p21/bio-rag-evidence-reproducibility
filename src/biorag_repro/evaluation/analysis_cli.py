@@ -3,10 +3,13 @@
 `verify-handoff` checks a rehearsal handoff only. It cannot establish official provenance:
 that needs freshly verified official runs, which this command does not have. `preflight`
 records what Python verified about a rehearsal handoff before R is run; `verify-preflight`
-reads such a record back against its handoff.
+reads such a record back against its handoff. After R has run, `verify-r-result` checks the
+published R result directory, `record-result` publishes the Python result record, and
+`verify-result-record` reads that record back against the R files and the preflight.
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -14,6 +17,16 @@ from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import read_manifest
 from biorag_repro.evaluation.analysis_handoff import OfficialProvenanceNotVerified, read_handoff
 from biorag_repro.evaluation.analysis_preflight import publish_preflight, read_preflight
+from biorag_repro.evaluation.analysis_result import (
+    AnalysisResultRecord,
+    Rerun,
+    ResultError,
+    compare_current_environment,
+    publish_result_record,
+    read_result_record,
+    rerun_in_r,
+    verify_r_result,
+)
 from biorag_repro.evaluation.analysis_storage import read_table
 from biorag_repro.generation.environment import system_probes
 
@@ -119,6 +132,106 @@ def verify_preflight(args: argparse.Namespace) -> int:
     return 0
 
 
+LIMITS = (
+    "Verified by Python: the R result bytes, the run record structure, the scientific result "
+    "identity, the CSV contract, the binding to the preflight and handoff, and recomputed counts, "
+    "rates and the paired risk difference. Reported by R and not recomputed: the bootstrap, CR2, "
+    "Satterthwaite and Holm values, the R runtime and the code identity. Not established: "
+    "official source-run lineage, the production seed, authenticity (a hash you supply is not "
+    "a credential). A synthetic rehearsal has no scientific authority."
+)
+
+
+def _result_location(root: Path, value: str) -> str:
+    """The result directory as a path relative to the root; links are refused later, on opening."""
+    full = Path(os.path.abspath(root / value))
+    try:
+        return full.relative_to(os.path.abspath(root)).as_posix()
+    except ValueError:
+        raise ResultError(
+            "result_location", "the result directory must lie inside the root"
+        ) from None
+
+
+def _show_compared(record: AnalysisResultRecord, repository: Path | None) -> None:
+    if repository is not None:
+        for name, state in compare_current_environment(record, repository).items():
+            print(f"current checkout vs recorded {name}: {state} (informational; not a test)")
+
+
+def verify_r_result_command(args: argparse.Namespace) -> int:
+    try:
+        verified = verify_r_result(
+            args.root,
+            _result_location(args.root, args.result),
+            _ref(args.preflight_build, args.preflight_sha256),
+            args.run_record_sha256,
+        )
+    except (ResultError, ValueError, OSError) as error:
+        print(f"R result is not valid: {error}", file=sys.stderr)
+        return 1
+    claims = verified.claims
+    print(f"valid R result: scientific_result_sha256 {claims['scientific_result_sha256']}")
+    print(f"run_record.json sha256 {claims['run_record_sha256']} (supplied by you)")
+    print(LIMITS)
+    return 0
+
+
+def record_result(args: argparse.Namespace) -> int:
+    try:
+        result_dir = _result_location(args.root, args.result)
+        preflight_build = _ref(args.preflight_build, args.preflight_sha256)
+        rerun: Rerun = "not_performed"
+        if args.rerun:
+            verified = verify_r_result(
+                args.root, result_dir, preflight_build, args.run_record_sha256
+            )
+            rerun = rerun_in_r(verified, args.root, args.repository / "analysis")
+        published = publish_result_record(
+            args.root,
+            result_dir,
+            preflight_build,
+            args.run_record_sha256,
+            code=system_probes(args.repository).git(),
+            rerun=rerun,
+        )
+        checked = read_result_record(published.build, args.root)
+    except (ResultError, ValueError, OSError) as error:
+        print(f"result record not written: {error}", file=sys.stderr)
+        return 1
+    print(f"{'published' if published.created else 'already published (identical bytes verified)'}")
+    print(f"result record build: {published.build.logical_ref} {published.build.sha256}")
+    print(f"result record file: {args.root / published.ref.logical_ref} {published.ref.sha256}")
+    print(f"R rerun: {checked.record.rerun}")
+    _show_compared(checked.record, args.repository if args.compare_current else None)
+    print(LIMITS)
+    return 0
+
+
+def verify_result_record(args: argparse.Namespace) -> int:
+    try:
+        checked = read_result_record(_ref(args.result_build, args.result_sha256), args.root)
+    except (ResultError, ValueError, OSError) as error:
+        print(f"result record is not valid: {error}", file=sys.stderr)
+        return 1
+    record = checked.record
+    print(f"valid result record for scientific_result_sha256 {record.scientific_result_sha256}")
+    print(f"R run record sha256 {record.run_record_sha256}; R rerun: {record.rerun}")
+    _show_compared(record, args.repository if args.compare_current else None)
+    print(LIMITS)
+    return 0
+
+
+def _result_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument("--preflight-build", required=True)
+    parser.add_argument("--preflight-sha256", required=True)
+    parser.add_argument("--result", required=True, help="R result directory, inside --root")
+    parser.add_argument(
+        "--run-record-sha256", required=True, help="hash R printed for run_record.json"
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     operations = parser.add_subparsers(dest="operation", required=True)
@@ -155,6 +268,29 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--preflight-build", required=True)
     check.add_argument("--preflight-sha256", required=True)
     check.set_defaults(run=verify_preflight)
+
+    r_check = operations.add_parser("verify-r-result", help="verify a published R result directory")
+    _result_arguments(r_check)
+    r_check.set_defaults(run=verify_r_result_command)
+
+    record = operations.add_parser(
+        "record-result", help="verify an R result and publish the Python result record"
+    )
+    _result_arguments(record)
+    record.add_argument(
+        "--repository", type=Path, default=Path.cwd(), help="Git repository to record"
+    )
+    record.add_argument("--rerun", action="store_true", help="also ask R to recompute the result")
+    record.add_argument("--compare-current", action="store_true")
+    record.set_defaults(run=record_result)
+
+    read_back = operations.add_parser("verify-result-record", help="read a result record back")
+    read_back.add_argument("--root", type=Path, required=True)
+    read_back.add_argument("--result-build", required=True)
+    read_back.add_argument("--result-sha256", required=True)
+    read_back.add_argument("--repository", type=Path, default=Path.cwd())
+    read_back.add_argument("--compare-current", action="store_true")
+    read_back.set_defaults(run=verify_result_record)
 
     args = parser.parse_args(argv)
     return int(args.run(args))

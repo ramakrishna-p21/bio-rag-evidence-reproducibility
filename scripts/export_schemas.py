@@ -26,6 +26,7 @@ from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Vali
 from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff
 from biorag_repro.evaluation.analysis_models import AnalysisInventory, AnalysisRow, GeneratorInput
 from biorag_repro.evaluation.analysis_preflight import AnalysisPreflight
+from biorag_repro.evaluation.analysis_result import AnalysisResultRecord
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
@@ -70,6 +71,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "analysis_inventory.schema.json": AnalysisInventory,
     "analysis_handoff.schema.json": AnalysisHandoff,
     "analysis_preflight.schema.json": AnalysisPreflight,
+    "analysis_result_record.schema.json": AnalysisResultRecord,
     "generator_input.schema.json": GeneratorInput,
     "generator_configuration.schema.json": GeneratorConfiguration,
     "generator_prompt.schema.json": PromptArtifact,
