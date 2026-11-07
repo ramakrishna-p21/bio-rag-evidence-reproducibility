@@ -1,10 +1,21 @@
 # Load the analysis sources into the test environment (the analysis is plain scripts, not a package).
 r_dir <- normalizePath(test_path("..", "..", "R"))
-for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "inference.R")) {
+for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "inference.R",
+            "results.R", "provenance.R", "publish.R")) {
   source(file.path(r_dir, f), local = TRUE)
 }
 
 fixture_dir <- function() normalizePath(test_path("fixtures", "rehearsal"))
+
+# The frozen fixture's own handoff, hash and CSV, read in place (never edited).
+fixture_args <- function() {
+  list(handoff_path = file.path(fixture_dir(), "handoff.json"),
+       handoff_sha256 = jsonlite::fromJSON(file.path(fixture_dir(), "fixture.json"))$handoff_sha256,
+       csv_path = file.path(fixture_dir(), "analysis_table.csv"))
+}
+
+# Synthetic rehearsal seed used only by tests. Not a production seed.
+TEST_SEED <- 20260601L
 
 read_bytes_as_text <- function(path) rawToChar(readBin(path, "raw", file.size(path)))
 
@@ -82,4 +93,39 @@ expect_input_error <- function(expr, step) {
   err <- tryCatch({ force(expr); NULL }, input_error = function(e) e)
   expect_false(is.null(err), info = paste("no input_error for step", step))
   if (!is.null(err)) expect_match(conditionMessage(err), paste0("[", step, "]"), fixed = TRUE)
+}
+
+expect_run_error <- function(expr, step) {
+  err <- tryCatch({ force(expr); NULL }, run_error = function(e) e)
+  expect_false(is.null(err), info = paste("no run_error for step", step))
+  if (!is.null(err)) expect_match(conditionMessage(err), paste0("[", step, "]"), fixed = TRUE)
+}
+
+analysis_dir <- function() normalizePath(test_path("..", ".."))
+lock_path <- function() file.path(analysis_dir(), "renv.lock")
+real_lock_sha <- function() sha256_file(lock_path())
+
+# Published results are read-only. Tests that create them restore write access before cleanup.
+unlock_tree <- function(dir) {
+  if (!dir.exists(dir)) return(invisible())
+  Sys.chmod(dir, "0755")
+  for (f in list.files(dir, all.files = TRUE, recursive = TRUE, full.names = TRUE, no.. = TRUE)) {
+    Sys.chmod(f, if (dir.exists(f)) "0755" else "0644")
+  }
+  invisible()
+}
+cleanup_dir <- function(dir, envir = parent.frame()) {
+  withr::defer({ unlock_tree(dir); unlink(dir, recursive = TRUE, force = TRUE) }, envir = envir)
+  dir
+}
+
+real_lock <- function() read_lock(lock_path(), real_lock_sha())
+real_inventory <- function() {
+  installed_inventory(.libPaths(), file.path(analysis_dir(), "renv", "library"), real_lock()$packages)
+}
+# Fake installed.packages() matrix so version drift can be simulated without touching the library.
+fake_installed <- function(lib, packages, versions, priority = NA_character_) {
+  m <- cbind(Package = packages, LibPath = lib, Version = versions, Priority = priority)
+  rownames(m) <- packages
+  m
 }
