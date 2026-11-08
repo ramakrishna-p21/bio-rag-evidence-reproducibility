@@ -126,10 +126,14 @@ def test_policy_identity_changes_with_any_slot_or_version():
 
 
 def test_package_offers_no_way_to_select_a_policy():
-    """No module reads the environment, argv or a file, and none defines a fixture policy."""
+    """The contract modules read nothing; no module defines a fixture policy.
+
+    P9-B added modules that do read files and run Git; they are checked by the readiness CLI
+    tests (no environment access, no policy parameter on `main`).
+    """
     root = Path(models.__file__).parent
     imported, names = set(), set()
-    for path in root.glob("*.py"):
+    for path in (root / n for n in ("models.py", "policy.py", "decide.py")):
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.Import):
                 imported |= {a.name.split(".")[0] for a in node.names}
@@ -142,7 +146,14 @@ def test_package_offers_no_way_to_select_a_policy():
     assert not imported & {"os", "sys", "argparse", "subprocess", "pathlib", "tomllib", "json"}
     assert not names & {"environ", "getenv", "argv", "open", "read_text", "read_bytes"}
     assert [n for n in names if "fixture" in n.lower() or "synthetic" in n.lower()] == []
-    assert not any(p.name == "cli.py" for p in root.glob("*.py"))
+    for path in root.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        assert not [
+            n.name
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef | ast.ClassDef | ast.Assign)
+            and "fixture" in getattr(n, "name", "").lower()
+        ], path.name
 
 
 @pytest.mark.parametrize(
