@@ -53,15 +53,35 @@ OPERATIONAL_EVENTS: Final = (
     "batch_materialized",
     "batch_closed_incomplete",
 )
+# Published only into rehearsal roots (P10-C2B). In a final-test root the verifier treats them
+# like any other event that nothing is authorized to publish.
+REHEARSAL_EVENTS: Final = ("batch_inputs_bound", "batch_authorized")
 # Known to the schema so that a later pass can add them without a version change, but nothing
-# publishes them in P10-B and the verifier treats any occurrence as an unauthorized artifact.
-FUTURE_EVENTS: Final = (
-    "batch_inputs_bound",
-    "batch_authorized",
-    "batch_resumed",
-    "batch_completed",
-)
-EVENT_TYPES: Final = OPERATIONAL_EVENTS + FUTURE_EVENTS
+# publishes them and the verifier treats any occurrence as an unauthorized artifact.
+FUTURE_EVENTS: Final = ("batch_resumed", "batch_completed")
+EVENT_TYPES: Final = OPERATIONAL_EVENTS + REHEARSAL_EVENTS + FUTURE_EVENTS
+# Not part of `REQUIRED_ROLES`: the event model must parse these events exactly as before so
+# that a final-test root is judged by the same rules. The rehearsal verifier and publisher
+# enforce the roles. `inputs_binding` is the hash of the binding file; `run_record` is the hash
+# of the run record bytes decided before the event is written (they contain the run id).
+REHEARSAL_ROLES: Final = {
+    "batch_inputs_bound": ["batch_id", "materialization_event", "inputs_binding"],
+    "batch_authorized": [
+        "batch_id",
+        "inputs_bound_event",
+        "authorization_citation",
+        "run_record",
+        "readiness_report",
+    ],
+}
+# Rehearsal-only files, relative to the root.
+SESSION_LOCK_FILE: Final = "locks/session.lock"
+INPUTS_DIR: Final = "inputs"
+ROSTERS_DIR: Final = "rosters"
+BINDING_NAME: Final = "binding.json"
+CITATIONS_DIR: Final = "citations"
+CITATION_NAME: Final = "000001.json"
+RUNS_DIR: Final = "runs"
 # Exact evidence roles, in order, of the batch events. The values are SHA-256 digests; batch_id
 # and ownership are derived identities (see batches.py), not file hashes. The genesis event's
 # evidence is checked against the approved authorization by the inventory verifier.

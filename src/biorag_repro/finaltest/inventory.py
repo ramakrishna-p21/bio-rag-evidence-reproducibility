@@ -38,7 +38,13 @@ from pydantic import BaseModel
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.finaltest import layout
-from biorag_repro.finaltest.batches import BatchManifest, observed_state_sha256
+from biorag_repro.finaltest.batches import (
+    AuthorizationCitation,
+    BatchManifest,
+    citation_sha256,
+    observed_state_sha256,
+)
+from biorag_repro.finaltest.inputs import BatchInputBinding, ConditionRoster, roster_sha256
 from biorag_repro.finaltest.layout import (
     EvidenceCitation,
     HeadCheckpoint,
@@ -48,6 +54,7 @@ from biorag_repro.finaltest.layout import (
     RootRecord,
     StorageAuthorization,
 )
+from biorag_repro.finaltest.runrecord import FinalTestRunRecord
 from biorag_repro.generation.environment import utc_now
 from biorag_repro.readiness.files import FileProblem, loads_strict, read_regular
 from biorag_repro.readiness.history import (
@@ -63,6 +70,9 @@ _TEMP = re.compile(r"^\.(ROOT\.json|\d{6}\.json)\.[^/]+\.tmp$")
 _MANIFEST_TEMP = re.compile(r"^\.manifest\.json\.[^/]+\.tmp$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _BATCH_DIR = re.compile(r"^batches/[0-9a-f]{64}$")
+_RUN_DIR = re.compile(r"^runs/[0-9a-f]{32}$")
+_ANY_TEMP = re.compile(r"^\.[^/]+\.tmp$")
+_CITATION_FILE = re.compile(r"^\d{6}\.json$")
 # A registry beyond genesis is pinned by nothing outside the data root the registry shares, so
 # no verdict about it is positive. Genesis alone is pinned by the out-of-tree anchor.
 HEAD_NOT_ESTABLISHED_TEXT: Final = (
@@ -122,7 +132,22 @@ class _Entry:
     kind: str  # file, dir, link, other
 
 
-def _walk(directory_fd: int, prefix: str) -> list[_Entry]:
+def _enters(path: str, deep: bool) -> bool:
+    if path in (layout.REGISTRY_DIR, layout.LOCKS_DIR, layout.BATCHES_DIR) or _BATCH_DIR.match(
+        path
+    ):
+        return True
+    if not deep:  # final-test roots: nothing beyond the P10-B layout is looked into
+        return False
+    if path == layout.RUNS_DIR:  # the run directories are listed, never entered
+        return True
+    parts = path.split("/")
+    if len(parts) == 3 and parts[0] == layout.BATCHES_DIR:
+        return parts[2] in (layout.INPUTS_DIR, layout.CITATIONS_DIR)
+    return len(parts) == 4 and parts[2:] == [layout.INPUTS_DIR, layout.ROSTERS_DIR]
+
+
+def _walk(directory_fd: int, prefix: str, deep: bool) -> list[_Entry]:
     found: list[_Entry] = []
     with os.scandir(directory_fd) as listing:
         items = sorted(listing, key=lambda item: item.name)
@@ -137,28 +162,28 @@ def _walk(directory_fd: int, prefix: str) -> list[_Entry]:
         else:
             kind = "other"
         found.append(_Entry(path, kind))
-        enter = path in (layout.REGISTRY_DIR, layout.LOCKS_DIR, layout.BATCHES_DIR)
-        if kind == "dir" and (enter or _BATCH_DIR.match(path)):
+        if kind == "dir" and _enters(path, deep):
             flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
             inner = os.open(item.name, flags, dir_fd=directory_fd)
             try:
-                found += _walk(inner, path + "/")
+                found += _walk(inner, path + "/", deep)
             finally:
                 os.close(inner)
     return found
 
 
-def _scan(root: Path) -> list[_Entry]:
+def _scan(root: Path, deep: bool = False) -> list[_Entry]:
     """Every entry of the declared scope. Only the registry and lock directories are entered;
-    any other directory is one unexpected entry."""
+    any other directory is one unexpected entry. `deep` (rehearsal roots only) also enters the
+    input and citation directories of a batch and lists the run directories."""
     descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     try:
-        return _walk(descriptor, "")
+        return _walk(descriptor, "", deep)
     finally:
         os.close(descriptor)
 
 
-def _role(entry: _Entry) -> str:
+def _role(entry: _Entry, deep: bool = False) -> str:
     """How an entry is read: root, event, lock, dir, temp, wrongkind or unexpected."""
     path = entry.path
     if entry.kind in ("link", "other"):
@@ -185,6 +210,42 @@ def _role(entry: _Entry) -> str:
             return "manifest" if entry.kind == "file" else "wrongkind"
         if entry.kind == "file" and _MANIFEST_TEMP.match(name):
             return "batchtemp"
+    return _rehearsal_role(entry, deep) if deep else "unexpected"
+
+
+def _rehearsal_role(entry: _Entry, deep: bool) -> str:
+    """Roles that exist in rehearsal roots only; anywhere else these paths are unexpected."""
+    path = entry.path
+    name = path.rpartition("/")[2]
+    parts = path.split("/")
+    expected_dirs = (layout.RUNS_DIR,)
+    if path in expected_dirs or (
+        len(parts) == 3
+        and parts[0] == layout.BATCHES_DIR
+        and parts[2] in (layout.INPUTS_DIR, layout.CITATIONS_DIR)
+    ):
+        return "dir" if entry.kind == "dir" else "wrongkind"
+    if path == layout.SESSION_LOCK_FILE:
+        return "lock" if entry.kind == "file" else "wrongkind"
+    if _RUN_DIR.match(path):
+        return "rundir" if entry.kind == "dir" else "wrongkind"
+    if len(parts) == 4 and parts[0] == layout.BATCHES_DIR and parts[2] == layout.INPUTS_DIR:
+        if name == layout.BINDING_NAME:
+            return "binding" if entry.kind == "file" else "wrongkind"
+        if name == layout.ROSTERS_DIR:
+            return "dir" if entry.kind == "dir" else "wrongkind"
+        if entry.kind == "file" and _ANY_TEMP.match(name):
+            return "batchtemp"
+    if len(parts) == 5 and parts[2:4] == [layout.INPUTS_DIR, layout.ROSTERS_DIR]:
+        if entry.kind == "file" and re.fullmatch(r"[0-9a-f]{64}\.json", name):
+            return "roster" if entry.kind == "file" else "wrongkind"
+        if entry.kind == "file" and _ANY_TEMP.match(name):
+            return "batchtemp"
+    if len(parts) == 4 and parts[0] == layout.BATCHES_DIR and parts[2] == layout.CITATIONS_DIR:
+        if entry.kind == "file" and _CITATION_FILE.match(name):
+            return "citation"
+        if entry.kind == "file" and _ANY_TEMP.match(name):
+            return "batchtemp"
     return "unexpected"
 
 
@@ -201,6 +262,27 @@ def _parse(model: type[BaseModel], data: bytes, what: str, problems: list[Proble
         problems.append(("unverified", f"{what} is not a valid record: {str(error)[:200]}"))
         return None
     return record
+
+
+@dataclass
+class _Artifacts:
+    """Rehearsal-only files found below the batches and the run directories found."""
+
+    binding: dict[str, bytes | None] = field(default_factory=dict)
+    rosters: dict[str, dict[str, bytes | None]] = field(default_factory=dict)
+    citations: dict[str, dict[str, bytes | None]] = field(default_factory=dict)
+    runs: dict[str, bytes | None] = field(default_factory=dict)  # run id -> run.json bytes
+    runs_dir: bool = False
+
+    def add(self, role: str, path: str, data: bytes | None) -> None:
+        parts = path.split("/")
+        batch, name = parts[1], parts[-1]
+        if role == "binding":
+            self.binding[batch] = data
+        elif role == "roster":
+            self.rosters.setdefault(batch, {})[name[:-5]] = data
+        else:
+            self.citations.setdefault(batch, {})[name] = data
 
 
 @dataclass
@@ -306,10 +388,11 @@ def verify_root(
     history class and `head_authority` stays `not_established`.
     """
     _check_location(root, authorization)
+    rehearsal = authorization.root_kind == "rehearsal"
     if not os.path.lexists(root):
         raise AuthorityNotEstablished("not_initialized", "no storage at the approved location")
     try:
-        entries = _scan(root)
+        entries = _scan(root, rehearsal)
     except OSError as error:
         raise AuthorityNotEstablished("root_location", str(error)) from error
     if not entries:
@@ -317,12 +400,13 @@ def verify_root(
 
     expected_id = layout.root_id_for(authorization)
     problems: list[Problem] = []
-    roles = {entry.path: _role(entry) for entry in entries}
+    roles = {entry.path: _role(entry, rehearsal) for entry in entries}
     hashes: dict[str, str] = {}
     registry_bytes: dict[int, bytes | None] = {}
     root_bytes: bytes | None = None
     manifest_bytes: dict[str, bytes | None] = {}
     batch_dirs: set[str] = set()
+    artifacts = _Artifacts()
 
     for entry in entries:
         role = roles[entry.path]
@@ -339,6 +423,17 @@ def verify_root(
             manifest_bytes[batch] = data = _read(root, entry.path, problems)
             if data is not None:
                 hashes[entry.path] = sha256_bytes(data)
+        elif role in ("binding", "roster", "citation"):
+            data = _read(root, entry.path, problems)
+            if data is not None:
+                hashes[entry.path] = sha256_bytes(data)
+            artifacts.add(role, entry.path, data)
+        elif role == "dir" and entry.path == layout.RUNS_DIR:
+            artifacts.runs_dir = True
+        elif role == "rundir":
+            artifacts.runs[entry.path.rpartition("/")[2]] = _read(
+                root, entry.path + "/run.json", problems
+            )
         elif role == "lock":
             data = _read(root, entry.path, problems)
             if data:
@@ -399,7 +494,14 @@ def verify_root(
 
     head = max(registry_bytes) if registry_bytes else None
     batches, reconcile = _check_batches(
-        registry.events, hashes, manifest_bytes, batch_dirs, authorization, expected_id, problems
+        registry.events,
+        hashes,
+        manifest_bytes,
+        batch_dirs,
+        authorization,
+        expected_id,
+        problems,
+        artifacts if rehearsal else None,
     )
     if layout.BATCHES_DIR in roles and not batches:
         problems.append(("unexpected", "batches directory without any reservation"))
@@ -542,8 +644,15 @@ def _check_batches(
     authorization: StorageAuthorization,
     root_id: str,
     problems: list[Problem],
+    artifacts: _Artifacts | None = None,
 ) -> tuple[dict[str, BatchRecord], dict[str, tuple[str, str]]]:
-    """Fold the batch events into per-batch states and check them against the files."""
+    """Fold the batch events into per-batch states and check them against the files.
+
+    `artifacts` is given for rehearsal roots only; for a final-test root the two rehearsal
+    event types are unauthorized, exactly like the types nothing may publish.
+    """
+    rehearsal = artifacts is not None
+    claimed_runs: set[str] = set()
     state: dict[str, dict[str, Any]] = {}
     plans: set[str] = set()
     for number in sorted(events):
@@ -551,10 +660,15 @@ def _check_batches(
         if event is None or number == 1 or event.event_type == "root_initialized":
             continue
         kind = event.event_type
-        if kind in layout.FUTURE_EVENTS:
+        if kind in layout.FUTURE_EVENTS or (kind in layout.REHEARSAL_EVENTS and not rehearsal):
             problems.append(("unexpected", f"event {number} has the unauthorized type {kind}"))
             continue
         cited = {c.role: c.sha256 for c in event.evidence}
+        if kind in layout.REHEARSAL_EVENTS:
+            wanted_roles = layout.REHEARSAL_ROLES[kind]
+            if [c.role for c in event.evidence] != wanted_roles:
+                problems.append(("conflicting", f"event {number} does not cite {wanted_roles}"))
+                continue
         batch = cited["batch_id"]
         file_sha = hashes.get(f"{layout.REGISTRY_DIR}/{number:06d}.json")
         short = batch[:12]
@@ -583,6 +697,20 @@ def _check_batches(
         if info is None:
             problems.append(("conflicting", f"event {number} concerns an unreserved batch {short}"))
             continue
+        if kind in layout.REHEARSAL_EVENTS and artifacts is not None:
+            _fold_rehearsal(
+                kind,
+                number,
+                batch,
+                info,
+                cited,
+                file_sha,
+                artifacts,
+                root_id,
+                claimed_runs,
+                problems,
+            )
+            continue
         if info["state"] != "reserved":
             problems.append(
                 ("conflicting", f"event {number} follows batch {short} {info['state']}")
@@ -594,6 +722,7 @@ def _check_batches(
                 problems.append(("conflicting", f"event {number} cites another manifest"))
             else:
                 info["state"] = "materialized"
+                info["materialization"] = file_sha
         elif cited["observed_state"] not in (
             observed_state_sha256(None, False),
             observed_state_sha256(info["manifest"], False),
@@ -629,13 +758,188 @@ def _check_batches(
                 text = f"batch {short} is published but not materialized"
                 reconcile[batch] = ("reserved_published", f"incomplete: {text}")
                 problems.append(("incomplete", text))
-        elif info["state"] == "materialized" and batch not in manifests:
+        elif info["state"] in _PAST_MATERIALIZED and batch not in manifests:
             problems.append(("incomplete", f"materialized batch {short} has no manifest"))
+    if artifacts is not None:
+        _check_unclaimed(state, artifacts, claimed_runs, problems)
     records = {
         batch: BatchRecord(info["state"], info["plan"], info["ownership"], info["manifest"])
         for batch, info in state.items()
     }
     return records, reconcile
+
+
+_PAST_MATERIALIZED = ("materialized", "inputs_bound", "authorized")
+
+
+def _canonical(model: type[BaseModel], data: bytes | None) -> Any:
+    """The record if `data` is exactly its canonical serialization, else None."""
+    if data is None:
+        return None
+    try:
+        record = model.model_validate(loads_strict(data), strict=True)
+    except ValueError:
+        return None
+    return record if layout.serialize(record) == data else None
+
+
+def _fold_rehearsal(
+    kind: str,
+    number: int,
+    batch: str,
+    info: dict[str, Any],
+    cited: dict[str, str],
+    file_sha: str | None,
+    artifacts: _Artifacts,
+    root_id: str,
+    claimed_runs: set[str],
+    problems: list[Problem],
+) -> None:
+    short = batch[:12]
+    if kind == "batch_inputs_bound":
+        if info["state"] != "materialized":
+            problems.append(
+                ("conflicting", f"event {number} follows batch {short} {info['state']}")
+            )
+        elif cited["materialization_event"] != info.get("materialization"):
+            problems.append(("conflicting", f"event {number} cites another materialization"))
+        elif _check_inputs(batch, cited["inputs_binding"], info, artifacts, root_id, problems):
+            info.update(
+                state="inputs_bound", binding=cited["inputs_binding"], inputs_event=file_sha
+            )
+        return
+    if info["state"] != "inputs_bound":
+        problems.append(("conflicting", f"event {number} follows batch {short} {info['state']}"))
+    elif cited["inputs_bound_event"] != info.get("inputs_event"):
+        problems.append(("conflicting", f"event {number} cites another inputs event"))
+    elif _check_authorization(batch, cited, info, artifacts, claimed_runs, problems):
+        info["state"] = "authorized"
+
+
+def _check_inputs(
+    batch: str,
+    binding_sha: str,
+    info: dict[str, Any],
+    artifacts: _Artifacts,
+    root_id: str,
+    problems: list[Problem],
+) -> bool:
+    short = batch[:12]
+    data = artifacts.binding.get(batch)
+    if data is None:
+        problems.append(("incomplete", f"batch {short} has bound inputs but no binding file"))
+        return False
+    binding = _canonical(BatchInputBinding, data)
+    if sha256_bytes(data) != binding_sha or binding is None:
+        problems.append(("conflicting", f"binding of batch {short} differs from its event"))
+        return False
+    if (binding.batch_id, binding.root_id, binding.manifest_sha256) != (
+        batch,
+        root_id,
+        info["manifest"],
+    ) or binding.campaign_plan_sha256 != info["plan"]:
+        problems.append(("conflicting", f"binding of batch {short} names another batch or plan"))
+        return False
+    files = artifacts.rosters.get(batch, {})
+    good = True
+    for ref in binding.rosters:
+        roster = _canonical(ConditionRoster, files.get(ref.roster_sha256))
+        if ref.roster_sha256 not in files or files[ref.roster_sha256] is None:
+            problems.append(
+                ("incomplete", f"roster {ref.roster_sha256[:12]} of {short} is missing")
+            )
+            good = False
+        elif roster is None or roster_sha256(roster) != ref.roster_sha256:
+            problems.append(
+                ("conflicting", f"roster {ref.roster_sha256[:12]} of {short} is invalid")
+            )
+            good = False
+        elif (roster.batch_id, roster.condition, len(roster.rows)) != (
+            batch,
+            ref.condition,
+            ref.row_count,
+        ):
+            problems.append(("conflicting", f"roster {ref.roster_sha256[:12]} disagrees"))
+            good = False
+    for extra in sorted(set(files) - {r.roster_sha256 for r in binding.rosters}):
+        problems.append(("unexpected", f"roster {extra[:12]} is not in the binding of {short}"))
+        good = False
+    return good
+
+
+def _check_authorization(
+    batch: str,
+    cited: dict[str, str],
+    info: dict[str, Any],
+    artifacts: _Artifacts,
+    claimed_runs: set[str],
+    problems: list[Problem],
+) -> bool:
+    short = batch[:12]
+    files = artifacts.citations.get(batch, {})
+    data = files.get(layout.CITATION_NAME)
+    for extra in sorted(set(files) - {layout.CITATION_NAME}):
+        problems.append(("unexpected", f"citation {extra} of batch {short} is not authorized"))
+    if data is None:
+        problems.append(("incomplete", f"authorized batch {short} has no citation file"))
+        return False
+    citation = _canonical(AuthorizationCitation, data)
+    if citation is None or sha256_bytes(data) != cited["authorization_citation"]:
+        problems.append(("conflicting", f"citation of batch {short} differs from its event"))
+        return False
+    if (
+        citation.batch_id != batch
+        or citation.inputs_set_sha256 != info["binding"]
+        or citation.readiness_report_sha256 != cited["readiness_report"]
+        or citation_sha256(citation) != cited["authorization_citation"]
+    ):
+        problems.append(("conflicting", f"citation of batch {short} is about other evidence"))
+        return False
+    matches = [
+        run_id
+        for run_id, run_bytes in artifacts.runs.items()
+        if run_bytes is not None and sha256_bytes(run_bytes) == cited["run_record"]
+    ]
+    if not matches:
+        problems.append(("incomplete", f"authorized batch {short} has no run record"))
+        return False
+    run_id = matches[0]
+    record = _canonical(FinalTestRunRecord, artifacts.runs[run_id])
+    if record is None or (
+        record.run_id,
+        record.batch_id,
+        record.inputs_set_sha256,
+        record.authorization_citation_sha256,
+        record.root_kind,
+    ) != (run_id, batch, info["binding"], cited["authorization_citation"], "rehearsal"):
+        problems.append(("conflicting", f"run record of batch {short} is about other evidence"))
+        return False
+    claimed_runs.add(run_id)
+    return True
+
+
+def _check_unclaimed(
+    state: dict[str, dict[str, Any]],
+    artifacts: _Artifacts,
+    claimed_runs: set[str],
+    problems: list[Problem],
+) -> None:
+    if artifacts.runs_dir and not any(i["state"] == "authorized" for i in state.values()):
+        problems.append(("unexpected", "runs directory without an authorized batch"))
+    for run_id in sorted(set(artifacts.runs) - claimed_runs):
+        problems.append(("unexpected", f"run directory {run_id[:12]} is not an authorized run"))
+    for batch in sorted(set(artifacts.binding) | set(artifacts.rosters) | set(artifacts.citations)):
+        known = state.get(batch, {}).get("state")
+        if known is None:
+            problems.append(("unexpected", f"inputs of the unreserved batch {batch[:12]}"))
+        elif batch in artifacts.binding and known in (
+            "reserved",
+            "materialized",
+            "closed_incomplete",
+        ):
+            problems.append(("unexpected", f"binding of batch {batch[:12]} has no inputs event"))
+        elif batch in artifacts.citations and known != "authorized":
+            problems.append(("unexpected", f"citation of batch {batch[:12]} has no event"))
 
 
 def _manifest_consistent(
@@ -688,12 +992,27 @@ def _classify(problems: list[Problem]) -> str:
 # ---- lock ----------------------------------------------------------------------------------
 
 
+_HELD_HERE: set[Path] = set()  # roots whose registry lock this process holds right now
+
+
+def registry_lock_held_here(root: Path) -> bool:
+    return root in _HELD_HERE
+
+
+@dataclass(frozen=True)
+class HeldLock:
+    """Proof, by construction only, that the caller is inside `registry_lock` of `root`."""
+
+    root: Path
+
+
 @contextmanager
-def registry_lock(root: Path) -> Iterator[None]:
+def registry_lock(root: Path) -> Iterator[HeldLock]:
     """Exclusive non-blocking `flock` on the registry lock file.
 
     Valid on a local file system on one host. It is not evidence that the lock works on a
-    shared or network file system.
+    shared or network file system. The yielded token is a structural reminder for the
+    functions that must run under the lock; it is not a security credential.
     """
     flags = os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
     descriptor = os.open(root / layout.LOCK_FILE, flags, 0o644)
@@ -702,7 +1021,11 @@ def registry_lock(root: Path) -> Iterator[None]:
             fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise RegistryBusy(f"another holder has the registry lock of {root}") from None
-        yield
+        _HELD_HERE.add(root)
+        try:
+            yield HeldLock(root)
+        finally:
+            _HELD_HERE.discard(root)
     finally:
         os.close(descriptor)
 

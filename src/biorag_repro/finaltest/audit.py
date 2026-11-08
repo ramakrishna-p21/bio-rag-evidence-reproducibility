@@ -44,7 +44,11 @@ from biorag_repro.finaltest.inputs import (
     retry_policy_sha256,
 )
 from biorag_repro.finaltest.layout import serialize
-from biorag_repro.finaltest.runrecord import FinalTestRunRecord, run_record_sha256
+from biorag_repro.finaltest.runrecord import (
+    FinalTestRunRecord,
+    run_record_projection,
+    run_record_sha256,
+)
 from biorag_repro.generation.attempts import (
     AttemptEvent,
     CorruptRecord,
@@ -52,7 +56,6 @@ from biorag_repro.generation.attempts import (
     LifecycleError,
     NotPlanned,
     ObservationState,
-    RunRecord,
     check_no_duplicate_completions,
     retry_policy_of,
 )
@@ -163,22 +166,10 @@ def open_view(
 ) -> ReadOnlyRunView:
     """The read-only store view of a final-test run.
 
-    `RunRecord` is built without validation only so that the existing read paths compute keys
-    with phase "final_test"; the projection is never serialized or stored.
+    The projection validates every field as a development record and only then replaces the
+    phase (`runrecord.run_record_projection`); it is never serialized or stored.
     """
-    projection = RunRecord.model_construct(
-        run_id=record.run_id,
-        created_utc=record.created_utc,
-        phase="final_test",
-        benchmark_version=record.benchmark_version,
-        resolved_config_sha256=record.resolved_config_sha256,
-        raw_config_sha256=record.raw_config_sha256,
-        purpose=record.purpose,
-        matrix_arm=record.matrix_arm,
-        backend_kind=record.backend_kind,
-        retry=record.retry,
-    )
-    return read_only_view(data_root, projection, run_sha, config)
+    return read_only_view(data_root, run_record_projection(record), run_sha, config)
 
 
 def audit_run(data_root: Path, run_id: str, context: AuditContext) -> RunAudit:

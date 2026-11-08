@@ -523,3 +523,20 @@ def test_closed_book_inputs_have_no_context_reference(world):
     built = build(world, scope=scope, sources=[], renderer=renderer)
     assert built.entries[0].input_record.context is None
     assert built.record.rows[0].input_record is not None
+
+
+# ---- stability of the serialized development roster -----------------------------------------
+
+GOLDEN_ROSTER_SHA256 = "f52516421255acd30f9dbaafed447edea25e32786a36e70510cfd90523901a84"
+GOLDEN_ENTRY_SHA256 = "f8cc9e5b62ec32ee878dd44f9a2e3908d55a2baee231b00eeeb58c9fef5158ad"
+
+
+def test_development_roster_bytes_are_stable_across_refactoring(world):
+    """Digests recorded before the rendering loop was shared with the final-test pipeline."""
+    directory, record_sha, _, _, _ = world
+    scope = make_scope(directory, record_sha, {"q_a", "q_b"}, repeats=(1, 2))
+    built = build(world, scope=scope)
+    entries = sha256_bytes(
+        json.dumps([e.model_dump(mode="json") for e in built.entries], sort_keys=True).encode()
+    )
+    assert (built.sha256, entries) == (GOLDEN_ROSTER_SHA256, GOLDEN_ENTRY_SHA256)

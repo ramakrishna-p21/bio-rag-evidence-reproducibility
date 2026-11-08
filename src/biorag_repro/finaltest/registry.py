@@ -23,6 +23,7 @@ protocol that does not exist. Anything else that is incomplete stays blocked.
 """
 
 import os
+import re
 from collections.abc import Callable
 from pathlib import Path
 
@@ -30,6 +31,7 @@ from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.finaltest import layout
 from biorag_repro.finaltest.batches import (
+    BatchManifest,
     batch_id_for,
     make_manifest,
     observed_state_sha256,
@@ -38,6 +40,7 @@ from biorag_repro.finaltest.batches import (
 from biorag_repro.finaltest.campaign import CampaignPlan, plan_sha256
 from biorag_repro.finaltest.inventory import (
     HEAD_NOT_ESTABLISHED_TEXT,
+    HeldLock,
     RootVerdict,
     registry_lock,
     verify_root,
@@ -81,6 +84,13 @@ def _registry_files(root: Path) -> dict[int, bytes]:
         for name in sorted(os.listdir(directory))
         if layout.EVENT_NAME.match(name)
     }
+
+
+def registry_head(root: Path) -> tuple[int, str]:
+    """Sequence and file hash of the newest registry event, read without following links."""
+    files = _registry_files(root)
+    number = max(files)
+    return number, sha256_bytes(files[number])
 
 
 def _witness_path(witness_dir: Path, root_id: str, number: int) -> Path:
@@ -171,6 +181,18 @@ def reserve_batch(
 ) -> str:
     """Reserve one matrix arm and publish its manifest. Returns the batch id."""
     _require_rehearsal(authorization)
+    identity = _reservation_identity(authorization, plan, matrix_arm)  # before taking the lock
+    with registry_lock(root) as held:
+        return reserve_locked(
+            held, root, authorization, anchors, witnesses, plan, matrix_arm,
+            now=now, identity=identity,
+        )  # fmt: skip
+
+
+def _reservation_identity(
+    authorization: StorageAuthorization, plan: CampaignPlan, matrix_arm: str
+) -> tuple[str, str, str]:
+    """Root id, plan hash and batch id; refuses a plan that is not for this root and arm."""
     if (plan.benchmark_release_sha256, plan.corpus_content_sha256) != (
         authorization.benchmark_release_sha256,
         authorization.corpus_content_sha256,
@@ -180,39 +202,113 @@ def reserve_batch(
         raise ProtocolRefused(f"the plan has no arm {matrix_arm}")
     root_id = layout.root_id_for(authorization)
     plan_sha = plan_sha256(plan)
-    batch_id = batch_id_for(root_id, plan_sha, matrix_arm)
-    with registry_lock(root):
-        verdict = _verified(root, authorization, anchors, witnesses)
-        _clean(verdict)
-        if verdict.registry_head_sequence == 1:
-            _ensure_genesis_witness(root, witnesses, root_id, now)
-        if batch_id in verdict.batches:
-            raise ProtocolRefused("this arm is already reserved; one reservation per arm")
+    return root_id, plan_sha, batch_id_for(root_id, plan_sha, matrix_arm)
+
+
+def reserve_locked(
+    held: HeldLock,
+    root: Path,
+    authorization: StorageAuthorization,
+    anchors: Path,
+    witnesses: Path,
+    plan: CampaignPlan,
+    matrix_arm: str,
+    *,
+    now: Callable[[], str] = utc_now,
+    manifest: BatchManifest | None = None,
+    identity: tuple[str, str, str] | None = None,
+) -> str:
+    """`reserve_batch` for a caller that already holds the registry lock.
+
+    A `manifest` decided in advance (so that inputs can be bound to its digest before anything
+    is written) must be exactly the manifest this plan and arm produce.
+    """
+    _require_rehearsal(authorization)
+    _require_held(held, root)
+    root_id, plan_sha, batch_id = identity or _reservation_identity(authorization, plan, matrix_arm)
+    verdict = _verified(root, authorization, anchors, witnesses)
+    _clean(verdict)
+    if verdict.registry_head_sequence == 1:
+        _ensure_genesis_witness(root, witnesses, root_id, now)
+    if batch_id in verdict.batches:
+        raise ProtocolRefused("this arm is already reserved; one reservation per arm")
+    if manifest is None:
         manifest = make_manifest(root_id, plan, matrix_arm, now())
-        claim = ownership_sha256(
-            authorization.benchmark_release_sha256, matrix_arm, manifest.resolved_config_sha256
-        )
-        for held in verdict.batches.values():
-            if held.ownership_sha256 == claim:
-                raise ProtocolRefused("the observation keys of this arm are already claimed")
-            if held.campaign_plan_sha256 != plan_sha:
-                raise ProtocolRefused("the root already holds batches of another campaign plan")
-        data = layout.serialize(manifest)
-        _append(
-            root,
-            witnesses,
-            root_id,
-            "batch_reserved",
-            [
-                EvidenceCitation(role="campaign_plan", sha256=plan_sha),
-                EvidenceCitation(role="batch_id", sha256=batch_id),
-                EvidenceCitation(role="ownership", sha256=claim),
-                EvidenceCitation(role="batch_manifest", sha256=sha256_bytes(data)),
-            ],
-            now,
-        )
-        _publish_manifest(root, batch_id, data)
+    elif manifest != make_manifest(root_id, plan, matrix_arm, manifest.created_utc):
+        raise ProtocolRefused("the prepared manifest is not the manifest of this plan and arm")
+    claim = ownership_sha256(
+        authorization.benchmark_release_sha256, matrix_arm, manifest.resolved_config_sha256
+    )
+    for batch in verdict.batches.values():
+        if batch.ownership_sha256 == claim:
+            raise ProtocolRefused("the observation keys of this arm are already claimed")
+        if batch.campaign_plan_sha256 != plan_sha:
+            raise ProtocolRefused("the root already holds batches of another campaign plan")
+    data = layout.serialize(manifest)
+    _append(
+        root,
+        witnesses,
+        root_id,
+        "batch_reserved",
+        [
+            EvidenceCitation(role="campaign_plan", sha256=plan_sha),
+            EvidenceCitation(role="batch_id", sha256=batch_id),
+            EvidenceCitation(role="ownership", sha256=claim),
+            EvidenceCitation(role="batch_manifest", sha256=sha256_bytes(data)),
+        ],
+        now,
+    )
+    _publish_manifest(root, batch_id, data)
     return batch_id
+
+
+def _require_held(held: HeldLock, root: Path) -> None:
+    if held.root != root:
+        raise ProtocolRefused("the registry lock held is not the lock of this root")
+
+
+_BATCH_FILE = re.compile(
+    r"^batches/[0-9a-f]{64}/(inputs/binding\.json|inputs/rosters/[0-9a-f]{64}\.json|citations/000001\.json)$"
+)
+
+
+def append_event_locked(
+    held: HeldLock,
+    root: Path,
+    authorization: StorageAuthorization,
+    witnesses: Path,
+    event_type: str,
+    evidence: list[EvidenceCitation],
+    *,
+    now: Callable[[], str] = utc_now,
+) -> int:
+    """Append `batch_inputs_bound` or `batch_authorized` to a rehearsal root, then witness it.
+
+    Only the two rehearsal event types, only with their exact evidence roles, only into a
+    rehearsal root and only under the registry lock. The caller has verified the root.
+    """
+    _require_rehearsal(authorization)
+    _require_held(held, root)
+    if event_type not in layout.REHEARSAL_ROLES:
+        raise ProtocolRefused(f"{event_type} is not a rehearsal event")
+    if [c.role for c in evidence] != layout.REHEARSAL_ROLES[event_type]:
+        raise ProtocolRefused(
+            f"{event_type} must cite exactly {layout.REHEARSAL_ROLES[event_type]}"
+        )
+    return _append(root, witnesses, layout.root_id_for(authorization), event_type, evidence, now)
+
+
+def publish_batch_file(
+    held: HeldLock, root: Path, authorization: StorageAuthorization, relative: str, data: bytes
+) -> None:
+    """Publish one input, roster or citation file of a rehearsal batch, read-only, no clobber."""
+    _require_rehearsal(authorization)
+    _require_held(held, root)
+    if _BATCH_FILE.fullmatch(relative) is None:
+        raise ProtocolRefused(f"{relative} is not a batch file this protocol publishes")
+    target = root / relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _publish(target, data)
 
 
 def _reservation_sha(root: Path, batch_id: str, verdict: RootVerdict) -> str:
@@ -235,29 +331,44 @@ def materialize_batch(
 ) -> None:
     """Record that a reserved batch's manifest is published. This is not authorization."""
     _require_rehearsal(authorization)
+    with registry_lock(root) as held:
+        materialize_locked(held, root, authorization, anchors, witnesses, batch_id, now=now)
+
+
+def materialize_locked(
+    held: HeldLock,
+    root: Path,
+    authorization: StorageAuthorization,
+    anchors: Path,
+    witnesses: Path,
+    batch_id: str,
+    *,
+    now: Callable[[], str] = utc_now,
+) -> None:
+    _require_rehearsal(authorization)
+    _require_held(held, root)
     root_id = layout.root_id_for(authorization)
-    with registry_lock(root):
-        verdict = _verified(root, authorization, anchors, witnesses)
-        found = verdict.reconcile.get(batch_id)
-        if found is None or found[0] != "reserved_published":
-            raise ProtocolRefused("the batch is not reserved with a published manifest")
-        _clean(verdict, {found[1]})
-        _append(
-            root,
-            witnesses,
-            root_id,
-            "batch_materialized",
-            [
-                EvidenceCitation(role="batch_id", sha256=batch_id),
-                EvidenceCitation(
-                    role="batch_manifest", sha256=verdict.batches[batch_id].manifest_sha256
-                ),
-                EvidenceCitation(
-                    role="reservation_event", sha256=_reservation_sha(root, batch_id, verdict)
-                ),
-            ],
-            now,
-        )
+    verdict = _verified(root, authorization, anchors, witnesses)
+    found = verdict.reconcile.get(batch_id)
+    if found is None or found[0] != "reserved_published":
+        raise ProtocolRefused("the batch is not reserved with a published manifest")
+    _clean(verdict, {found[1]})
+    _append(
+        root,
+        witnesses,
+        root_id,
+        "batch_materialized",
+        [
+            EvidenceCitation(role="batch_id", sha256=batch_id),
+            EvidenceCitation(
+                role="batch_manifest", sha256=verdict.batches[batch_id].manifest_sha256
+            ),
+            EvidenceCitation(
+                role="reservation_event", sha256=_reservation_sha(root, batch_id, verdict)
+            ),
+        ],
+        now,
+    )
 
 
 def close_incomplete(

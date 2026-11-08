@@ -32,7 +32,7 @@ def mentions(path: Path, name: str) -> bool:
 
 def test_run_record_type_is_known_only_to_its_schema_and_the_audit():
     users = {p.name for p in SRC.rglob("*.py") if mentions(p, "FinalTestRunRecord")}
-    assert users == {"runrecord.py", "audit.py"}
+    assert users == {"runrecord.py", "audit.py", "inventory.py", "start.py", "finaltest_store.py"}
 
 
 def test_no_run_store_constructor_takes_the_final_test_record():
@@ -95,8 +95,15 @@ def test_registry_events_are_not_activated():
         "batch_materialized",
         "batch_closed_incomplete",
     }
+    # P10-C2B publishes the two rehearsal events; only the rehearsal-gated modules mention them
+    assert layout.REHEARSAL_EVENTS == ("batch_inputs_bound", "batch_authorized")
     for text in ("batch_inputs_bound", "batch_authorized"):
-        assert text not in (FINALTEST / "registry.py").read_text(encoding="utf-8")
+        users = {p.name for p in SRC.rglob("*.py") if text in p.read_text(encoding="utf-8")}
+        assert (
+            {"layout.py", "start.py"}
+            <= users
+            <= {"layout.py", "inventory.py", "registry.py", "start.py"}
+        ), (text, users)
 
 
 def test_existing_final_test_refusals_stand(monkeypatch, tmp_path):
@@ -116,7 +123,7 @@ def test_existing_final_test_refusals_stand(monkeypatch, tmp_path):
         RunRecord.model_validate({"phase": "final_test"})
 
 
-def test_the_only_run_store_subclass_is_the_read_only_view():
+def test_the_only_run_store_subclasses_are_the_read_only_view_and_the_guarded_store():
     found = {}
     for path in SRC.rglob("*.py"):
         for node in ast.walk(tree(path)):
@@ -124,4 +131,4 @@ def test_the_only_run_store_subclass_is_the_read_only_view():
                 getattr(b, "id", "") == "RunStore" for b in node.bases
             ):
                 found[node.name] = path.name
-    assert found == {"ReadOnlyRunView": "readonly.py"}
+    assert found == {"ReadOnlyRunView": "readonly.py", "FinalTestStore": "finaltest_store.py"}

@@ -33,14 +33,17 @@ def names_defined(tree: ast.AST) -> set[str]:
 
 
 def test_no_execution_entrypoint_exists():
-    forbidden = {"create_final_test", "open_final_test", "start_batch", "resume_batch"}
+    # P10-C2B defines start_batch, which always refuses; it exists only in finaltest/start.py
+    forbidden = {"create_final_test", "open_final_test", "resume_batch"}
     for path in SRC.rglob("*.py"):
         assert not names_defined(ast.parse(path.read_text(encoding="utf-8"))) & forbidden, path
+        defined = names_defined(ast.parse(path.read_text(encoding="utf-8")))
+        assert "start_batch" not in defined or path.name == "start.py", path
 
 
 def test_the_guard_still_has_no_caller_in_the_package():
     for path in SRC.rglob("*.py"):
-        if path.name == "guard.py":
+        if path.name in ("guard.py", "start.py"):  # start.py calls it and always refuses after
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
         used = any(

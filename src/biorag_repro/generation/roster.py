@@ -7,7 +7,7 @@ independent selection; the generator input is rendered from that exact text and 
 is truncated. A closed-book roster carries no context at all.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Self
@@ -123,6 +123,104 @@ def _read_source(source: ContextSource, renderer: InputRenderer) -> ContextRecor
     )
 
 
+@dataclass(frozen=True)
+class ItemFacts:
+    """What rendering needs to know about one item. The question never leaves this step."""
+
+    item_id: str
+    paper_id: str
+    question: str
+    item_sha256: str
+
+
+@dataclass(frozen=True)
+class ObservationContext:
+    """An assembled context as the renderer receives it; None stands for closed book."""
+
+    exact_context: str
+    generator_tokens: int
+    reference: ArtifactRef | None
+
+
+def render_observations(
+    *,
+    phase: str,
+    benchmark_version: str,
+    items: Mapping[str, ItemFacts],
+    conditions: Sequence[str],
+    repeats: Sequence[int],
+    renderer: InputRenderer,
+    contexts: Mapping[tuple[str, str], ObservationContext | None],
+) -> tuple[list[RosterEntry], list[RosterRow]]:
+    """Rendered input, stored input record and roster row of every (item, condition, repeat).
+
+    Shared by the development roster and the final-test pipeline so that rendering, the
+    observation key and the stored input are one implementation. Membership, the question
+    source and the context source are the caller's responsibility; the result is sorted.
+    """
+    settings = renderer.config.settings
+    entries: list[RosterEntry] = []
+    rows: list[RosterRow] = []
+    wanted = {(item_id, condition) for item_id in items for condition in conditions}
+    for item_id, condition in sorted(wanted):
+        item = items[item_id]
+        assembled = contexts[(item_id, condition)]
+        try:
+            rendered: RenderedInput = renderer.render(
+                item.question,
+                None if assembled is None else assembled.exact_context,
+                None if assembled is None else assembled.generator_tokens,
+            )
+        except ValueError as error:
+            raise RosterMismatch(f"{item_id}/{condition}: {error}") from error
+        if assembled is not None and rendered.context != assembled.exact_context:
+            raise RosterMismatch(f"{item_id}/{condition}: rendered context differs from assembled")
+        ref = None if assembled is None else assembled.reference
+        for repeat in repeats:
+            obs_key = observation_key(
+                phase=phase,
+                benchmark_version=benchmark_version,
+                item_id=item_id,
+                matrix_arm=settings.matrix_arm,
+                representation_or_condition=condition,
+                repeat_index=repeat,
+                resolved_config_sha256=renderer.config.configuration_sha256,
+            )
+            try:
+                stored = build_input_record(
+                    renderer, rendered, observation_key=obs_key, context=ref
+                )
+            except ValueError as error:
+                raise RosterMismatch(f"{item_id}/{condition}: {error}") from error
+            entries.append(
+                RosterEntry(
+                    item_id=item_id,
+                    paper_id=item.paper_id,
+                    representation_or_condition=condition,
+                    repeat_index=repeat,
+                    rendered=rendered,
+                    input_record=stored,
+                )
+            )
+            rows.append(
+                RosterRow(
+                    item_id=item_id,
+                    item_sha256=item.item_sha256,
+                    paper_id=item.paper_id,
+                    condition=condition,
+                    repeat_index=repeat,
+                    rendered_input_sha256=rendered.rendered_sha256,
+                    input_tokens=rendered.input_tokens,
+                    context=ref,
+                    context_sha256=rendered.context_sha256,
+                    input_record=input_record_ref(stored),
+                )
+            )
+    rows.sort(key=lambda r: (r.item_id, r.condition, r.repeat_index))
+    entries.sort(key=lambda e: (e.item_id, e.representation_or_condition, e.repeat_index))
+    return entries, rows
+
+
 def build_roster(
     *,
     view_directory: Path,
@@ -173,64 +271,35 @@ def build_roster(
             f"no context source for {len(missing)} authorized pairs: {missing[:3]}"
         )
 
-    entries: list[RosterEntry] = []
-    rows: list[RosterRow] = []
-    for item_id, condition in sorted(wanted):
-        item = by_id[item_id]
-        assembled = None if closed_book else contexts[(item_id, condition)]
-        try:
-            rendered: RenderedInput = renderer.render(
-                item.question,
-                None if assembled is None else assembled.exact_context,
-                None if assembled is None else assembled.generator_tokens,
+    observation_contexts: dict[tuple[str, str], ObservationContext | None] = {}
+    for pair in wanted:
+        chosen = None if closed_book else contexts[pair]
+        observation_contexts[pair] = (
+            None
+            if chosen is None
+            else ObservationContext(
+                exact_context=chosen.exact_context,
+                generator_tokens=chosen.generator_tokens,
+                reference=sources_by_key[pair].context,
             )
-        except ValueError as error:
-            raise RosterMismatch(f"{item_id}/{condition}: {error}") from error
-        if assembled is not None and rendered.context != assembled.exact_context:
-            raise RosterMismatch(f"{item_id}/{condition}: rendered context differs from assembled")
-        ref = None if assembled is None else sources_by_key[(item_id, condition)].context
-        for repeat in arm.repeats:
-            obs_key = observation_key(
-                phase=scope.phase,
-                benchmark_version=view.benchmark_version,
+        )
+    entries, rows = render_observations(
+        phase=scope.phase,
+        benchmark_version=view.benchmark_version,
+        items={
+            item_id: ItemFacts(
                 item_id=item_id,
-                matrix_arm=settings.matrix_arm,
-                representation_or_condition=condition,
-                repeat_index=repeat,
-                resolved_config_sha256=renderer.config.configuration_sha256,
+                paper_id=by_id[item_id].paper_id,
+                question=by_id[item_id].question,
+                item_sha256=item_digest(by_id[item_id]),
             )
-            try:
-                stored = build_input_record(
-                    renderer, rendered, observation_key=obs_key, context=ref
-                )
-            except ValueError as error:
-                raise RosterMismatch(f"{item_id}/{condition}: {error}") from error
-            entries.append(
-                RosterEntry(
-                    item_id=item_id,
-                    paper_id=item.paper_id,
-                    representation_or_condition=condition,
-                    repeat_index=repeat,
-                    rendered=rendered,
-                    input_record=stored,
-                )
-            )
-            rows.append(
-                RosterRow(
-                    item_id=item_id,
-                    item_sha256=item_digest(item),
-                    paper_id=item.paper_id,
-                    condition=condition,
-                    repeat_index=repeat,
-                    rendered_input_sha256=rendered.rendered_sha256,
-                    input_tokens=rendered.input_tokens,
-                    context=ref,
-                    context_sha256=rendered.context_sha256,
-                    input_record=input_record_ref(stored),
-                )
-            )
-    rows.sort(key=lambda r: (r.item_id, r.condition, r.repeat_index))
-    entries.sort(key=lambda e: (e.item_id, e.representation_or_condition, e.repeat_index))
+            for item_id in included
+        },
+        conditions=arm.conditions,
+        repeats=arm.repeats,
+        renderer=renderer,
+        contexts=observation_contexts,
+    )
     record = RosterRecord(
         phase=scope.phase,
         benchmark_version=view.benchmark_version,
