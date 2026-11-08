@@ -32,6 +32,8 @@ from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgme
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 from biorag_repro.finaltest.batches import AuthorizationCitation, BatchManifest
 from biorag_repro.finaltest.campaign import CampaignPlan
+from biorag_repro.finaltest.continuity import ContinuityAssessment
+from biorag_repro.finaltest.head import HeadAttestation
 from biorag_repro.finaltest.layout import (
     HeadWitness,
     RegistryEvent,
@@ -145,6 +147,8 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "final_test_batch_manifest.schema.json": BatchManifest,
     "final_test_authorization_citation.schema.json": AuthorizationCitation,
     "final_test_head_witness.schema.json": HeadWitness,
+    "final_test_head_attestation.schema.json": HeadAttestation,
+    "final_test_continuity_assessment.schema.json": ContinuityAssessment,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

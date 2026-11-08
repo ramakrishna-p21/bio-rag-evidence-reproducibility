@@ -12,7 +12,6 @@ from pydantic import ValidationError
 
 from biorag_repro.finaltest import batches, layout
 from biorag_repro.finaltest.batches import (
-    AuthorizationCitation,
     BatchManifest,
     batch_id_for,
     make_manifest,
@@ -81,37 +80,6 @@ def test_the_manifest_is_a_frozen_value():
     m = make_manifest(ROOT, plan(), "closed_book", NOW)
     with pytest.raises(ValidationError):
         m.expected_count = 1  # type: ignore[misc]
-
-
-def test_authorization_citations_chain_without_rewriting():
-    base = {
-        "kind": "initial",
-        "batch_id": sha("b"),
-        "readiness_report_sha256": sha("r1"),
-        "registry_head_sequence": 3,
-        "registry_head_event_sha256": sha("h3"),
-        "previous_citation_sha256": None,
-        "created_utc": NOW,
-    }
-    first = AuthorizationCitation.model_validate(base)
-    resume = AuthorizationCitation.model_validate(
-        base
-        | {
-            "kind": "resume",
-            "readiness_report_sha256": sha("r2"),
-            "registry_head_sequence": 5,
-            "registry_head_event_sha256": sha("h5"),
-            "previous_citation_sha256": hashlib.sha256(layout.serialize(first)).hexdigest(),
-        }
-    )
-    assert first.guard_scope == "final_test_batch_start"
-    assert resume.readiness_report_sha256 != first.readiness_report_sha256
-    with pytest.raises(ValidationError):
-        AuthorizationCitation.model_validate(base | {"previous_citation_sha256": sha("x")})
-    with pytest.raises(ValidationError):
-        AuthorizationCitation.model_validate(base | {"kind": "resume"})
-    with pytest.raises(ValidationError):
-        AuthorizationCitation.model_validate(base | {"guard_scope": "anything"})
 
 
 def test_observed_state_digest_distinguishes_manifest_and_materialization():

@@ -11,14 +11,18 @@ here, so no later step needs to modify a published manifest. A reservation is no
 authorization, and `AuthorizationCitation` is only the shape of the evidence a later pass cites.
 """
 
+from collections.abc import Mapping, Sequence
+from itertools import pairwise
 from typing import Annotated, Final, Literal, Self
 
 from pydantic import StringConstraints, field_validator, model_validator
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.finaltest.campaign import CampaignPlan, plan_sha256
-from biorag_repro.finaltest.layout import LAYOUT_VERSION, FrozenRecord
+from biorag_repro.finaltest.continuity import ContinuityAssessment, continuity_assessment_sha256
+from biorag_repro.finaltest.layout import LAYOUT_VERSION, FrozenRecord, serialize
 from biorag_repro.generation.environment import check_utc
+from biorag_repro.readiness.models import GitRevision
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
@@ -117,31 +121,104 @@ def make_manifest(
     )
 
 
-class AuthorizationCitation(FrozenRecord):
-    """Shape of one authorization assessment that a later pass will record separately.
+class CitationChainError(ValueError):
+    """A sequence of authorization citations is not a valid history of one batch."""
 
-    Each assessment is its own immutable record; a resume cites a fresh readiness report and
-    the previous citation and never rewrites it. The hash of a readiness report is evidence of
-    an assessment at some time, not a reusable credential, and nothing in P10-B can publish or
-    accept a citation as permission.
+
+class AuthorizationCitation(FrozenRecord):
+    """One authorization assessment of a batch, as a historical record.
+
+    Each assessment is its own immutable record. A resume cites a fresh readiness report, the
+    previous citation and the continuity assessment that compared it with the first one; it
+    never rewrites anything. The hash of a readiness report is evidence of an assessment at
+    some time, not a reusable credential, so a report can be cited once, and nothing in this
+    package publishes or accepts a citation as permission. `head_authority` records what was
+    established about the registry head at that time and has no value for independent authority:
+    none exists. Nothing in the repository publishes a citation yet.
     """
 
-    schema_version: Literal["1"] = "1"
+    schema_version: Literal["2"] = "2"
     kind: Literal["initial", "resume"]
     batch_id: Sha256
+    initial_report_sha256: Sha256
     readiness_report_sha256: Sha256
     guard_scope: Literal["final_test_batch_start"] = GUARD_SCOPE
+    policy_sha256: Sha256
+    evaluator_code_sha256: Sha256
+    report_binding_sha256: Sha256
+    head_sha: GitRevision
+    scientific_source_identity_sha256: Sha256
+    scientific_identity_sha256: Sha256
     registry_head_sequence: int  # head the assessment was made against
     registry_head_event_sha256: Sha256
+    head_authority: Literal["genesis_anchored", "not_established"]
+    inputs_set_sha256: Sha256 | None  # None until the batch inputs are bound
     previous_citation_sha256: Sha256 | None
+    continuity_assessment_sha256: Sha256 | None
     created_utc: str
 
     _utc = field_validator("created_utc")(check_utc)
 
     @model_validator(mode="after")
     def chain(self) -> Self:
-        if (self.kind == "initial") != (self.previous_citation_sha256 is None):
+        initial = self.kind == "initial"
+        if initial != (self.previous_citation_sha256 is None):
             raise ValueError("an initial citation has no predecessor and a resume has one")
+        if initial != (self.continuity_assessment_sha256 is None):
+            raise ValueError("only a resume cites a continuity assessment, and it must")
+        if initial != (self.initial_report_sha256 == self.readiness_report_sha256):
+            raise ValueError("an initial citation cites the original report; a resume its own")
         if self.registry_head_sequence < 1:
             raise ValueError("registry head sequence starts at 1")
+        if (self.head_authority == "genesis_anchored") != (self.registry_head_sequence == 1):
+            raise ValueError("only the genesis head is anchored")
         return self
+
+
+def citation_sha256(citation: AuthorizationCitation) -> str:
+    """Identity of a citation: SHA-256 of its stored canonical bytes."""
+    return sha256_bytes(serialize(citation))
+
+
+def verify_citation_chain(
+    citations: Sequence[AuthorizationCitation],
+    assessments: Mapping[str, ContinuityAssessment],
+) -> None:
+    """Check that `citations` are, in order, the authorization history of one batch.
+
+    `assessments` maps the cited identity of each continuity assessment to the stored record.
+    Raises `CitationChainError`. This verifies a record; it grants nothing.
+    """
+    if not citations or citations[0].kind != "initial":
+        raise CitationChainError("a history starts with the initial citation")
+    first = citations[0]
+    reports = {first.readiness_report_sha256}
+    for before, citation in pairwise(citations):
+        if citation.kind != "resume":
+            raise CitationChainError("only the first citation is initial")
+        if citation.previous_citation_sha256 != citation_sha256(before):
+            raise CitationChainError("a citation does not name its predecessor")
+        if citation.batch_id != first.batch_id:
+            raise CitationChainError("a citation belongs to another batch")
+        if citation.initial_report_sha256 != first.initial_report_sha256:
+            raise CitationChainError("the original report identity changed")
+        if citation.readiness_report_sha256 in reports:
+            raise CitationChainError("a readiness report is cited twice")
+        reports.add(citation.readiness_report_sha256)
+        if citation.registry_head_sequence <= before.registry_head_sequence:
+            raise CitationChainError("the registry head did not move forward")
+        if citation.scientific_identity_sha256 != first.scientific_identity_sha256:
+            raise CitationChainError("the scientific identity changed")
+        assessment = assessments.get(citation.continuity_assessment_sha256 or "")
+        if assessment is None or continuity_assessment_sha256(assessment) != (
+            citation.continuity_assessment_sha256
+        ):
+            raise CitationChainError("the cited continuity assessment is missing or differs")
+        if assessment.verdict != "continuous":
+            raise CitationChainError("the cited continuity assessment is not continuous")
+        # a continuous assessment has equal identities, and the citation's equals the first's
+        if (
+            assessment.later_scientific_identity_sha256 != citation.scientific_identity_sha256
+            or assessment.later_binding_sha256 != citation.report_binding_sha256
+        ):
+            raise CitationChainError("the cited continuity assessment is about other reports")
