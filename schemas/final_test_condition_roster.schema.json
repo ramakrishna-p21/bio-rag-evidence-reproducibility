@@ -1,0 +1,171 @@
+{
+  "$defs": {
+    "RosterIdentityRow": {
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "pattern": "\\S",
+          "title": "Condition",
+          "type": "string"
+        },
+        "context_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Context Sha256"
+        },
+        "evidence_sequence_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Evidence Sequence Sha256"
+        },
+        "item_id": {
+          "pattern": "\\S",
+          "title": "Item Id",
+          "type": "string"
+        },
+        "item_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Item Sha256",
+          "type": "string"
+        },
+        "matrix_arm": {
+          "pattern": "\\S",
+          "title": "Matrix Arm",
+          "type": "string"
+        },
+        "observation_key": {
+          "pattern": "^obs_[0-9a-f]{64}$",
+          "title": "Observation Key",
+          "type": "string"
+        },
+        "paper_id": {
+          "pattern": "\\S",
+          "title": "Paper Id",
+          "type": "string"
+        },
+        "rendered_input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Rendered Input Sha256",
+          "type": "string"
+        },
+        "repeat_index": {
+          "minimum": 1,
+          "title": "Repeat Index",
+          "type": "integer"
+        },
+        "resolved_config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Resolved Config Sha256",
+          "type": "string"
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "maximum": 4294967295,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Seed"
+        },
+        "source_identity_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source Identity Sha256"
+        }
+      },
+      "required": [
+        "item_id",
+        "paper_id",
+        "item_sha256",
+        "matrix_arm",
+        "condition",
+        "repeat_index",
+        "resolved_config_sha256",
+        "source_identity_sha256",
+        "context_sha256",
+        "evidence_sequence_sha256",
+        "rendered_input_sha256",
+        "observation_key"
+      ],
+      "title": "RosterIdentityRow",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "batch_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "pattern": "\\S",
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "condition": {
+      "pattern": "\\S",
+      "title": "Condition",
+      "type": "string"
+    },
+    "matrix_arm": {
+      "pattern": "\\S",
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "resolved_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resolved Config Sha256",
+      "type": "string"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/RosterIdentityRow"
+      },
+      "title": "Rows",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "batch_id",
+    "matrix_arm",
+    "condition",
+    "benchmark_version",
+    "resolved_config_sha256",
+    "rows"
+  ],
+  "title": "ConditionRoster",
+  "type": "object"
+}

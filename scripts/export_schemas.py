@@ -34,6 +34,7 @@ from biorag_repro.finaltest.batches import AuthorizationCitation, BatchManifest
 from biorag_repro.finaltest.campaign import CampaignPlan
 from biorag_repro.finaltest.continuity import ContinuityAssessment
 from biorag_repro.finaltest.head import HeadAttestation
+from biorag_repro.finaltest.inputs import BatchInputBinding, ConditionRoster
 from biorag_repro.finaltest.layout import (
     HeadWitness,
     RegistryEvent,
@@ -41,6 +42,7 @@ from biorag_repro.finaltest.layout import (
     RootRecord,
     StorageAuthorization,
 )
+from biorag_repro.finaltest.runrecord import FinalTestRunRecord
 from biorag_repro.generation.attempts import AttemptEvent, RunRecord
 from biorag_repro.generation.checkpoint import CheckpointInventory, CheckpointManifest
 from biorag_repro.generation.completion import RunCompletion
@@ -149,6 +151,9 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "final_test_head_witness.schema.json": HeadWitness,
     "final_test_head_attestation.schema.json": HeadAttestation,
     "final_test_continuity_assessment.schema.json": ContinuityAssessment,
+    "final_test_batch_input_binding.schema.json": BatchInputBinding,
+    "final_test_condition_roster.schema.json": ConditionRoster,
+    "final_test_run_record.schema.json": FinalTestRunRecord,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 
