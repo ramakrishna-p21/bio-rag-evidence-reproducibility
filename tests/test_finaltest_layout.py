@@ -122,13 +122,28 @@ def test_genesis_and_successor_previous_hash_rules(sequence, previous):
         )
 
 
-def test_only_the_genesis_event_type_is_operational():
-    assert layout.EVENT_TYPES == ("root_initialized",)
+def test_event_types_are_the_operational_and_the_reserved_future_ones():
+    assert layout.OPERATIONAL_EVENTS == (
+        "root_initialized",
+        "batch_reserved",
+        "batch_materialized",
+        "batch_closed_incomplete",
+    )
+    assert layout.FUTURE_EVENTS == (
+        "batch_inputs_bound",
+        "batch_authorized",
+        "batch_resumed",
+        "batch_completed",
+    )
+    assert layout.EVENT_TYPES == layout.OPERATIONAL_EVENTS + layout.FUTURE_EVENTS
+
+
+def test_an_unknown_event_type_is_rejected():
     with pytest.raises(ValidationError):
         layout.make_event(
             root_id="1" * 64,
             sequence=1,
-            event_type="batch_authorized",
+            event_type="batch_approved",
             previous_event_sha256=None,
             evidence=[],
             created_utc="2026-01-01T00:00:00Z",

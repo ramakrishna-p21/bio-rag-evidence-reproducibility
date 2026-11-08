@@ -30,7 +30,10 @@ from biorag_repro.evaluation.analysis_result import AnalysisResultRecord
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
+from biorag_repro.finaltest.batches import AuthorizationCitation, BatchManifest
+from biorag_repro.finaltest.campaign import CampaignPlan
 from biorag_repro.finaltest.layout import (
+    HeadWitness,
     RegistryEvent,
     RootAnchor,
     RootRecord,
@@ -138,6 +141,10 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "final_test_root.schema.json": RootRecord,
     "final_test_root_anchor.schema.json": RootAnchor,
     "final_test_registry_event.schema.json": RegistryEvent,
+    "final_test_campaign_plan.schema.json": CampaignPlan,
+    "final_test_batch_manifest.schema.json": BatchManifest,
+    "final_test_authorization_citation.schema.json": AuthorizationCitation,
+    "final_test_head_witness.schema.json": HeadWitness,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

@@ -29,7 +29,7 @@ import os
 import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Final
 
@@ -38,8 +38,11 @@ from pydantic import BaseModel
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.finaltest import layout
+from biorag_repro.finaltest.batches import BatchManifest, observed_state_sha256
 from biorag_repro.finaltest.layout import (
     EvidenceCitation,
+    HeadCheckpoint,
+    HeadWitness,
     RegistryEvent,
     RootAnchor,
     RootRecord,
@@ -57,6 +60,14 @@ from biorag_repro.readiness.history import (
 NO_PRIOR: Final = "no_prior_final_test_execution"
 KNOWN_ARTIFACTS: Final = "root_and_registry"
 _TEMP = re.compile(r"^\.(ROOT\.json|\d{6}\.json)\.[^/]+\.tmp$")
+_MANIFEST_TEMP = re.compile(r"^\.manifest\.json\.[^/]+\.tmp$")
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_BATCH_DIR = re.compile(r"^batches/[0-9a-f]{64}$")
+# A registry beyond genesis is pinned by nothing outside the data root the registry shares, so
+# no verdict about it is positive. Genesis alone is pinned by the out-of-tree anchor.
+HEAD_NOT_ESTABLISHED_TEXT: Final = (
+    "incomplete: the latest registry head is not independently established"
+)
 
 Problem = tuple[str, str]  # (kind, detail); kind: incomplete, conflicting, unverified, unexpected
 
@@ -78,6 +89,14 @@ class RegistryBusy(Exception):
 
 
 @dataclass(frozen=True)
+class BatchRecord:
+    state: str  # reserved, materialized, closed_incomplete
+    campaign_plan_sha256: str
+    ownership_sha256: str
+    manifest_sha256: str
+
+
+@dataclass(frozen=True)
 class RootVerdict:
     code: str  # a history code, never an authorization
     root_kind: str
@@ -86,6 +105,12 @@ class RootVerdict:
     anchor_sha256: str | None
     inventory: dict[str, Any]  # canonical-JSON snapshot of the complete inventory
     problems: tuple[str, ...]
+    batches: dict[str, BatchRecord] = field(default_factory=dict)
+    # batch_id -> (what is recoverable, the exact problem text it accounts for)
+    reconcile: dict[str, tuple[str, str]] = field(default_factory=dict)
+    unwitnessed_head: bool = False
+    head_authority: str = "genesis_anchored"  # or not_established
+    checkpoint_continuity: bool | None = None  # None: no checkpoint supplied
 
 
 # ---- enumeration ---------------------------------------------------------------------------
@@ -112,7 +137,8 @@ def _walk(directory_fd: int, prefix: str) -> list[_Entry]:
         else:
             kind = "other"
         found.append(_Entry(path, kind))
-        if kind == "dir" and path in (layout.REGISTRY_DIR, layout.LOCKS_DIR):
+        enter = path in (layout.REGISTRY_DIR, layout.LOCKS_DIR, layout.BATCHES_DIR)
+        if kind == "dir" and (enter or _BATCH_DIR.match(path)):
             flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
             inner = os.open(item.name, flags, dir_fd=directory_fd)
             try:
@@ -142,6 +168,7 @@ def _role(entry: _Entry) -> str:
         layout.REGISTRY_DIR: ("dir", "dir"),
         layout.LOCKS_DIR: ("dir", "dir"),
         layout.LOCK_FILE: ("file", "lock"),
+        layout.BATCHES_DIR: ("dir", "dir"),
     }
     if path in expected:
         kind, role = expected[path]
@@ -151,6 +178,13 @@ def _role(entry: _Entry) -> str:
         return "temp"
     if directory == layout.REGISTRY_DIR and layout.EVENT_NAME.match(name):
         return "event" if entry.kind == "file" else "wrongkind"
+    if directory == layout.BATCHES_DIR and _HEX64.match(name):
+        return "batchdir" if entry.kind == "dir" else "wrongkind"
+    if _BATCH_DIR.match(directory):
+        if name == layout.MANIFEST_NAME:
+            return "manifest" if entry.kind == "file" else "wrongkind"
+        if entry.kind == "file" and _MANIFEST_TEMP.match(name):
+            return "batchtemp"
     return "unexpected"
 
 
@@ -197,8 +231,10 @@ def check_registry(root_id: str, files: dict[int, bytes | None]) -> RegistryChec
             problems.append(("conflicting", f"registry event {number} belongs to another root"))
         elif event.sequence != number:
             problems.append(("conflicting", f"registry event {number} claims {event.sequence}"))
-        elif number > 1:
+        elif number > 1 and event.event_type == "root_initialized":
             problems.append(("conflicting", f"event {number} repeats the genesis event type"))
+        elif number == 1 and event.event_type != "root_initialized":
+            problems.append(("conflicting", "the first event is not the genesis event"))
         previous = files.get(number - 1)
         if previous is not None and event.previous_event_sha256 != sha256_bytes(previous):
             problems.append(("unverified", f"registry event {number} breaks the hash chain"))
@@ -251,8 +287,24 @@ def _check_anchor(anchor: RootAnchor, authorization: StorageAuthorization) -> No
         raise AuthorityNotEstablished("anchor_identity")
 
 
-def verify_root(root: Path, authorization: StorageAuthorization, anchor_dir: Path) -> RootVerdict:
-    """Verify the complete inventory of `root` against the approved `authorization`."""
+def verify_root(
+    root: Path,
+    authorization: StorageAuthorization,
+    anchor_dir: Path,
+    witness_dir: Path | None = None,
+    checkpoint: HeadCheckpoint | None = None,
+) -> RootVerdict:
+    """Verify the complete inventory of `root` against the approved `authorization`.
+
+    What each part of the verdict establishes. Internal chain validity: every event parses, the
+    hashes link and the sequence has no gap. Consistency with retained witnesses (`witness_dir`):
+    the registry holds the events the witnesses recorded; this catches truncation or edits of
+    one of two stores, not a rollback of both together, because both live under the same data
+    root. Continuity with a checkpoint: the registry still contains the event a caller
+    pinned; the checkpoint is the caller's claim and is not evidence of authority. Nothing here
+    proves the latest authorized head, so a registry beyond genesis never yields a positive
+    history class and `head_authority` stays `not_established`.
+    """
     _check_location(root, authorization)
     if not os.path.lexists(root):
         raise AuthorityNotEstablished("not_initialized", "no storage at the approved location")
@@ -269,6 +321,8 @@ def verify_root(root: Path, authorization: StorageAuthorization, anchor_dir: Pat
     hashes: dict[str, str] = {}
     registry_bytes: dict[int, bytes | None] = {}
     root_bytes: bytes | None = None
+    manifest_bytes: dict[str, bytes | None] = {}
+    batch_dirs: set[str] = set()
 
     for entry in entries:
         role = roles[entry.path]
@@ -276,8 +330,15 @@ def verify_root(root: Path, authorization: StorageAuthorization, anchor_dir: Pat
             problems.append(("unexpected", f"unexpected {entry.kind} {entry.path}"))
         elif role == "wrongkind":
             problems.append(("unverified", f"{entry.path} is a {entry.kind}, not what is required"))
-        elif role == "temp":
+        elif role in ("temp", "batchtemp"):
             problems.append(("incomplete", f"unfinished publication {entry.path}"))
+        elif role == "batchdir":
+            batch_dirs.add(entry.path.rpartition("/")[2])
+        elif role == "manifest":
+            batch = entry.path.split("/")[1]
+            manifest_bytes[batch] = data = _read(root, entry.path, problems)
+            if data is not None:
+                hashes[entry.path] = sha256_bytes(data)
         elif role == "lock":
             data = _read(root, entry.path, problems)
             if data:
@@ -336,8 +397,23 @@ def verify_root(root: Path, authorization: StorageAuthorization, anchor_dir: Pat
         if cited != wanted:
             problems.append(("conflicting", "the genesis event cites other root records"))
 
-    code = _classify(problems)
     head = max(registry_bytes) if registry_bytes else None
+    batches, reconcile = _check_batches(
+        registry.events, hashes, manifest_bytes, batch_dirs, authorization, expected_id, problems
+    )
+    if layout.BATCHES_DIR in roles and not batches:
+        problems.append(("unexpected", "batches directory without any reservation"))
+    unwitnessed = False
+    if witness_dir is not None and registry_bytes:
+        unwitnessed = _check_witnesses(expected_id, registry_bytes, witness_dir, problems)
+    continuity = None
+    if checkpoint is not None:
+        continuity = _check_checkpoint(checkpoint, expected_id, registry_bytes, problems)
+    code = _classify(problems)
+    beyond_genesis = head is not None and head > 1
+    if code == NO_PRIOR and beyond_genesis:
+        problems.append(("incomplete", HEAD_NOT_ESTABLISHED_TEXT.partition(": ")[2]))
+        code = INCOMPLETE
     snapshot: dict[str, Any] = {
         "layout_version": layout.LAYOUT_VERSION,
         "root_kind": authorization.root_kind,
@@ -364,7 +440,228 @@ def verify_root(root: Path, authorization: StorageAuthorization, anchor_dir: Pat
         anchor_sha256=snapshot["anchor_sha256"],
         inventory=snapshot,
         problems=tuple(snapshot["problems"]),
+        batches=batches,
+        reconcile=reconcile,
+        unwitnessed_head=unwitnessed,
+        head_authority="not_established" if beyond_genesis else "genesis_anchored",
+        checkpoint_continuity=continuity,
     )
+
+
+def _check_checkpoint(
+    checkpoint: HeadCheckpoint,
+    root_id: str,
+    registry_bytes: dict[int, bytes | None],
+    problems: list[Problem],
+) -> bool:
+    data = registry_bytes.get(checkpoint.sequence)
+    if checkpoint.root_id != root_id:
+        problems.append(("conflicting", "the checkpoint belongs to another root"))
+    elif data is None or sha256_bytes(data) != checkpoint.event_file_sha256:
+        problems.append(
+            ("conflicting", "the registry does not contain the checkpointed event (rollback?)")
+        )
+    else:
+        return True
+    return False
+
+
+def _witness_files(root_id: str, witness_dir: Path) -> dict[int, str]:
+    pattern = re.compile(rf"^{root_id}\.(\d{{6}}){re.escape(layout.WITNESS_SUFFIX)}$")
+    found = {}
+    if witness_dir.is_dir():
+        for name in os.listdir(witness_dir):
+            if match := pattern.match(name):
+                found[int(match.group(1))] = name
+    return found
+
+
+def _check_witnesses(
+    root_id: str,
+    registry_bytes: dict[int, bytes | None],
+    witness_dir: Path,
+    problems: list[Problem],
+) -> bool:
+    """Compare the registry with the retained witnesses; True if only the head lacks one.
+
+    A genesis-only root needs no witness (the anchor pins it) unless witnesses already exist.
+    """
+    head = max(registry_bytes)
+    names = _witness_files(root_id, witness_dir)
+    if head == 1 and not names:
+        return False
+    if names and max(names) > head:
+        problems.append(
+            ("conflicting", "witnesses exist beyond the registry head (rollback or truncation?)")
+        )
+    previous: bytes | None = None
+    gaps = []
+    for number in range(1, head + 1):
+        if number not in names:
+            gaps.append(number)
+            previous = None
+            continue
+        try:
+            data = read_regular(witness_dir, names[number])
+        except FileProblem as error:
+            problems.append(("unverified", f"witness {number} cannot be read: {error}"))
+            previous = None
+            continue
+        probe: list[Problem] = []
+        witness = _parse(HeadWitness, data, f"witness {number}", probe)
+        problems += probe
+        if witness is None:
+            previous = None
+            continue
+        event = registry_bytes.get(number)
+        if witness.root_id != root_id or witness.sequence != number:
+            problems.append(("conflicting", f"witness {number} belongs elsewhere"))
+        elif event is not None and witness.event_file_sha256 != sha256_bytes(event):
+            problems.append(("conflicting", f"witness {number} records a different event"))
+        elif (
+            number > 1
+            and (number - 1) not in gaps
+            and previous is not None
+            and (witness.previous_witness_sha256 != sha256_bytes(previous))
+        ):
+            problems.append(("conflicting", f"witness {number} breaks the witness chain"))
+        previous = data
+    if gaps == [head] and head > 1:
+        problems.append(("incomplete", f"registry event {head} has no witness"))
+        return True
+    for number in gaps:
+        problems.append(("incomplete", f"witness {number} is missing"))
+    return False
+
+
+def _check_batches(
+    events: dict[int, RegistryEvent | None],
+    hashes: dict[str, str],
+    manifests: dict[str, bytes | None],
+    batch_dirs: set[str],
+    authorization: StorageAuthorization,
+    root_id: str,
+    problems: list[Problem],
+) -> tuple[dict[str, BatchRecord], dict[str, tuple[str, str]]]:
+    """Fold the batch events into per-batch states and check them against the files."""
+    state: dict[str, dict[str, Any]] = {}
+    plans: set[str] = set()
+    for number in sorted(events):
+        event = events[number]
+        if event is None or number == 1 or event.event_type == "root_initialized":
+            continue
+        kind = event.event_type
+        if kind in layout.FUTURE_EVENTS:
+            problems.append(("unexpected", f"event {number} has the unauthorized type {kind}"))
+            continue
+        cited = {c.role: c.sha256 for c in event.evidence}
+        batch = cited["batch_id"]
+        file_sha = hashes.get(f"{layout.REGISTRY_DIR}/{number:06d}.json")
+        short = batch[:12]
+        if kind == "batch_reserved":
+            if batch in state:
+                problems.append(("conflicting", f"batch {short} is reserved twice"))
+                continue
+            plans.add(cited["campaign_plan"])
+            if len(plans) > 1:
+                problems.append(("conflicting", "reservations cite more than one campaign plan"))
+            for other, claimed in state.items():
+                if claimed["ownership"] == cited["ownership"]:
+                    problems.append(
+                        ("conflicting", f"batches {other[:12]} and {short} claim the same keys")
+                    )
+            state[batch] = {
+                "state": "reserved",
+                "plan": cited["campaign_plan"],
+                "ownership": cited["ownership"],
+                "manifest": cited["batch_manifest"],
+                "reservation": file_sha,
+                "published": False,
+            }
+            continue
+        info = state.get(batch)
+        if info is None:
+            problems.append(("conflicting", f"event {number} concerns an unreserved batch {short}"))
+            continue
+        if info["state"] != "reserved":
+            problems.append(
+                ("conflicting", f"event {number} follows batch {short} {info['state']}")
+            )
+        elif cited["reservation_event"] != info["reservation"]:
+            problems.append(("conflicting", f"event {number} cites another reservation"))
+        elif kind == "batch_materialized":
+            if cited["batch_manifest"] != info["manifest"]:
+                problems.append(("conflicting", f"event {number} cites another manifest"))
+            else:
+                info["state"] = "materialized"
+        elif cited["observed_state"] not in (
+            observed_state_sha256(None, False),
+            observed_state_sha256(info["manifest"], False),
+        ):
+            problems.append(("conflicting", f"closure {number} records an impossible state"))
+        else:
+            info["state"] = "closed_incomplete"
+
+    reconcile: dict[str, tuple[str, str]] = {}
+    for batch in sorted(batch_dirs - set(state)):
+        problems.append(("unexpected", f"directory of the unreserved batch {batch[:12]}"))
+    for batch in sorted(set(manifests) - set(state)):
+        problems.append(("unexpected", f"manifest of the unreserved batch {batch[:12]}"))
+    for batch, info in sorted(state.items()):
+        short = batch[:12]
+        data = manifests.get(batch)
+        clean = False
+        if data is not None:
+            probe: list[Problem] = []
+            manifest = _parse(BatchManifest, data, f"manifest of batch {short}", probe)
+            problems += probe
+            if manifest is not None:
+                clean = _manifest_consistent(
+                    manifest, data, batch, info, authorization, root_id, short, problems
+                )
+        info["published"] = clean
+        if info["state"] == "reserved":
+            if data is None and batch not in manifests:
+                text = f"batch {short} is reserved but its manifest is not published"
+                reconcile[batch] = ("reserved_unpublished", f"incomplete: {text}")
+                problems.append(("incomplete", text))
+            elif clean:
+                text = f"batch {short} is published but not materialized"
+                reconcile[batch] = ("reserved_published", f"incomplete: {text}")
+                problems.append(("incomplete", text))
+        elif info["state"] == "materialized" and batch not in manifests:
+            problems.append(("incomplete", f"materialized batch {short} has no manifest"))
+    records = {
+        batch: BatchRecord(info["state"], info["plan"], info["ownership"], info["manifest"])
+        for batch, info in state.items()
+    }
+    return records, reconcile
+
+
+def _manifest_consistent(
+    manifest: BatchManifest,
+    data: bytes,
+    batch: str,
+    info: dict[str, Any],
+    authorization: StorageAuthorization,
+    root_id: str,
+    short: str,
+    problems: list[Problem],
+) -> bool:
+    if sha256_bytes(data) != info["manifest"]:
+        problems.append(("conflicting", f"manifest of batch {short} differs from its reservation"))
+    elif (manifest.batch_id, manifest.root_id) != (batch, root_id):
+        problems.append(("conflicting", f"manifest of batch {short} names another batch or root"))
+    elif (manifest.campaign_plan_sha256, manifest.ownership) != (info["plan"], info["ownership"]):
+        problems.append(("conflicting", f"manifest of batch {short} differs from its claim"))
+    elif (manifest.benchmark_release_sha256, manifest.corpus_content_sha256) != (
+        authorization.benchmark_release_sha256,
+        authorization.corpus_content_sha256,
+    ):
+        problems.append(("conflicting", f"manifest of batch {short} is for another benchmark"))
+    else:
+        return True
+    return False
 
 
 def _classify(problems: list[Problem]) -> str:

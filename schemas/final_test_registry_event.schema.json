@@ -29,7 +29,16 @@
       "type": "string"
     },
     "event_type": {
-      "const": "root_initialized",
+      "enum": [
+        "root_initialized",
+        "batch_reserved",
+        "batch_materialized",
+        "batch_closed_incomplete",
+        "batch_inputs_bound",
+        "batch_authorized",
+        "batch_resumed",
+        "batch_completed"
+      ],
       "title": "Event Type",
       "type": "string"
     },

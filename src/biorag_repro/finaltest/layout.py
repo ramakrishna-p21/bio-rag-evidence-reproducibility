@@ -8,7 +8,9 @@ directory. Later passes add batches below it; none exist here.
         registry/NNNNNN.json registry events, one file each
         locks/registry.lock  empty file used only for flock
 
-Reserved for later passes and neither created nor permitted yet: `batches/`, `anchors/`.
+    batches/<id>/manifest.json   structural batch record (one per matrix arm), added by P10-B
+
+Reserved for later passes and neither created nor permitted yet: `anchors/`, `runs/`.
 
 What is trusted. `StorageAuthorization` is the evidence artifact that policy slot G11
 (`storage_authorization`) is meant to approve: its canonical-JSON SHA-256 is the slot value.
@@ -23,7 +25,7 @@ import os
 import re
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import BaseModel, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator, model_validator
 
 from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -40,10 +42,41 @@ ROOT_FILE: Final = "ROOT.json"
 REGISTRY_DIR: Final = "registry"
 LOCKS_DIR: Final = "locks"
 LOCK_FILE: Final = "locks/registry.lock"
+BATCHES_DIR: Final = "batches"
+MANIFEST_NAME: Final = "manifest.json"
+WITNESS_SUFFIX: Final = ".witness.json"
 ANCHOR_SUFFIX: Final = ".anchor.json"
-# The only operational event type. Later passes add types; until then nothing else may appear.
-EVENT_TYPES: Final = ("root_initialized",)
+# Event types the structural protocol can publish. Reservation is not authorization.
+OPERATIONAL_EVENTS: Final = (
+    "root_initialized",
+    "batch_reserved",
+    "batch_materialized",
+    "batch_closed_incomplete",
+)
+# Known to the schema so that a later pass can add them without a version change, but nothing
+# publishes them in P10-B and the verifier treats any occurrence as an unauthorized artifact.
+FUTURE_EVENTS: Final = (
+    "batch_inputs_bound",
+    "batch_authorized",
+    "batch_resumed",
+    "batch_completed",
+)
+EVENT_TYPES: Final = OPERATIONAL_EVENTS + FUTURE_EVENTS
+# Exact evidence roles, in order, of the batch events. The values are SHA-256 digests; batch_id
+# and ownership are derived identities (see batches.py), not file hashes. The genesis event's
+# evidence is checked against the approved authorization by the inventory verifier.
+REQUIRED_ROLES: Final = {
+    "batch_reserved": ["campaign_plan", "batch_id", "ownership", "batch_manifest"],
+    "batch_materialized": ["batch_id", "batch_manifest", "reservation_event"],
+    "batch_closed_incomplete": ["batch_id", "reservation_event", "observed_state"],
+}
 EVENT_NAME: Final = re.compile(r"^(\d{6})\.json$")
+
+
+class FrozenRecord(Record):
+    """A record whose published value cannot be changed in memory either."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True, frozen=True)
 
 
 class StorageAuthorization(Record):
@@ -154,7 +187,16 @@ class RegistryEvent(Record):
     layout_version: Literal["final_test_v1"]
     root_id: Sha256
     sequence: int
-    event_type: Literal["root_initialized"]
+    event_type: Literal[
+        "root_initialized",
+        "batch_reserved",
+        "batch_materialized",
+        "batch_closed_incomplete",
+        "batch_inputs_bound",
+        "batch_authorized",
+        "batch_resumed",
+        "batch_completed",
+    ]
     previous_event_sha256: Sha256 | None
     identity_sha256: Sha256
     evidence: list[EvidenceCitation]
@@ -179,7 +221,50 @@ class RegistryEvent(Record):
         )
         if self.identity_sha256 != expected:
             raise ValueError("event identity does not match its content")
+        roles = REQUIRED_ROLES.get(self.event_type)
+        if roles is not None and [c.role for c in self.evidence] != roles:
+            raise ValueError(f"{self.event_type} must cite exactly {roles}")
         return self
+
+
+class HeadWitness(FrozenRecord):
+    """Consistency record for one registry event, kept outside the root.
+
+    A witness shows that the registry once held this event. It is written by the same software
+    that writes the registry and lives under the same data root, so it detects inconsistency
+    between two storage structures, not a coordinated rollback of both, and it is not an
+    authority for the latest head.
+    """
+
+    schema_version: Literal["1"] = "1"
+    layout_version: Literal["final_test_v1"]
+    root_id: Sha256
+    sequence: int
+    event_file_sha256: Sha256
+    event_identity_sha256: Sha256
+    previous_witness_sha256: Sha256 | None
+    created_utc: str
+
+    _utc = field_validator("created_utc")(check_utc)
+
+    @model_validator(mode="after")
+    def chain_start(self) -> Self:
+        if self.sequence < 1 or (self.sequence == 1) != (self.previous_witness_sha256 is None):
+            raise ValueError("only the first witness has no previous witness")
+        return self
+
+
+class HeadCheckpoint(FrozenRecord):
+    """A latest-head claim from a source the caller trusts independently of the root.
+
+    P10-B defines the shape and checks continuity against it, but no source in this repository
+    can establish that a checkpoint is the latest authorized head, so a checkpoint never makes
+    a history authoritative.
+    """
+
+    root_id: Sha256
+    sequence: int
+    event_file_sha256: Sha256
 
 
 def make_event(

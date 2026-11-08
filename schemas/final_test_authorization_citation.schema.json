@@ -1,0 +1,72 @@
+{
+  "additionalProperties": false,
+  "description": "Shape of one authorization assessment that a later pass will record separately.\n\nEach assessment is its own immutable record; a resume cites a fresh readiness report and\nthe previous citation and never rewrites it. The hash of a readiness report is evidence of\nan assessment at some time, not a reusable credential, and nothing in P10-B can publish or\naccept a citation as permission.",
+  "properties": {
+    "batch_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "created_utc": {
+      "title": "Created Utc",
+      "type": "string"
+    },
+    "guard_scope": {
+      "const": "final_test_batch_start",
+      "default": "final_test_batch_start",
+      "title": "Guard Scope",
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "initial",
+        "resume"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "previous_citation_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Previous Citation Sha256"
+    },
+    "readiness_report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Readiness Report Sha256",
+      "type": "string"
+    },
+    "registry_head_event_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Registry Head Event Sha256",
+      "type": "string"
+    },
+    "registry_head_sequence": {
+      "title": "Registry Head Sequence",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "batch_id",
+    "readiness_report_sha256",
+    "registry_head_sequence",
+    "registry_head_event_sha256",
+    "previous_citation_sha256",
+    "created_utc"
+  ],
+  "title": "AuthorizationCitation",
+  "type": "object"
+}

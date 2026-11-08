@@ -35,7 +35,7 @@ from biorag_repro.readiness.models import (
 )
 from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
 
-EVALUATOR_VERSION = "p10a-1"
+EVALUATOR_VERSION = "p10b-1"
 
 
 class EvaluationError(RuntimeError):
