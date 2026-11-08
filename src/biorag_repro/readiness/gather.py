@@ -18,6 +18,7 @@ from typing import Any, Literal
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness.models import (
+    HISTORY_PASS_CODES,
     PASS_CODE,
     EvidenceRef,
     GateId,
@@ -75,7 +76,10 @@ def to_result(gate: GateId, gathered: Gathered, policy: ApprovalPolicy) -> GateR
     status: Literal["passed", "failed", "pending", "unavailable"]
     reason = gathered.reason
     expected = None
-    if gathered.state == "ok":
+    if gathered.state == "ok" and slot is None and reason in HISTORY_PASS_CODES:
+        # G13 has no approval slot: its verifier names the history class it established
+        status = "passed"
+    elif gathered.state == "ok":
         if gathered.subject is None:
             raise ValueError(f"{gate}: an ok result needs its identity subject")
         subject = Gathered("ok", reason, gathered.scope)

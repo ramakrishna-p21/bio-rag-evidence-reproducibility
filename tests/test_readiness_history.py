@@ -44,7 +44,7 @@ def test_every_returned_code_is_a_known_history_code():
     assert known >= {classify_history(inv())}
 
 
-def test_nothing_in_the_real_path_can_reach_the_classifier():
+def test_readiness_adapters_do_not_call_the_classifier_directly():
     package = pathlib.Path(history.__file__).parent
     for name in ("evidence.py", "evaluate.py", "publish.py", "cli.py", "gather.py"):
         tree = ast.parse((package / name).read_text())

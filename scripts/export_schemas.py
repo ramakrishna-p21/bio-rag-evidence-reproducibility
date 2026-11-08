@@ -30,6 +30,12 @@ from biorag_repro.evaluation.analysis_result import AnalysisResultRecord
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
+from biorag_repro.finaltest.layout import (
+    RegistryEvent,
+    RootAnchor,
+    RootRecord,
+    StorageAuthorization,
+)
 from biorag_repro.generation.attempts import AttemptEvent, RunRecord
 from biorag_repro.generation.checkpoint import CheckpointInventory, CheckpointManifest
 from biorag_repro.generation.completion import RunCompletion
@@ -128,6 +134,10 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "phase4_validation.schema.json": Phase4Validation,
     "phase4_gate_index.schema.json": Phase4GateIndex,
     "readiness_report.schema.json": ReadinessReport,
+    "final_test_storage_authorization.schema.json": StorageAuthorization,
+    "final_test_root.schema.json": RootRecord,
+    "final_test_root_anchor.schema.json": RootAnchor,
+    "final_test_registry_event.schema.json": RegistryEvent,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

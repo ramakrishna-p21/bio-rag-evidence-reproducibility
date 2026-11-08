@@ -1,11 +1,11 @@
-"""Classification contract for final-test history (gate G13). Not wired into the evaluator.
+"""Classification contract for final-test history (gate G13).
 
 The classes are the ones fixed in `models.HISTORY_PASS_CODES` and `HISTORY_FAIL_CODES`. This
 function only says which class an inventory falls into. It cannot make an inventory
-authoritative: an `HistoryInventory` built by a caller, or a digest handed in beside it, is
-not a trust root. Real completeness needs the Phase 10 storage layout, batch registry and
-inventory verification, none of which exists, so `evidence.history_integrity` reports
-`unavailable` and never calls this module. A test enforces that.
+authoritative: a `HistoryInventory` built by a caller, or a digest handed in beside it, is
+not a trust root. The only production caller is `finaltest.inventory.verify_root`, which
+builds the inventory from files it read itself, after checking the root against the approved
+storage authorization (G11). The readiness adapters never call this module directly.
 """
 
 from dataclasses import dataclass
@@ -15,7 +15,7 @@ from typing import Literal
 @dataclass(frozen=True)
 class HistoryEntry:
     batch_id: str
-    kind: Literal["observation", "attempt"]
+    kind: Literal["observation", "attempt", "registry", "unexpected"]
     verified: bool
 
 

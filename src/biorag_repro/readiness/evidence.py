@@ -19,9 +19,11 @@ check that produces them:
 * G03: the canonical content of a final-test freeze record.
 
 G04, G05, G07, G08, G10, G11 and G12 have no verifiable subject yet. They are `absent`
-(pending) and say what is missing. G13 is `unavailable` until Phase 10 defines the storage
-layout, the batch registry and the inventory check; nothing here, and nothing a caller
-passes, can establish it.
+(pending) and say what is missing. G13 is the one adapter that reads the policy: it takes the
+G11 storage-authorization slot as the source of the expected root identity and verifies the
+final-test root against that approved artifact (`finaltest.inventory.verify_root`). With the
+slot unset, or without the artifact it names, G13 is `unavailable`; nothing found on disk and
+nothing a caller passes can establish it.
 """
 
 import json
@@ -39,7 +41,7 @@ from biorag_repro.benchmark.release import BenchmarkRelease
 from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import decode_jsonl
-from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.corpus.manifest import (
     ReleaseRecord,
@@ -48,6 +50,12 @@ from biorag_repro.corpus.manifest import (
     parse_csv,
     validate_corpus,
     verify_source_bytes,
+)
+from biorag_repro.finaltest import layout as root_layout
+from biorag_repro.finaltest.inventory import (
+    INCOMPLETE,
+    AuthorityNotEstablished,
+    verify_root,
 )
 from biorag_repro.generation import config as generator_config
 from biorag_repro.generation.environment_lock import (
@@ -60,7 +68,8 @@ from biorag_repro.generation.environment_lock import (
 from biorag_repro.readiness import git_state
 from biorag_repro.readiness.files import FileMissing, FileProblem, loads_strict, read_regular
 from biorag_repro.readiness.gather import Gathered, file_ref
-from biorag_repro.readiness.models import EvidenceRef
+from biorag_repro.readiness.models import HISTORY_FAIL_CODES, EvidenceRef
+from biorag_repro.readiness.policy import ApprovalPolicy
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
@@ -314,13 +323,76 @@ def shared_gpu_authorization() -> Gathered:
     )
 
 
-def history_integrity() -> Gathered:
-    return Gathered(
-        "unavailable",
-        "final_test_inventory_authority_not_established",
-        "final-test history",
-        "closing needs the Phase 10 storage layout, batch registry and inventory verification",
+NO_AUTHORITY = "final_test_inventory_authority_not_established"
+STORAGE_APPROVALS = "readiness/approvals/storage_authorization"
+ROOT_ANCHORS = "readiness/final_test_root"
+
+
+def _approved_storage(
+    ctx: Context, policy: ApprovalPolicy
+) -> tuple[root_layout.StorageAuthorization, str]:
+    """The storage authorization that policy slot G11 approves, and its file path in the data
+    root. Raises `AuthorityNotEstablished` unless it exists, is canonical, hashes to the slot
+    and names the final-test kind and the frozen benchmark."""
+    slot = policy.slots.storage_authorization
+    if slot is None:
+        raise AuthorityNotEstablished("no_storage_approval", "policy slot G11 is unset")
+    path = f"{STORAGE_APPROVALS}/{slot}.json"
+    try:
+        data = read_regular(ctx.data_root, path)
+        authorization = _json_model(data, root_layout.StorageAuthorization)
+        release, release_bytes = read_benchmark_record(ctx)
+    except (FileProblem, ValueError) as error:
+        raise AuthorityNotEstablished("storage_approval_unusable", str(error)[:200]) from error
+    canonical = canonical_json_bytes(authorization.model_dump(mode="json"))
+    if data != canonical or sha256_bytes(data) != slot:
+        raise AuthorityNotEstablished("storage_approval_unusable", "bytes differ from the slot")
+    if authorization.root_kind != "final_test":
+        raise AuthorityNotEstablished("root_kind", "only a final_test root can satisfy G13")
+    if (authorization.corpus_content_sha256, authorization.benchmark_release_sha256) != (
+        release.corpus_content_sha256,
+        sha256_bytes(release_bytes),
+    ):
+        raise AuthorityNotEstablished("scope", "the approval names another corpus or benchmark")
+    return authorization, path
+
+
+def history_integrity(ctx: Context | None = None, policy: ApprovalPolicy | None = None) -> Gathered:
+    """G13. The final-test root must be the one the G11 approval describes."""
+    scope = "final-test history"
+    if ctx is None or policy is None:
+        return Gathered("unavailable", NO_AUTHORITY, scope, "no approval to verify against")
+    try:
+        authorization, approval_path = _approved_storage(ctx, policy)
+        verdict = verify_root(
+            Path(authorization.authorized_root), authorization, ctx.data_root / ROOT_ANCHORS
+        )
+    except AuthorityNotEstablished as error:
+        return Gathered("unavailable", NO_AUTHORITY, scope, error.cause)
+    if verdict.code == INCOMPLETE:
+        return Gathered("unavailable", INCOMPLETE, scope, "; ".join(verdict.problems)[:300])
+    if verdict.code in HISTORY_FAIL_CODES:
+        return Gathered("failed", verdict.code, scope, "; ".join(verdict.problems)[:300])
+    out = Gathered("ok", verdict.code, scope)
+    out.refs.append(
+        EvidenceRef(
+            kind="storage_authorization",
+            locator="data/" + approval_path,
+            sha256=root_layout.authorization_sha256(authorization),
+            subject_kind="stored_file_bytes",
+        )
     )
+    if verdict.anchor_sha256 is not None:
+        out.refs.append(
+            EvidenceRef(
+                kind="final_test_root_anchor",
+                locator=f"data/{ROOT_ANCHORS}/{verdict.root_id}{root_layout.ANCHOR_SUFFIX}",
+                sha256=verdict.anchor_sha256,
+                subject_kind="stored_file_bytes",
+            )
+        )
+    out.add_snapshot("final_test_inventory", verdict.inventory)
+    return out
 
 
 # ---- G06 Python environment ---------------------------------------------------------------

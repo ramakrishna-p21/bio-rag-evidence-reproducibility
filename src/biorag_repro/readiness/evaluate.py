@@ -35,7 +35,7 @@ from biorag_repro.readiness.models import (
 )
 from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
 
-EVALUATOR_VERSION = "p9b-1"
+EVALUATOR_VERSION = "p10a-1"
 
 
 class EvaluationError(RuntimeError):
@@ -49,10 +49,14 @@ class Evaluation:
 
 
 def evaluator_identity() -> EvaluatorIdentity:
-    """Hash of the readiness package's source files."""
-    package = resources.files("biorag_repro.readiness")
-    files = sorted(p.name for p in package.iterdir() if p.name.endswith(".py"))
-    data = {name: sha256_bytes((package / name).read_bytes()) for name in files}
+    """Hash of the source files that decide readiness: the readiness package and the
+    final-test root verifier that G13 depends on."""
+    data: dict[str, str] = {}
+    for name in ("readiness", "finaltest"):
+        package = resources.files(f"biorag_repro.{name}")
+        for path in sorted(package.iterdir(), key=lambda p: p.name):
+            if path.name.endswith(".py"):
+                data[f"{name}/{path.name}"] = sha256_bytes(path.read_bytes())
     return EvaluatorIdentity(
         version=EVALUATOR_VERSION, code_sha256=sha256_bytes(canonical_json_bytes(data))
     )
@@ -79,7 +83,7 @@ def _host(ctx: Context) -> HostBinding:
     )
 
 
-def gather_all(ctx: Context) -> dict[GateId, Gathered]:
+def gather_all(ctx: Context, policy: ApprovalPolicy | None = None) -> dict[GateId, Gathered]:
     problem: str | None = None
     release = release_bytes = None
     try:
@@ -99,7 +103,7 @@ def gather_all(ctx: Context) -> dict[GateId, Gathered]:
         "G10_development_restart_recovery": evidence.restart_recovery(),
         "G11_storage_authorization": evidence.storage_authorization(),
         "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(),
-        "G13_final_test_history_integrity": evidence.history_integrity(),
+        "G13_final_test_history_integrity": evidence.history_integrity(ctx, policy),
     }
 
 
@@ -133,7 +137,7 @@ def evaluate(
     nonce: Callable[[], str] = lambda: secrets.token_hex(16),
 ) -> Evaluation:
     try:
-        found = gather_all(ctx)
+        found = gather_all(ctx, policy)
         results: list[GateResult] = [to_result(g, found[g], policy) for g in MANDATORY_GATES]
         report = build_report(
             policy=policy,
