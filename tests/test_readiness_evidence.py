@@ -544,3 +544,16 @@ def test_parse_r_runtime_ignores_startup_noise_and_rejects_incomplete_output():
     }
     with pytest.raises(ValueError):
         evidence.parse_r_runtime("BIORAG\trversion\t4.6.1\n")
+
+
+def test_g07_recognises_the_project_library_when_the_repository_is_given_as_a_relative_path(
+    world, monkeypatch
+):
+    """Regression: `--repo .` made the active-library check compare a relative with an absolute path."""
+    monkeypatch.chdir(world.repo)
+    library = str((world.repo / "analysis/renv/library/x").resolve())
+    out = R_OUTPUT.format(lib=library)
+    ctx = world.probes(r_runtime=lambda d, p: out)
+    ctx = replace(ctx, repo=pathlib.Path("."))
+    g = evidence.r_environment(ctx)
+    assert g.reason == "analysis_host_not_designated", g.detail

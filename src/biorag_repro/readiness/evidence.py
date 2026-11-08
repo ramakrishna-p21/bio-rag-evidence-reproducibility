@@ -453,7 +453,9 @@ def r_environment(ctx: Context) -> Gathered:
             f"no static result is claimed as runtime conformity ({str(error)[:200]})"
         )
         return out
-    project_library = observed["libpaths"][0].startswith(str(ctx.repo / "analysis/renv/library"))
+    project_library = observed["libpaths"][0].startswith(
+        str((ctx.repo / "analysis/renv/library").resolve())
+    )
     differing = sorted(
         n for n, v in locked.items() if observed["packages"].get(n, {}).get("version") != v
     )
