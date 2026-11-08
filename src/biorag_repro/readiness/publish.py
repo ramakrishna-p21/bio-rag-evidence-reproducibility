@@ -293,6 +293,36 @@ class UnsupportedHistoricalPolicy(HistoricalPolicyError):
     """
 
 
+class HistoricalEvidenceIncomplete(ReadbackError):
+    """Retained `data/` or `snapshot/` evidence the report cites is gone.
+
+    The report is not verified as a whole. The counts are what could still be checked; no
+    readback object is produced, so nothing incomplete can be mistaken for a verified report.
+    """
+
+    def __init__(
+        self,
+        report_sha256: str,
+        policy_sha256: str,
+        verified_evidence: int,
+        not_retained: list[str],
+        not_historical: int,
+    ) -> None:
+        super().__init__(
+            f"{len(not_retained)} retained evidence item(s) are missing; "
+            f"{verified_evidence} verified, {not_historical} not historical"
+        )
+        self.report_sha256 = report_sha256
+        self.policy_sha256 = policy_sha256
+        self.verified_evidence = verified_evidence
+        self.not_retained = not_retained
+        self.not_historical = not_historical
+
+
+# Fixed here on purpose: it names the schema this reader can interpret and must not follow
+# the version of the policy currently in force.
+HISTORICAL_POLICY_VERSIONS = frozenset({"1"})
+
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -300,7 +330,9 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 class HistoricalReadback:
     """What was verified about a stored report under its own retained policy.
 
-    `repo/` evidence is not retained, so it is counted in `not_historical` and not verified.
+    Only produced when every cited `data/` and `snapshot/` item is present and verified, so
+    `not_retained` is always empty here. `repo/` evidence is not retained, so it is counted in
+    `not_historical` and not verified.
     The statuses inside the report are the evaluator's original claims. Nothing here is
     authority to run anything.
     """
@@ -331,7 +363,12 @@ def _retained_policy(data_root: Path, claimed: str) -> ApprovalPolicy:
         value = loads_strict(content)
     except FileProblem as error:
         raise HistoricalPolicyError(f"retained policy is not valid JSON: {error}") from error
-    slots = value.get("slots") if isinstance(value, dict) else None
+    version = value.get("policy_version") if isinstance(value, dict) else None
+    if not isinstance(version, str) or version not in HISTORICAL_POLICY_VERSIONS:
+        raise UnsupportedHistoricalPolicy(
+            f"retained policy version {version!r} is not a supported historical version"
+        )
+    slots = value.get("slots")
     # a missing slot would otherwise default to unset and read as "nothing approved"
     if not isinstance(slots, dict) or set(SLOT_NAMES) - set(slots):
         raise UnsupportedHistoricalPolicy("retained policy does not have the current schema")
@@ -351,7 +388,8 @@ def read_historical(data_root: Path, report_sha256: str) -> HistoricalReadback:
 
     The report names its policy by digest; every field read before `read_report` succeeds is
     untrusted. Raises `ReadbackError` (including `HistoricalPolicyError`) or
-    `PartialPublication`. Writes nothing.
+    `PartialPublication`; `HistoricalEvidenceIncomplete` when cited retained evidence is missing.
+    Writes nothing.
     """
     if not isinstance(report_sha256, str) or not _SHA256.fullmatch(report_sha256):
         raise ReadbackError("the report SHA-256 must be 64 lowercase hex digits")
@@ -372,6 +410,14 @@ def read_historical(data_root: Path, report_sha256: str) -> HistoricalReadback:
 
     policy = _retained_policy(data_root, claimed)
     stored = read_report(data_root, report_sha256, policy)
+    if stored.not_retained:
+        raise HistoricalEvidenceIncomplete(
+            report_sha256,
+            policy_sha256(policy),
+            stored.verified_evidence,
+            stored.not_retained,
+            stored.not_historical,
+        )
     return HistoricalReadback(
         report_sha256=report_sha256,
         policy_sha256=policy_sha256(policy),

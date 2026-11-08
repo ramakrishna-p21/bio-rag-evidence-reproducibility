@@ -20,6 +20,7 @@ from biorag_repro.readiness.evaluate import evaluate
 from biorag_repro.readiness.guard import AuthorizationRefused, FinalTestAuthorization
 from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
 from biorag_repro.readiness.publish import (
+    HistoricalEvidenceIncomplete,
     HistoricalPolicyError,
     HistoricalReadback,
     PartialPublication,
@@ -73,7 +74,7 @@ def _rename(root: Path, name: str) -> str:
 
 @pytest.fixture
 def fixture_root(tmp_path):
-    policy = support.fixture_policy()
+    policy = support.fixture_policy("1")
     ready = publish_report(build(policy), tmp_path).report_sha256
     not_ready = publish_report(
         build(policy, tag="n", blocked={"G03_final_test_configuration_freeze": "pending"}),
@@ -132,7 +133,14 @@ def test_old_report_still_verifies_after_the_current_policy_changes(fixture_root
 
 
 def test_each_report_uses_the_policy_it_recorded(tmp_path):
-    first, second = support.fixture_policy("fixture-policy-0"), support.fixture_policy("other")
+    first, second = support.fixture_policy("1"), support.fixture_policy("1")
+    second = second.model_copy(
+        update={
+            "slots": support.fixture_policy("1").slots.model_copy(
+                update={"corpus_identity": sha256_bytes(b"other")}
+            )
+        }
+    )
     a = publish_report(build(first), tmp_path).report_sha256
     b = publish_report(build(second), tmp_path).report_sha256
     assert read_historical(tmp_path, a).policy_sha256 == policy_sha256(first)
@@ -303,13 +311,61 @@ def test_altered_retained_snapshot(world):
         read_historical(world.data, result.report_sha256)
 
 
-def test_missing_snapshot_is_reported_not_retained_as_in_read_report(fixture_root):
+def test_missing_snapshot_makes_the_historical_result_incomplete(fixture_root):
     root, policy, ready, _ = fixture_root
     body = canonical_json_bytes({"gate": "G01_corpus_sources", "tag": ""})
     (root / f"readiness/evidence/{sha256_bytes(body)}.json").unlink()
-    historical = read_historical(root, ready)
-    assert historical.not_retained == publish.read_report(root, ready, policy).not_retained
-    assert len(historical.not_retained) == 1
+    before = tree(root)
+    with pytest.raises(HistoricalEvidenceIncomplete) as incomplete:
+        read_historical(root, ready)
+    ordinary = publish.read_report(root, ready, policy)
+    error = incomplete.value
+    assert isinstance(error, ReadbackError)
+    assert error.not_retained == ordinary.not_retained and len(error.not_retained) == 1
+    assert error.verified_evidence == ordinary.verified_evidence
+    assert error.not_historical == ordinary.not_historical
+    assert error.report_sha256 == ready and error.policy_sha256 == policy_sha256(policy)
+    assert tree(root) == before  # nothing recreated or repaired
+
+
+def test_missing_data_evidence_makes_the_historical_result_incomplete(world):
+    result = publish_report(evaluate(world.ctx, REAL_POLICY), world.data)
+    report = publish.read_report(world.data, result.report_sha256, REAL_POLICY).report
+    locator = next(
+        r.locator for g in report.gates for r in g.evidence if r.locator.startswith("data/")
+    )
+    (world.data / locator.removeprefix("data/")).unlink()
+    before = tree(world.data)
+    with pytest.raises(HistoricalEvidenceIncomplete) as incomplete:
+        read_historical(world.data, result.report_sha256)
+    assert locator in incomplete.value.not_retained
+    assert incomplete.value.not_historical > 0  # repo/ items are reported apart from missing ones
+    assert tree(world.data) == before
+
+
+def test_altered_evidence_is_an_integrity_failure_not_incompleteness(fixture_root):
+    root, _, ready, _ = fixture_root
+    body = canonical_json_bytes({"gate": "G01_corpus_sources", "tag": ""})
+    path = root / f"readiness/evidence/{sha256_bytes(body)}.json"
+    path.write_bytes(path.read_bytes() + b" ")
+    with pytest.raises(ReadbackError, match="differs") as error:
+        read_historical(root, ready)
+    assert not isinstance(error.value, HistoricalEvidenceIncomplete)
+
+
+def test_incomplete_error_is_not_a_readback_and_never_authorizes(fixture_root):
+    root, _, ready, _ = fixture_root
+    body = canonical_json_bytes({"gate": "G01_corpus_sources", "tag": ""})
+    (root / f"readiness/evidence/{sha256_bytes(body)}.json").unlink()
+    with pytest.raises(HistoricalEvidenceIncomplete) as incomplete:
+        read_historical(root, ready)
+    assert not isinstance(incomplete.value, HistoricalReadback | FinalTestAuthorization)
+    assert not hasattr(incomplete.value, "authorizes")
+
+
+def test_complete_historical_result_has_nothing_missing(fixture_root):
+    root, _, ready, _ = fixture_root
+    assert read_historical(root, ready).not_retained == []
 
 
 def test_altered_data_evidence(world):
@@ -350,7 +406,7 @@ def test_invented_policy_stored_under_the_requested_digest(tmp_path):
 
 
 def test_noncanonical_policy_even_when_its_bytes_hash_to_the_claim(tmp_path):
-    pretty = json.dumps(support.fixture_policy().model_dump(mode="json"), indent=2).encode()
+    pretty = json.dumps(support.fixture_policy("1").model_dump(mode="json"), indent=2).encode()
     claimed = sha256_bytes(pretty)
     stub = stub_report(tmp_path, claimed)
     put(tmp_path, f"readiness/evidence/{claimed}.json", pretty)
@@ -368,8 +424,13 @@ def test_duplicate_keys_in_policy(tmp_path):
 
 
 def _policy_dict(**changes):
-    data = support.fixture_policy().model_dump(mode="json")
+    data = support.fixture_policy("1").model_dump(mode="json")
     data.update(changes)
+    return data
+
+
+def _without_version(data):
+    del data["policy_version"]
     return data
 
 
@@ -391,6 +452,9 @@ def _extra_slot(data):
         _extra_slot(_policy_dict()),
         _policy_dict(policy_version=""),
         _policy_dict(policy_version=1),
+        _policy_dict(policy_version="2"),
+        _policy_dict(policy_version=None),
+        _without_version(_policy_dict()),
         {"policy_version": "0", "approvals": []},
         [],
     ],
@@ -400,6 +464,9 @@ def _extra_slot(data):
         "extra_slot",
         "blank_version",
         "int_version",
+        "version_2",
+        "null_version",
+        "missing_version",
         "old",
         "list",
     ],
@@ -409,8 +476,33 @@ def test_policy_the_current_schema_cannot_represent_is_unsupported(tmp_path, dat
     claimed = sha256_bytes(content)
     stub = stub_report(tmp_path, claimed)
     put(tmp_path, f"readiness/evidence/{claimed}.json", content)
+    with pytest.raises(UnsupportedHistoricalPolicy, match="schema|version"):
+        read_historical(tmp_path, stub)
+
+
+def test_unknown_version_is_refused_at_the_version_boundary(tmp_path):
+    content = canonical_json_bytes(_policy_dict(policy_version="2"))  # structure otherwise valid
+    claimed = sha256_bytes(content)
+    stub = stub_report(tmp_path, claimed)
+    put(tmp_path, f"readiness/evidence/{claimed}.json", content)
+    with pytest.raises(UnsupportedHistoricalPolicy, match="version"):
+        read_historical(tmp_path, stub)
+
+
+def test_version_1_with_an_unsupported_structure_is_refused(tmp_path):
+    content = canonical_json_bytes(_policy_dict(policy_version="1", extra_field=1))
+    claimed = sha256_bytes(content)
+    stub = stub_report(tmp_path, claimed)
+    put(tmp_path, f"readiness/evidence/{claimed}.json", content)
     with pytest.raises(UnsupportedHistoricalPolicy, match="schema"):
         read_historical(tmp_path, stub)
+
+
+def test_historical_version_1_does_not_follow_the_current_policy_version(fixture_root, monkeypatch):
+    root, _, ready, _ = fixture_root
+    monkeypatch.setattr(approvals, "POLICY_VERSION", "2")
+    assert read_historical(root, ready).decision == "READY"
+    assert publish.HISTORICAL_POLICY_VERSIONS == frozenset({"1"})
 
 
 def test_symlinked_retained_policy(fixture_root, tmp_path_factory):
@@ -486,7 +578,7 @@ def test_production_modules_never_reference_the_historical_reader(module):
         for n in ast.walk(ast.parse(inspect.getsource(module)))
         if isinstance(n, ast.Name | ast.Attribute | ast.alias)
     }
-    assert not {n for n in names if "read_historical" in n or "HistoricalReadback" in n}
+    assert not {n for n in names if "Historical" in n or "read_historical" in n}
 
 
 def test_policy_loading_has_no_fallback_to_retained_policies(fixture_root, tmp_path):
