@@ -21,10 +21,21 @@ Four things are verified separately on read-back and must not be conflated:
 
 A report is a historical assessment. It is not an authorization credential and carries no
 claim about who produced it.
+
+`read_historical` verifies a report against the policy copy retained with it instead of the
+current policy. It answers only whether the report was internally valid under the policy it
+recorded. It never answers whether execution is permitted now: that is `guard`, which uses the
+current tracked policy and never calls this module's historical reader. A retained policy copy
+proves that those bytes were stored, not that they were once the tracked policy file, that
+anyone approved their values, or that the checkout that produced the report was authentic.
+The result type and its immutability are a statement of intent, not a security boundary against
+code that runs in the same process.
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
@@ -39,8 +50,8 @@ from biorag_repro.readiness import evidence, git_state
 from biorag_repro.readiness.decide import Outcome, ReportInvalid, verify_report
 from biorag_repro.readiness.evaluate import Evaluation
 from biorag_repro.readiness.files import FileMissing, FileProblem, loads_strict, read_regular
-from biorag_repro.readiness.models import ReadinessReport
-from biorag_repro.readiness.policy import ApprovalPolicy
+from biorag_repro.readiness.models import Blocker, Decision, ReadinessReport
+from biorag_repro.readiness.policy import SLOT_NAMES, ApprovalPolicy, policy_sha256
 
 TRANSFORMATION = "readiness_report_v1"
 ROOT = "readiness"
@@ -269,6 +280,109 @@ def read_report(data_root: Path, report_sha256: str, policy: ApprovalPolicy) -> 
     if stored_policy != canonical_json_bytes(policy.model_dump(mode="json")):
         raise ReadbackError("stored policy copy differs from the policy used for verification")
     return Readback(report, outcome, sha256_bytes(manifest_bytes), verified, gone, not_historical)
+
+
+class HistoricalPolicyError(ReadbackError):
+    """The policy copy retained for a report is missing, unsafe, altered or invalid."""
+
+
+class UnsupportedHistoricalPolicy(HistoricalPolicyError):
+    """The retained policy is not representable by the current `ApprovalPolicy` schema.
+
+    Reading it would need a separately approved migration; nothing is reinterpreted here.
+    """
+
+
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True)
+class HistoricalReadback:
+    """What was verified about a stored report under its own retained policy.
+
+    `repo/` evidence is not retained, so it is counted in `not_historical` and not verified.
+    The statuses inside the report are the evaluator's original claims. Nothing here is
+    authority to run anything.
+    """
+
+    report_sha256: str
+    policy_sha256: str
+    decision: Decision  # recomputed from the stored gates
+    blockers: tuple[Blocker, ...]
+    binding_sha256: str
+    manifest_sha256: str
+    verified_evidence: int
+    not_retained: list[str]
+    not_historical: int
+    authorizes: Literal[False] = field(default=False, init=False)
+
+
+def _retained_policy(data_root: Path, claimed: str) -> ApprovalPolicy:
+    relative = f"{ROOT}/evidence/{claimed}.json"
+    try:
+        content = read_regular(data_root, relative)
+    except FileMissing as error:
+        raise HistoricalPolicyError(f"retained policy {claimed} is missing") from error
+    except FileProblem as error:
+        raise HistoricalPolicyError(f"retained policy {claimed} is unsafe: {error}") from error
+    if sha256_bytes(content) != claimed:
+        raise HistoricalPolicyError("retained policy bytes do not match the recorded SHA-256")
+    try:
+        value = loads_strict(content)
+    except FileProblem as error:
+        raise HistoricalPolicyError(f"retained policy is not valid JSON: {error}") from error
+    slots = value.get("slots") if isinstance(value, dict) else None
+    # a missing slot would otherwise default to unset and read as "nothing approved"
+    if not isinstance(slots, dict) or set(SLOT_NAMES) - set(slots):
+        raise UnsupportedHistoricalPolicy("retained policy does not have the current schema")
+    try:
+        policy = ApprovalPolicy.model_validate(value, strict=True)
+    except ValueError as error:
+        raise UnsupportedHistoricalPolicy(
+            f"retained policy does not have the current schema: {str(error)[:300]}"
+        ) from error
+    if canonical_json_bytes(policy.model_dump(mode="json")) != content:
+        raise HistoricalPolicyError("retained policy is not in canonical form")
+    return policy
+
+
+def read_historical(data_root: Path, report_sha256: str) -> HistoricalReadback:
+    """Verify a stored report against the policy retained when it was published.
+
+    The report names its policy by digest; every field read before `read_report` succeeds is
+    untrusted. Raises `ReadbackError` (including `HistoricalPolicyError`) or
+    `PartialPublication`. Writes nothing.
+    """
+    if not isinstance(report_sha256, str) or not _SHA256.fullmatch(report_sha256):
+        raise ReadbackError("the report SHA-256 must be 64 lowercase hex digits")
+    try:
+        report_bytes = read_regular(data_root, f"{ROOT}/reports/{report_sha256}.json")
+    except FileMissing as error:
+        raise ReadbackError(f"no report {report_sha256}") from error
+    except FileProblem as error:
+        raise ReadbackError(str(error)) from error
+    if sha256_bytes(report_bytes) != report_sha256:
+        raise ReadbackError("report bytes do not match their SHA-256")
+    try:
+        claimed = loads_strict(report_bytes).get("policy_sha256")
+    except (FileProblem, AttributeError) as error:
+        raise ReadbackError(f"report is not readable: {str(error)[:300]}") from error
+    if not isinstance(claimed, str) or not _SHA256.fullmatch(claimed):
+        raise ReadbackError("the report does not name a policy by SHA-256")
+
+    policy = _retained_policy(data_root, claimed)
+    stored = read_report(data_root, report_sha256, policy)
+    return HistoricalReadback(
+        report_sha256=report_sha256,
+        policy_sha256=policy_sha256(policy),
+        decision=stored.outcome.decision,
+        blockers=stored.outcome.blockers,
+        binding_sha256=stored.report.binding_sha256,
+        manifest_sha256=stored.manifest_sha256,
+        verified_evidence=stored.verified_evidence,
+        not_retained=stored.not_retained,
+        not_historical=stored.not_historical,
+    )
 
 
 def read_manifest_bytes(content: bytes) -> BuildManifest:

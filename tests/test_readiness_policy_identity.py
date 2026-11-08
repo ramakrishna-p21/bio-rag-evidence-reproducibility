@@ -402,7 +402,7 @@ def test_cli_loads_the_policy_from_the_repo_it_evaluates(world):
         _context=world.ctx,
     )
     assert status == 2
-    report = next((world.data / "readiness/reports").iterdir())
+    report = next((world.data / "readiness/reports").glob("[0-9a-f]" * 64 + ".json"))
     stored = json.loads(report.read_text())
     assert stored["policy_sha256"] == ORIGINAL_POLICY_SHA256
 
@@ -411,7 +411,7 @@ def test_cli_verify_uses_a_changed_policy_and_refuses_the_old_report(world):
     cli.run(
         ["evaluate", "--data-root", str(world.data), "--repo", str(world.repo)], _context=world.ctx
     )
-    sha = next((world.data / "readiness/reports").iterdir()).stem
+    sha = next((world.data / "readiness/reports").glob("[0-9a-f]" * 64 + ".json")).stem
     write_values(world.repo, values(world, corpus_identity="a" * 64))
     commit(world.repo)
     status = cli.run(
