@@ -1,12 +1,12 @@
 import pytest
-from readiness_support import digest, fixture_policy
+from readiness_support import REAL_POLICY, digest, fixture_policy
 from readiness_world import build_world, write
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import evidence
 from biorag_repro.readiness.evaluate import EvaluationError, evaluate, evaluator_identity
 from biorag_repro.readiness.models import MANDATORY_GATES
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy, ApprovalSlots, policy_sha256
+from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots, policy_sha256
 
 
 @pytest.fixture

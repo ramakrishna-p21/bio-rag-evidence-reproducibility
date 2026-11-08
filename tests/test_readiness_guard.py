@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 import readiness_support as support
+from readiness_support import REAL_POLICY
 from readiness_world import build_world
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -23,7 +24,7 @@ from biorag_repro.readiness.models import (
     GateResult,
     evidence_digest,
 )
-from biorag_repro.readiness.policy import GATE_SLOT, REAL_POLICY, ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import GATE_SLOT, ApprovalPolicy, policy_sha256
 
 
 def build(policy: ApprovalPolicy, *, tag: str = "", blocked: dict[str, str] | None = None, **parts):
@@ -388,7 +389,7 @@ def test_public_function_uses_the_real_policy_and_reads_no_environment():
         if isinstance(n, ast.FunctionDef) and n.name == "authorize_final_test"
     )
     names = {n.id for n in ast.walk(public) if isinstance(n, ast.Name)}
-    assert "REAL_POLICY" in names
+    assert "load_policy" in names and "REAL_POLICY" not in names
     attributes = {n.attr for n in ast.walk(tree) if isinstance(n, ast.Attribute)}
     imported = {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}
     assert not attributes & {"environ", "getenv", "argv"} and "os" not in imported

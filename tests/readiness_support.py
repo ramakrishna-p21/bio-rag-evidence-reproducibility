@@ -1,6 +1,9 @@
 """Synthetic readiness fixtures. A fixture policy exists only in tests; the package has none."""
 
+from pathlib import Path
+
 from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.readiness.approvals import load_policy
 from biorag_repro.readiness.decide import build_report
 from biorag_repro.readiness.models import (
     MANDATORY_GATES,
@@ -12,7 +15,15 @@ from biorag_repro.readiness.models import (
     ReadinessReport,
     evidence_digest,
 )
-from biorag_repro.readiness.policy import GATE_SLOT, SLOT_NAMES, ApprovalPolicy, ApprovalSlots
+from biorag_repro.readiness.policy import (
+    GATE_SLOT,
+    SLOT_NAMES,
+    ApprovalPolicy,
+    ApprovalSlots,
+)
+
+# The tracked production policy of this checkout, read through the production loader.
+REAL_POLICY = load_policy(Path(__file__).resolve().parent.parent)
 
 
 def digest(label: str) -> str:

@@ -1,0 +1,17 @@
+{
+  "policy_version": "1",
+  "slots": {
+    "corpus_identity": null,
+    "benchmark_identity": null,
+    "final_test_freeze": null,
+    "generator_qualification_acceptance": null,
+    "model_parser_identities": null,
+    "python_environment_lock": null,
+    "analysis_environment": null,
+    "seed_approvals": null,
+    "scientific_source_identity": null,
+    "restart_evidence_acceptance": null,
+    "storage_authorization": null,
+    "gpu_authorization": null
+  }
+}

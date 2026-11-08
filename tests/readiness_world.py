@@ -92,6 +92,8 @@ def build_repo(root: Path) -> tuple[Path, str]:
     write(repo / "analysis/renv.lock", LOCK)
     write(repo / "analysis/R/a.R", "a <- 1\n")
     write(repo / "analysis/run_analysis.R", "b <- 1\n")
+    (repo / "approvals").mkdir()
+    shutil.copy(REAL_REPO / "approvals/policy.json", repo / "approvals/policy.json")
     for name in SPECS:
         write(repo / f"docs/frozen/{name}.md", f"frozen {name}\n")
     git(repo, "add", "-A")

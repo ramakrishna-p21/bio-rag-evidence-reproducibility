@@ -32,12 +32,14 @@ from typing import Final, Literal
 
 from biorag_repro.generation.environment import utc_now
 from biorag_repro.readiness import publish
+from biorag_repro.readiness.approvals import PolicyError, load_policy
 from biorag_repro.readiness.decide import ReportInvalid, verify_report
 from biorag_repro.readiness.evaluate import Evaluation, evaluate, system_context
 from biorag_repro.readiness.models import Candidate, HostBinding, ReadinessReport
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy
+from biorag_repro.readiness.policy import ApprovalPolicy
 
 Reason = Literal[
+    "policy_unavailable",
     "report_incomplete",
     "report_unverifiable",
     "stored_not_ready",
@@ -149,12 +151,16 @@ def authorize_final_test(
 ) -> FinalTestAuthorization:
     """Authorize starting or resuming final-test work, or raise `AuthorizationRefused`.
 
-    Always uses the tracked approval policy and the real evaluator.
+    Always uses the tracked approval policy of `repo` and the real evaluator.
     """
+    try:
+        policy = load_policy(repo)
+    except PolicyError as error:
+        raise AuthorizationRefused("policy_unavailable", str(error)[:300]) from error
     return _authorize(
         data_root,
         report_sha256,
         repo=repo,
-        policy=REAL_POLICY,
+        policy=policy,
         evaluate_fn=lambda policy: evaluate(system_context(repo, data_root), policy),
     )

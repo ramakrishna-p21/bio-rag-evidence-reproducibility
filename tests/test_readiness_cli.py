@@ -3,11 +3,11 @@ import inspect
 import pathlib
 
 import pytest
-from readiness_support import fixture_policy
+from readiness_support import REAL_POLICY, fixture_policy
 from readiness_world import build_world
 
 from biorag_repro.readiness import cli
-from biorag_repro.readiness.policy import REAL_POLICY, policy_sha256
+from biorag_repro.readiness.policy import policy_sha256
 from biorag_repro.readiness.publish import read_report
 
 

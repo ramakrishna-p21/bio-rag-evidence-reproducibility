@@ -8,14 +8,14 @@ import shutil
 from dataclasses import replace
 
 import pytest
-from readiness_support import digest
+from readiness_support import REAL_POLICY, digest
 from readiness_world import R_OUTPUT, build_world, git, write
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import evidence
 from biorag_repro.readiness.evaluate import gather_all
 from biorag_repro.readiness.gather import to_result
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy, ApprovalSlots
+from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots
 
 
 @pytest.fixture

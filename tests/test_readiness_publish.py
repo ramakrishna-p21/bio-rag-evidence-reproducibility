@@ -2,13 +2,13 @@ import json
 import os
 
 import pytest
-from readiness_support import fixture_policy
+from readiness_support import REAL_POLICY, fixture_policy
 from readiness_world import build_world, git, write
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.readiness import publish
 from biorag_repro.readiness.evaluate import evaluate
-from biorag_repro.readiness.policy import REAL_POLICY, policy_sha256
+from biorag_repro.readiness.policy import policy_sha256
 from biorag_repro.readiness.publish import (
     PartialPublication,
     PublicationError,

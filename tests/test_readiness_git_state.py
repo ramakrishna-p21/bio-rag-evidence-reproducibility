@@ -114,3 +114,48 @@ def test_not_a_repository_is_unavailable(tmp_path):
 def test_snapshot_is_canonical(repo):
     state = probe(repo)
     assert sha256_bytes(state.snapshot_bytes()) == sha256_bytes(probe(repo).snapshot_bytes())
+
+
+def test_approval_file_is_checked_but_not_in_the_scope_identity(repo):
+    assert probe(repo).approval_blob is None
+    (repo / "approvals").mkdir()
+    (repo / "approvals/policy.json").write_text("{}\n")
+    assert probe(repo).untracked == ["approvals/policy.json"]
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "values")
+    state = probe(repo)
+    blob = subprocess.check_output(
+        ["git", "hash-object", "approvals/policy.json"], cwd=repo, text=True
+    ).strip()
+    assert state.approval_blob == blob
+    assert "approvals/policy.json" not in [p for _, _, p in state.entries]
+    before = state.entries
+    (repo / "approvals/policy.json").write_text('{"a": 1}\n')
+    git(repo, "commit", "-qam", "values changed")
+    changed = probe(repo)
+    assert changed.entries == before and changed.approval_blob != blob
+
+
+def test_only_the_exact_approval_path_is_left_out_of_the_identity(repo):
+    for name in ("policy.json.bak", "policy.json2", "sub/policy.json"):
+        (repo / "approvals" / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / "approvals" / name).write_text("x\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "neighbours")
+    paths = {p for _, _, p in probe(repo).entries}
+    assert {
+        "approvals/policy.json.bak",
+        "approvals/policy.json2",
+        "approvals/sub/policy.json",
+    } <= paths
+
+
+def test_modified_approval_file_is_reported_modified(repo):
+    (repo / "approvals").mkdir()
+    (repo / "approvals/policy.json").write_text("{}\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "values")
+    (repo / "approvals/policy.json").write_text("{ }\n")
+    assert probe(repo).modified == ["approvals/policy.json"]
+    (repo / "approvals/policy.json").unlink()
+    assert probe(repo).modified == ["approvals/policy.json"]

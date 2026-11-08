@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from finaltest_support import authorization
+from readiness_support import REAL_POLICY
 from readiness_world import build_world
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -14,7 +15,7 @@ from biorag_repro.readiness import evidence, publish
 from biorag_repro.readiness.decide import verify_report
 from biorag_repro.readiness.evaluate import evaluate, gather_all
 from biorag_repro.readiness.gather import to_result
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy, ApprovalSlots
+from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots
 
 G13 = "G13_final_test_history_integrity"
 NO_AUTHORITY = "final_test_inventory_authority_not_established"

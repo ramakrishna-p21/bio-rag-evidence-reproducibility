@@ -6,6 +6,7 @@ import typing
 from pathlib import Path
 
 import pytest
+from readiness_support import REAL_POLICY
 from test_finaltest_g13 import NO_AUTHORITY, Setup, world  # noqa: F401  (fixture)
 
 import biorag_repro
@@ -14,7 +15,6 @@ from biorag_repro.finaltest.head import HeadAttestation, attestation_sha256
 from biorag_repro.generation.attempts import RunPhase
 from biorag_repro.readiness import evidence
 from biorag_repro.readiness.guard import authorize_final_test
-from biorag_repro.readiness.policy import REAL_POLICY
 
 SRC = Path(biorag_repro.__file__).parent
 

@@ -603,9 +603,11 @@ def scientific_source(ctx: Context) -> Gathered:
         ctx.warnings.append(
             f"{state.untracked_outside_scope} untracked files lie outside the scientific scope"
         )
-    if state.modified or state.untracked:
+    if state.modified or state.untracked or state.approval_blob is None:
         out.state, out.reason = "failed", "scientific_source_not_clean"
         out.detail = f"{len(state.modified)} modified, {len(state.untracked)} untracked in scope"
+        if state.approval_blob is None:
+            out.detail += f"; {git_state.APPROVAL_FILE} is not tracked by Git"
         return out
     specs: dict[str, str] = {}
     try:

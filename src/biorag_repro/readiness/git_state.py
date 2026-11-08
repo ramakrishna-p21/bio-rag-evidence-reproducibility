@@ -6,6 +6,11 @@ fails the check. Ignoring is left to Git; no file-name pattern decides what coun
 identity is the list of (mode, blob, path) Git records for the scope, so it follows content
 and not the commit: a descendant commit with the same content has the same identity, and a
 descendant with other content does not.
+
+One file is checked but not digested: `APPROVAL_FILE`, the approval values. The values include
+the slot that holds this identity, so digesting them would make the identity a fixed point of
+its own file. The exclusion is that exact path and nothing else under `approvals/`. The file
+still has to be tracked and unmodified, and its content is pinned by the policy hash instead.
 """
 
 import subprocess
@@ -14,7 +19,8 @@ from pathlib import Path
 
 from biorag_repro.core.hashing import canonical_json_bytes
 
-SCOPE = ("src", "configs", "schemas", "scripts", "analysis", "pyproject.toml")
+SCOPE = ("src", "configs", "schemas", "scripts", "analysis", "pyproject.toml", "approvals")
+APPROVAL_FILE = "approvals/policy.json"
 
 
 class GitUnavailable(RuntimeError):
@@ -28,6 +34,7 @@ class GitState:
     modified: list[str]
     untracked: list[str]
     untracked_outside_scope: int
+    approval_blob: str | None  # Git blob of APPROVAL_FILE; None if Git does not track it
 
     def snapshot_bytes(self) -> bytes:
         return canonical_json_bytes(
@@ -35,6 +42,8 @@ class GitState:
                 "kind": "git_scope_state",
                 "scope": list(SCOPE),
                 "head": self.head,
+                "approval_file": APPROVAL_FILE,
+                "approval_blob": self.approval_blob,
                 "tracked": [list(e) for e in self.entries],
                 "modified": self.modified,
                 "untracked": self.untracked,
@@ -65,12 +74,16 @@ def probe(repo: Path) -> GitState:
     head = _git(repo, "rev-parse", "HEAD").decode().strip()
     listing = _records(_git(repo, "ls-files", "-z", "-s", "--", *SCOPE))
     entries = []
+    approval_blob = None
     for record in listing:
         meta, _, path = record.partition("\t")
         mode, blob, stage = meta.split(" ")
         if stage != "0":
             raise GitUnavailable(f"unmerged entry for {path}")
-        entries.append((mode, blob, path))
+        if path == APPROVAL_FILE:
+            approval_blob = blob
+        else:
+            entries.append((mode, blob, path))
     entries.sort(key=lambda e: e[2])
 
     modified: set[str] = set()
@@ -104,6 +117,7 @@ def probe(repo: Path) -> GitState:
         modified=sorted(modified),
         untracked=sorted(untracked),
         untracked_outside_scope=outside,
+        approval_blob=approval_blob,
     )
 
 

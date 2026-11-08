@@ -15,6 +15,16 @@ identities, the freeze record or the storage approval) is defined together with 
 that produces it, so a slot is not filled before its subject exists. The real policy
 therefore cannot authorize final-test execution: no gate that needs a slot can pass.
 
+The values live in the tracked data file `approvals/policy.json`; this module is the schema
+and the hash, `approvals.load_policy` reads the file, and both stay inside the G09 source digest. The values file is the one
+path excluded from that digest (`git_state.APPROVAL_FILE`), because it holds the G09 slot and
+would otherwise be hashed into the value it stores. Its identity is `policy_sha256`, which
+every report binds. G09 still requires the file to be tracked and unmodified.
+
+Approval values are frozen with the scientific source before final-test execution. Any later
+change gives a different policy hash, so an earlier report no longer verifies under the
+current policy and nothing is authorized until a new campaign is reviewed.
+
 There is no synthetic policy here. Tests build their own `ApprovalPolicy`; no command-line
 option, environment variable or configuration file selects a policy.
 """
@@ -99,6 +109,3 @@ assert {s for s in GATE_SLOT.values() if s} == set(SLOT_NAMES)
 
 def policy_sha256(policy: ApprovalPolicy) -> str:
     return sha256_bytes(canonical_json_bytes(policy.model_dump(mode="json")))
-
-
-REAL_POLICY: Final = ApprovalPolicy(policy_version="1", slots=ApprovalSlots())

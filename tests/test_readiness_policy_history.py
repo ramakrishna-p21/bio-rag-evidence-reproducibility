@@ -9,12 +9,13 @@ from pathlib import Path
 
 import pytest
 import readiness_support as support
+from readiness_support import REAL_POLICY
 from test_readiness_guard import Fixture, build, refused
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import git_state, publish
 from biorag_repro.readiness.files import loads_strict
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
 from biorag_repro.readiness.publish import ReadbackError
 
 

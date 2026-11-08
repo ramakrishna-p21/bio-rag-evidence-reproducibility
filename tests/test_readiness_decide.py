@@ -6,6 +6,7 @@ import random
 import pytest
 import readiness_support as fx
 from pydantic import ValidationError
+from readiness_support import REAL_POLICY
 
 from biorag_repro.readiness.decide import (
     ReportInvalid,
@@ -21,7 +22,7 @@ from biorag_repro.readiness.models import (
     derive_blockers,
     evidence_digest,
 )
-from biorag_repro.readiness.policy import REAL_POLICY, policy_sha256
+from biorag_repro.readiness.policy import policy_sha256
 
 POLICY = fx.fixture_policy()
 STATUSES = ("passed", "failed", "pending", "unavailable")

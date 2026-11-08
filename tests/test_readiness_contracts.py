@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 import readiness_support as fx
 from pydantic import ValidationError
+from readiness_support import REAL_POLICY
 
 from biorag_repro.readiness import decide as decide_module
 from biorag_repro.readiness import models, policy
@@ -83,7 +84,7 @@ def test_slots_are_mapped_one_to_one_and_all_unset_in_the_real_policy():
     assert policy.GATE_SLOT[GATE13] is None
     slots = [s for s in policy.GATE_SLOT.values() if s]
     assert sorted(slots) == sorted(policy.SLOT_NAMES)
-    assert all(getattr(policy.REAL_POLICY.slots, name) is None for name in policy.SLOT_NAMES)
+    assert all(getattr(REAL_POLICY.slots, name) is None for name in policy.SLOT_NAMES)
 
 
 @pytest.mark.parametrize(
@@ -101,13 +102,13 @@ def test_slots_are_mapped_one_to_one_and_all_unset_in_the_real_policy():
 def test_specific_production_approvals_stay_unset(name):
     matching = [n for n in policy.SLOT_NAMES if name in n or n in name]
     for slot in matching:
-        assert getattr(policy.REAL_POLICY.slots, slot) is None
-    assert policy.REAL_POLICY.slots == policy.ApprovalSlots()
+        assert getattr(REAL_POLICY.slots, slot) is None
+    assert REAL_POLICY.slots == policy.ApprovalSlots()
 
 
 def test_policy_is_frozen_and_strict():
     with pytest.raises(ValidationError):
-        policy.REAL_POLICY.slots.final_test_freeze = fx.digest("x")
+        REAL_POLICY.slots.final_test_freeze = fx.digest("x")
     with pytest.raises(ValidationError):
         policy.ApprovalSlots(approved=True)
     with pytest.raises(ValidationError):
@@ -122,7 +123,7 @@ def test_policy_identity_changes_with_any_slot_or_version():
     assert base != policy.policy_sha256(
         policy.ApprovalPolicy(policy_version="fixture-policy-0", slots=slots)
     )
-    assert policy.policy_sha256(policy.REAL_POLICY) != base
+    assert policy.policy_sha256(REAL_POLICY) != base
 
 
 def test_package_offers_no_way_to_select_a_policy():

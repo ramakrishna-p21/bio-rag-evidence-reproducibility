@@ -1,12 +1,12 @@
 """Evidence integrity, contract validity and policy approval are three different questions."""
 
 import pytest
-from readiness_support import digest, fixture_policy
+from readiness_support import REAL_POLICY, digest, fixture_policy
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness.decide import decide
 from biorag_repro.readiness.gather import Gathered, to_result
-from biorag_repro.readiness.policy import REAL_POLICY, ApprovalPolicy, ApprovalSlots
+from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots
 
 GATE = "G01_corpus_sources"
 SUBJECT = {"kind": "x", "n": 1}
