@@ -55,10 +55,10 @@ OPERATIONAL_EVENTS: Final = (
 )
 # Published only into rehearsal roots (P10-C2B). In a final-test root the verifier treats them
 # like any other event that nothing is authorized to publish.
-REHEARSAL_EVENTS: Final = ("batch_inputs_bound", "batch_authorized")
+REHEARSAL_EVENTS: Final = ("batch_inputs_bound", "batch_authorized", "batch_resumed")
 # Known to the schema so that a later pass can add them without a version change, but nothing
 # publishes them and the verifier treats any occurrence as an unauthorized artifact.
-FUTURE_EVENTS: Final = ("batch_resumed", "batch_completed")
+FUTURE_EVENTS: Final = ("batch_completed",)
 EVENT_TYPES: Final = OPERATIONAL_EVENTS + REHEARSAL_EVENTS + FUTURE_EVENTS
 # Not part of `REQUIRED_ROLES`: the event model must parse these events exactly as before so
 # that a final-test root is judged by the same rules. The rehearsal verifier and publisher
@@ -73,14 +73,39 @@ REHEARSAL_ROLES: Final = {
         "run_record",
         "readiness_report",
     ],
+    # The event that authorizes a resume. `previous_authorization_event` is the file hash of the
+    # latest earlier batch_authorized or batch_resumed event of the same batch.
+    "batch_resumed": [
+        "batch_id",
+        "previous_authorization_event",
+        "continuity_assessment",
+        "authorization_citation",
+        "readiness_report",
+        "run_record",
+    ],
 }
 # Rehearsal-only files, relative to the root.
 SESSION_LOCK_FILE: Final = "locks/session.lock"
+# Who held the session last (pid, process start, host, open or closed). Written when the first
+# attempt of a session begins; read by the next session to decide whether recovery is safe.
+HOLDER_FILE: Final = "locks/session.holder"
 INPUTS_DIR: Final = "inputs"
 ROSTERS_DIR: Final = "rosters"
 BINDING_NAME: Final = "binding.json"
 CITATIONS_DIR: Final = "citations"
 CITATION_NAME: Final = "000001.json"
+
+
+def citation_name(ordinal: int) -> str:
+    """The citation of the initial authorization is 1; the n-th resume is n + 1."""
+    return f"{ordinal:06d}.json"
+
+
+def continuity_name(ordinal: int) -> str:
+    """The continuity assessment cited by the citation of the same ordinal."""
+    return f"{ordinal:06d}.continuity.json"
+
+
 RUNS_DIR: Final = "runs"
 # Exact evidence roles, in order, of the batch events. The values are SHA-256 digests; batch_id
 # and ownership are derived identities (see batches.py), not file hashes. The genesis event's

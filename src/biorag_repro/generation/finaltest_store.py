@@ -5,8 +5,10 @@ and seals. This subclass only adds, in front of every method that writes, a chec
 the batch start (`finaltest.execution`) and removes the ways to create, open or recover a run:
 
 * `create`, `open`, `recover_interrupted`: refused. A run is created only by
-  `create_final_test_store`, and a stored run cannot be reopened in C2B (resume needs a fresh
-  authorization and is a later pass).
+  `create_final_test_store`. A stored run is reopened only by `reopen_final_test_store`, which
+  the authorized resume (`finaltest.resume`) calls after the resume records are published and
+  verified; it never seals, and an interrupted attempt is closed only by
+  `recover_after_session`, which needs evidence that the previous worker has stopped.
 * `plan`, `publish_input`, `begin_attempt`: the gate runs first, with the observation key and,
   where there is one, the rendered input digest.
 * `complete`, `fail`: the attempt must have been started by this store object, and the gate
@@ -35,6 +37,7 @@ from biorag_repro.finaltest.runrecord import (
     run_record_projection,
     run_record_sha256,
 )
+from biorag_repro.finaltest.session import WorkerStopped
 from biorag_repro.generation.attempts import (
     LifecycleError,
     ObservationState,
@@ -44,6 +47,20 @@ from biorag_repro.generation.attempts import (
 from biorag_repro.generation.config import GeneratorConfiguration
 from biorag_repro.generation.environment import EnvironmentRecord, utc_now
 from biorag_repro.generation.inputs import GeneratorInputRecord
+
+
+def hardware_identity(environment: EnvironmentRecord) -> dict[str, Any]:
+    """The host and GPU identity of an environment record: what must not change in a run."""
+    return {
+        "hostname": environment.hostname,
+        "machine": environment.machine,
+        "operating_system": environment.operating_system,
+        "os_release": environment.os_release,
+        "gpu_status": environment.gpu_status,
+        "gpus": [gpu.model_dump(mode="json") for gpu in environment.gpus],
+        "cuda_runtime": environment.cuda_runtime,
+    }
+
 
 # action, observation key (if the action concerns one), rendered input digest (if it has one)
 Gate = Callable[[str, str | None, str | None], None]
@@ -73,12 +90,14 @@ class FinalTestStore(RunStore):
         config: ResolvedConfiguration[GeneratorConfiguration],
         gate: Gate,
         now: Callable[[], str],
+        hardware: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(
             root, run_record_projection(record), run_record_sha256(record), config, now
         )
         self.final_record = record
         self._gate = gate
+        self._hardware = hardware  # set for a resumed run: the host and GPU it started on
         self._begun: dict[str, str] = {}  # attempt id -> key, for attempts started here
 
     # --- gated writers ---------------------------------------------------------------
@@ -95,11 +114,24 @@ class FinalTestStore(RunStore):
         self, key: str, *, environment: EnvironmentRecord, rendered_input_sha256: str
     ) -> str:
         self._gate("begin_attempt", key, rendered_input_sha256)
+        if self._hardware is not None and hardware_identity(environment) != self._hardware:
+            raise GateRefused("begin_attempt: the host or GPU differs from the run's original")
         attempt_id = super().begin_attempt(
             key, environment=environment, rendered_input_sha256=rendered_input_sha256
         )
         self._begun[attempt_id] = key
         return attempt_id
+
+    def recover_after_session(self, stopped: WorkerStopped) -> list[str]:
+        """Close attempts the previous session left running as interrupted.
+
+        They keep counting toward the retry limit. `stopped` is the session's evidence that the
+        previous worker cannot write; the lock alone is not accepted.
+        """
+        if not isinstance(stopped, WorkerStopped):
+            raise StoreOperationRefused("recovery needs evidence that the previous worker stopped")
+        self._gate("recover", None, None)
+        return RunStore.recover_interrupted(self, previous_worker_stopped=True)
 
     def _own_attempt(self, key: str, attempt_id: str) -> None:
         if self._begun.get(attempt_id) != key:
@@ -152,3 +184,37 @@ def create_final_test_store(
     except FileExistsError as error:
         raise PublicationConflict("a run record already exists here") from error
     return FinalTestStore(root, record, config, gate, now)
+
+
+def reopen_final_test_store(
+    root: Path,
+    record: FinalTestRunRecord,
+    config: ResolvedConfiguration[GeneratorConfiguration],
+    gate: Gate,
+    hardware: dict[str, Any] | None,
+    *,
+    now: Callable[[], str] = utc_now,
+) -> FinalTestStore:
+    """The store of an existing rehearsal run, for an authorized resume. Writes nothing.
+
+    `RunStore.open` would publish a missing seal; this does not, so a missing seal stays visible
+    (the resume assessment refuses such a run before it gets here).
+    """
+    if record.root_kind != "rehearsal":
+        raise StoreOperationRefused("only rehearsal runs can be reopened in this version")
+    run_dir = root / "runs" / record.run_id
+    stored = {
+        "run.json": sha256_bytes(serialize(record)),
+        "config.canonical.json": record.resolved_config_sha256,
+        "config.toml": record.raw_config_sha256,
+    }
+    if (record.resolved_config_sha256, record.raw_config_sha256) != (
+        config.configuration_sha256,
+        config.raw_toml_sha256,
+    ):
+        raise StoreOperationRefused("the configuration is not the one the run record names")
+    for name, digest in stored.items():
+        path = run_dir / name
+        if not path.is_file() or path.is_symlink() or sha256_bytes(path.read_bytes()) != digest:
+            raise StoreOperationRefused(f"{name} does not match the run record")
+    return FinalTestStore(root, record, config, gate, now, hardware)

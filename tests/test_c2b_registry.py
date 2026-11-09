@@ -240,7 +240,7 @@ def test_the_publishers_enforce_event_types_roles_and_file_names(tmp_path):
     w = make_world(tmp_path)
     with inventory.registry_lock(w.root) as held:
         with pytest.raises(ProtocolRefused, match="not a rehearsal event"):
-            registry.append_event_locked(held, w.root, w.auth, w.witnesses, "batch_resumed", [])
+            registry.append_event_locked(held, w.root, w.auth, w.witnesses, "batch_completed", [])
         with pytest.raises(ProtocolRefused, match="must cite exactly"):
             registry.append_event_locked(
                 held, w.root, w.auth, w.witnesses, "batch_authorized",

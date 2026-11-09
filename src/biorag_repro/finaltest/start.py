@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, NoReturn
 
+from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import new_run_id
 from biorag_repro.finaltest import layout, registry
@@ -73,8 +74,8 @@ from biorag_repro.finaltest.protected import (
 )
 from biorag_repro.finaltest.runrecord import FinalTestRunRecord, run_record_sha256
 from biorag_repro.finaltest.session import Session
-from biorag_repro.generation.attempts import retry_policy_of
-from biorag_repro.generation.config import resolve_generator_config
+from biorag_repro.generation.attempts import RetryPolicy, retry_policy_of
+from biorag_repro.generation.config import GeneratorConfiguration, resolve_generator_config
 from biorag_repro.generation.environment import BackendKind, utc_now
 from biorag_repro.generation.finaltest_store import create_final_test_store
 from biorag_repro.generation.prompt import InputRenderer
@@ -154,15 +155,10 @@ def _checked(assessed: Assessed) -> tuple[FinalTestAuthorization, ReadinessRepor
     return authorization, report
 
 
-def _start_with(
-    request: StartRequest,
-    assess: Callable[[], Assessed],
-    session: Session,
-    *,
-    allowed_root_kinds: tuple[str, ...] = ("rehearsal",),
-    now: Callable[[], str] = utc_now,
-) -> StartedBatch:
-    # step 0: nothing is read or written
+def _check_request(
+    request: StartRequest, session: Session, allowed_root_kinds: tuple[str, ...]
+) -> tuple[ResolvedConfiguration[GeneratorConfiguration], RetryPolicy]:
+    """Everything that can be refused before the root is read. Shared by start and resume."""
     storage = request.authorization
     root, arm, plan = request.root, request.matrix_arm, request.plan
     if storage.root_kind not in allowed_root_kinds:
@@ -208,8 +204,23 @@ def _start_with(
             check_seeds_for_configuration(settings, request.seeds)
     except ValueError as error:
         raise StartRefused("seeds", str(error)[:200]) from error
-    retry = retry_policy_of(settings)
     session.assert_held()
+    return resolved, retry_policy_of(settings)
+
+
+def _start_with(
+    request: StartRequest,
+    assess: Callable[[], Assessed],
+    session: Session,
+    *,
+    allowed_root_kinds: tuple[str, ...] = ("rehearsal",),
+    now: Callable[[], str] = utc_now,
+) -> StartedBatch:
+    # step 0: nothing is read or written
+    storage = request.authorization
+    root, arm, plan = request.root, request.matrix_arm, request.plan
+    resolved, retry = _check_request(request, session, allowed_root_kinds)
+    settings = resolved.settings
 
     with session.registry() as held:
         # step 1

@@ -41,9 +41,12 @@ from biorag_repro.finaltest import layout
 from biorag_repro.finaltest.batches import (
     AuthorizationCitation,
     BatchManifest,
+    CitationChainError,
     citation_sha256,
     observed_state_sha256,
+    verify_citation_chain,
 )
+from biorag_repro.finaltest.continuity import ContinuityAssessment
 from biorag_repro.finaltest.inputs import BatchInputBinding, ConditionRoster, roster_sha256
 from biorag_repro.finaltest.layout import (
     EvidenceCitation,
@@ -72,7 +75,7 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 _BATCH_DIR = re.compile(r"^batches/[0-9a-f]{64}$")
 _RUN_DIR = re.compile(r"^runs/[0-9a-f]{32}$")
 _ANY_TEMP = re.compile(r"^\.[^/]+\.tmp$")
-_CITATION_FILE = re.compile(r"^\d{6}\.json$")
+_CITATION_FILE = re.compile(r"^\d{6}(\.continuity)?\.json$")
 # A registry beyond genesis is pinned by nothing outside the data root the registry shares, so
 # no verdict about it is positive. Genesis alone is pinned by the out-of-tree anchor.
 HEAD_NOT_ESTABLISHED_TEXT: Final = (
@@ -104,6 +107,11 @@ class BatchRecord:
     campaign_plan_sha256: str
     ownership_sha256: str
     manifest_sha256: str
+    # set once the batch is authorized: its run, the latest authorizing event (initial or resume)
+    run_id: str | None = None
+    authorization_event_sha256: str | None = None
+    authorization_event_sequence: int | None = None
+    resumes: int = 0
 
 
 @dataclass(frozen=True)
@@ -227,6 +235,8 @@ def _rehearsal_role(entry: _Entry, deep: bool) -> str:
         return "dir" if entry.kind == "dir" else "wrongkind"
     if path == layout.SESSION_LOCK_FILE:
         return "lock" if entry.kind == "file" else "wrongkind"
+    if path == layout.HOLDER_FILE:
+        return "holder" if entry.kind == "file" else "wrongkind"
     if _RUN_DIR.match(path):
         return "rundir" if entry.kind == "dir" else "wrongkind"
     if len(parts) == 4 and parts[0] == layout.BATCHES_DIR and parts[2] == layout.INPUTS_DIR:
@@ -440,6 +450,8 @@ def verify_root(
                 problems.append(("unexpected", "the lock file has content"))
             elif data is not None:
                 hashes[entry.path] = sha256_bytes(data)
+        elif role == "holder":
+            pass  # the last session's identity: volatile, read by the next session, not evidence
         elif role == "root":
             root_bytes = _read(root, entry.path, problems)
         elif role == "event":
@@ -708,6 +720,7 @@ def _check_batches(
                 artifacts,
                 root_id,
                 claimed_runs,
+                hashes,
                 problems,
             )
             continue
@@ -763,7 +776,16 @@ def _check_batches(
     if artifacts is not None:
         _check_unclaimed(state, artifacts, claimed_runs, problems)
     records = {
-        batch: BatchRecord(info["state"], info["plan"], info["ownership"], info["manifest"])
+        batch: BatchRecord(
+            info["state"],
+            info["plan"],
+            info["ownership"],
+            info["manifest"],
+            run_id=info.get("run_id"),
+            authorization_event_sha256=info.get("auth_event"),
+            authorization_event_sequence=info.get("auth_sequence"),
+            resumes=info.get("resumes", 0),
+        )
         for batch, info in state.items()
     }
     return records, reconcile
@@ -793,9 +815,20 @@ def _fold_rehearsal(
     artifacts: _Artifacts,
     root_id: str,
     claimed_runs: set[str],
+    hashes: dict[str, str],
     problems: list[Problem],
 ) -> None:
     short = batch[:12]
+    if kind == "batch_resumed":
+        if info["state"] != "authorized":
+            problems.append(
+                ("conflicting", f"event {number} follows batch {short} {info['state']}")
+            )
+        elif cited["previous_authorization_event"] != info["auth_event"]:
+            problems.append(("conflicting", f"event {number} cites another authorizing event"))
+        elif _check_resume(number, batch, cited, info, artifacts, hashes, problems):
+            info.update(auth_event=file_sha, auth_sequence=number, resumes=info["resumes"] + 1)
+        return
     if kind == "batch_inputs_bound":
         if info["state"] != "materialized":
             problems.append(
@@ -813,7 +846,7 @@ def _fold_rehearsal(
     elif cited["inputs_bound_event"] != info.get("inputs_event"):
         problems.append(("conflicting", f"event {number} cites another inputs event"))
     elif _check_authorization(batch, cited, info, artifacts, claimed_runs, problems):
-        info["state"] = "authorized"
+        info.update(state="authorized", auth_event=file_sha, auth_sequence=number, resumes=0)
 
 
 def _check_inputs(
@@ -878,8 +911,6 @@ def _check_authorization(
     short = batch[:12]
     files = artifacts.citations.get(batch, {})
     data = files.get(layout.CITATION_NAME)
-    for extra in sorted(set(files) - {layout.CITATION_NAME}):
-        problems.append(("unexpected", f"citation {extra} of batch {short} is not authorized"))
     if data is None:
         problems.append(("incomplete", f"authorized batch {short} has no citation file"))
         return False
@@ -915,6 +946,69 @@ def _check_authorization(
         problems.append(("conflicting", f"run record of batch {short} is about other evidence"))
         return False
     claimed_runs.add(run_id)
+    info.update(
+        run_id=run_id,
+        run_record=cited["run_record"],
+        chain=[citation],
+        assessments={},
+        last_citation=cited["authorization_citation"],
+        accepted={layout.CITATION_NAME},
+    )
+    return True
+
+
+def _check_resume(
+    number: int,
+    batch: str,
+    cited: dict[str, str],
+    info: dict[str, Any],
+    artifacts: _Artifacts,
+    hashes: dict[str, str],
+    problems: list[Problem],
+) -> bool:
+    """One `batch_resumed` event against its citation, continuity assessment and the chain."""
+    short = batch[:12]
+    ordinal = info["resumes"] + 2
+    files = artifacts.citations.get(batch, {})
+    citation_data = files.get(layout.citation_name(ordinal))
+    assessment_data = files.get(layout.continuity_name(ordinal))
+    if citation_data is None or assessment_data is None:
+        problems.append(("incomplete", f"resume event {number} of {short} lacks its records"))
+        return False
+    citation = _canonical(AuthorizationCitation, citation_data)
+    assessment = _canonical(ContinuityAssessment, assessment_data)
+    if (
+        citation is None
+        or assessment is None
+        or sha256_bytes(citation_data) != cited["authorization_citation"]
+        or sha256_bytes(assessment_data) != cited["continuity_assessment"]
+    ):
+        problems.append(("conflicting", f"records of resume event {number} differ from it"))
+        return False
+    head = hashes.get(f"{layout.REGISTRY_DIR}/{number - 1:06d}.json")
+    if (
+        citation.kind != "resume"
+        or citation.batch_id != batch
+        or citation.inputs_set_sha256 != info["binding"]
+        or citation.readiness_report_sha256 != cited["readiness_report"]
+        or citation.continuity_assessment_sha256 != cited["continuity_assessment"]
+        or cited["run_record"] != info["run_record"]
+        # the head the assessment was made against is exactly the event before this one
+        or (citation.registry_head_sequence, citation.registry_head_event_sha256)
+        != (number - 1, head)
+    ):
+        problems.append(("conflicting", f"resume citation of {short} is about other evidence"))
+        return False
+    assessments = info["assessments"] | {cited["continuity_assessment"]: assessment}
+    try:
+        verify_citation_chain([*info["chain"], citation], assessments)
+    except CitationChainError as error:
+        problems.append(("conflicting", f"citation chain of {short} is invalid: {error}"))
+        return False
+    info["chain"].append(citation)
+    info["assessments"] = assessments
+    info["last_citation"] = cited["authorization_citation"]
+    info["accepted"] |= {layout.citation_name(ordinal), layout.continuity_name(ordinal)}
     return True
 
 
@@ -928,6 +1022,13 @@ def _check_unclaimed(
         problems.append(("unexpected", "runs directory without an authorized batch"))
     for run_id in sorted(set(artifacts.runs) - claimed_runs):
         problems.append(("unexpected", f"run directory {run_id[:12]} is not an authorized run"))
+    for batch, files in sorted(artifacts.citations.items()):
+        accepted = state.get(batch, {}).get("accepted", set())
+        if state.get(batch, {}).get("state") == "authorized":
+            for extra in sorted(set(files) - accepted):
+                problems.append(
+                    ("unexpected", f"citation {extra} of batch {batch[:12]} is not authorized")
+                )
     for batch in sorted(set(artifacts.binding) | set(artifacts.rosters) | set(artifacts.citations)):
         known = state.get(batch, {}).get("state")
         if known is None:

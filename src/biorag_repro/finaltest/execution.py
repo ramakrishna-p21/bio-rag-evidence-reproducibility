@@ -66,6 +66,8 @@ class SessionGate:
             raise GateRefused(f"{action}: {key} is not an observation of this batch")
         if rendered_input_sha256 is not None and rendered_input_sha256 != row.rendered_input_sha256:
             raise GateRefused(f"{action}: the input of {key} differs from the bound roster")
+        if action == "begin_attempt":
+            self.session.begin_worker()  # after every check, before the attempt is written
 
 
 @dataclass(frozen=True)

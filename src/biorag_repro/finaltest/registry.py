@@ -268,7 +268,8 @@ def _require_held(held: HeldLock, root: Path) -> None:
 
 
 _BATCH_FILE = re.compile(
-    r"^batches/[0-9a-f]{64}/(inputs/binding\.json|inputs/rosters/[0-9a-f]{64}\.json|citations/000001\.json)$"
+    r"^batches/[0-9a-f]{64}/(inputs/binding\.json|inputs/rosters/[0-9a-f]{64}\.json"
+    r"|citations/\d{6}\.json|citations/\d{6}\.continuity\.json)$"
 )
 
 
