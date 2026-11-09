@@ -30,6 +30,7 @@ from biorag_repro.evaluation.analysis_result import AnalysisResultRecord
 from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
 from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
+from biorag_repro.evaluation.supplement import SupplementRecord
 from biorag_repro.finaltest.batches import AuthorizationCitation, BatchManifest
 from biorag_repro.finaltest.campaign import CampaignPlan
 from biorag_repro.finaltest.continuity import ContinuityAssessment
@@ -84,6 +85,7 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "analysis_row.schema.json": AnalysisRow,
     "analysis_inventory.schema.json": AnalysisInventory,
     "analysis_handoff.schema.json": AnalysisHandoff,
+    "analysis_supplement.schema.json": SupplementRecord,
     "analysis_preflight.schema.json": AnalysisPreflight,
     "analysis_result_record.schema.json": AnalysisResultRecord,
     "generator_input.schema.json": GeneratorInput,

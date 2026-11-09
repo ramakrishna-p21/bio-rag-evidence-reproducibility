@@ -26,6 +26,16 @@ from biorag_repro.evaluation.analysis_result import (
     read_result_files,
     scientific_result_id,
 )
+from biorag_repro.evaluation.supplement import (
+    RECORD_FILE as SUPPLEMENT_RECORD,
+)
+from biorag_repro.evaluation.supplement import (
+    TABLES as SUPPLEMENT_TABLES,
+)
+from biorag_repro.evaluation.supplement import (
+    SupplementRecord,
+    serialize_record,
+)
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 BANNER: Final = "SYNTHETIC REHEARSAL — NOT SCIENTIFIC FINDINGS"
@@ -47,6 +57,19 @@ SECONDARY_TABLES: Final = (
 SECONDARY_PRESENTATION: Final = ("report.md", "coprimary_effects.svg")
 SECONDARY_RECORD: Final = "secondary_record.json"
 SECONDARY_FILES: Final = (*SECONDARY_TABLES, *SECONDARY_PRESENTATION, SECONDARY_RECORD)
+
+# The R summary of the optional supplement (analysis/R/supplement.R).
+SUPPLEMENT_SUMMARY_TABLES: Final = (
+    "supplement_evidence_outcomes.csv",
+    "supplement_evidence_summary.csv",
+    "supplement_pairs_summary.csv",
+    "supplement_populations.csv",
+    "supplement_stability_summary.csv",
+    "supplement_stage_forms.csv",
+)
+SUPPLEMENT_SUMMARY_RECORD: Final = "supplement_summary_record.json"
+SUPPLEMENT_PYTHON_FILES: Final = (*SUPPLEMENT_TABLES, SUPPLEMENT_RECORD)
+SUPPLEMENT_SUMMARY_FILES: Final = (*SUPPLEMENT_SUMMARY_TABLES, SUPPLEMENT_SUMMARY_RECORD)
 
 # Resources the package does not contain. Their absence is part of the index.
 EXTERNAL_RESOURCES: Final = {
@@ -88,6 +111,11 @@ class ReleaseIndex(Record):
     csv_sha256: Sha256
     primary_scientific_result_sha256: Sha256
     secondary_result_sha256: Sha256
+    # Present only when a supplement is indexed; absent otherwise so earlier indexes keep their bytes.
+    supplement_sha256: Sha256 | None = Field(default=None, exclude_if=lambda value: value is None)
+    supplement_summary_sha256: Sha256 | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     r_version_required: str
     renv_lock_sha256: Sha256
     primary_code: IndexCode
@@ -104,6 +132,8 @@ class ReleaseIndex(Record):
             raise ValueError("the external resources must be exactly the declared ones, in order")
         if set(roles) & set(EXTERNAL_RESOURCES):
             raise ValueError("an external resource cannot also be included")
+        if (self.supplement_sha256 is None) != (self.supplement_summary_sha256 is None):
+            raise ValueError("a supplement and its summary are indexed together")
         return self
 
 
@@ -198,9 +228,70 @@ def _check(
     return primary, secondary, input_bytes
 
 
+def _summary_id(handoff: str, csv: str, supplement: str, tables: dict[str, str]) -> str:
+    payload = {
+        "csv_sha256": csv,
+        "files": [{"name": n, "sha256": tables[n]} for n in sorted(tables)],
+        "handoff_sha256": handoff,
+        "kind": "supplement_summary",
+        "supplement_sha256": supplement,
+    }
+    return sha256_bytes(canonical_json_bytes(payload))
+
+
+def _check_supplement(
+    root: Path, supplement_dir: str, summary_dir: str, handoff: str, csv: str
+) -> tuple[dict[str, bytes], dict[str, bytes], str, str]:
+    """Cross-check the Python supplement and its R summary with each other and with the primary."""
+    py = read_result_files(root, supplement_dir, SUPPLEMENT_PYTHON_FILES)
+    summary = read_result_files(root, summary_dir, SUPPLEMENT_SUMMARY_FILES)
+    record = SupplementRecord.model_validate_json(py[SUPPLEMENT_RECORD], strict=True)
+    if serialize_record(record) != py[SUPPLEMENT_RECORD]:
+        raise ResultError("canonical_form", "the supplement record is not in canonical form")
+    for name in SUPPLEMENT_TABLES:
+        entry = record.files[name]
+        if sha256_bytes(py[name]) != entry.sha256 or len(py[name]) != entry.bytes:
+            raise ResultError("hash", f"supplement {name} differs from its record")
+    if (record.handoff_sha256, record.analysis_table_sha256) != (handoff, csv):
+        raise ResultError("citation", "the supplement cites other inputs than the primary result")
+    cited = _json(summary[SUPPLEMENT_SUMMARY_RECORD], SUPPLEMENT_SUMMARY_RECORD)
+    listed = cited.get("scientific_files", {})
+    if set(listed) != set(SUPPLEMENT_SUMMARY_TABLES):
+        raise ResultError("file_set", "the supplement summary record lists other tables")
+    for name in SUPPLEMENT_SUMMARY_TABLES:
+        if sha256_bytes(summary[name]) != listed[name].get("sha256") or len(summary[name]) != (
+            listed[name].get("bytes")
+        ):
+            raise ResultError("hash", f"supplement summary {name} differs from its record")
+    inputs_cited = cited.get("inputs", {})
+    if (
+        (inputs_cited.get("handoff_sha256"), inputs_cited.get("csv_sha256")) != (handoff, csv)
+        or inputs_cited.get("supplement_sha256") != record.supplement_sha256
+        or inputs_cited.get("supplement_record_sha256") != sha256_bytes(py[SUPPLEMENT_RECORD])
+        or cited.get("purpose") != "synthetic_rehearsal"
+        or cited.get("scientific_authority") != "none"
+        or cited.get("banner") != BANNER
+    ):
+        raise ResultError("citation", "the summary and the supplement disagree")
+    summary_id = _summary_id(
+        handoff, csv, record.supplement_sha256, {n: listed[n]["sha256"] for n in listed}
+    )
+    if summary_id != cited.get("supplement_summary_sha256"):
+        raise ResultError("identity", "the supplement summary hash does not match its tables")
+    return py, summary, record.supplement_sha256, summary_id
+
+
 def build_release_index(
-    root: Path, *, primary_dir: str, secondary_dir: str, inputs: dict[str, str]
+    root: Path,
+    *,
+    primary_dir: str,
+    secondary_dir: str,
+    inputs: dict[str, str],
+    supplement_dir: str | None = None,
+    supplement_summary_dir: str | None = None,
 ) -> ReleaseIndex:
+    if (supplement_dir is None) != (supplement_summary_dir is None):
+        raise ResultError("inputs", "a supplement and its summary directory are given together")
     primary, secondary, input_bytes = _check(root, primary_dir, secondary_dir, inputs)
     record = parse_run_record(primary["run_record.json"])
     sec = _json(secondary[SECONDARY_RECORD], SECONDARY_RECORD)
@@ -224,7 +315,32 @@ def build_release_index(
             )
             for name, data in files.items()
         ]
+    supplement_id: str | None = None
+    summary_id: str | None = None
+    if supplement_dir is not None and supplement_summary_dir is not None:
+        py, summary, supplement_id, summary_id = _check_supplement(
+            root,
+            supplement_dir,
+            supplement_summary_dir,
+            record.inputs.handoff_sha256,
+            record.inputs.csv_sha256,
+        )
+        for label, directory, files in (
+            ("supplement", supplement_dir, py),
+            ("supplement_summary", supplement_summary_dir, summary),
+        ):
+            included += [
+                IncludedArtifact(
+                    role=f"{label}:{name}",
+                    path=f"{directory}/{name}",
+                    bytes=len(data),
+                    sha256=sha256_bytes(data),
+                )
+                for name, data in files.items()
+            ]
     return ReleaseIndex(
+        supplement_sha256=supplement_id,
+        supplement_summary_sha256=summary_id,
         handoff_sha256=record.inputs.handoff_sha256,
         csv_sha256=record.inputs.csv_sha256,
         primary_scientific_result_sha256=record.outputs.scientific_result_sha256,
@@ -267,6 +383,8 @@ def read_release_index(
     primary_dir: str,
     secondary_dir: str,
     inputs: dict[str, str],
+    supplement_dir: str | None = None,
+    supplement_summary_dir: str | None = None,
 ) -> ReleaseIndex:
     """Read an index by its trusted hash and re-establish every reference it makes."""
     data = _file(root, relative)
@@ -277,7 +395,12 @@ def read_release_index(
         raise ResultError("canonical_form", "the release index is not in its canonical form")
     if (
         build_release_index(
-            root, primary_dir=primary_dir, secondary_dir=secondary_dir, inputs=inputs
+            root,
+            primary_dir=primary_dir,
+            secondary_dir=secondary_dir,
+            inputs=inputs,
+            supplement_dir=supplement_dir,
+            supplement_summary_dir=supplement_summary_dir,
         )
         != index
     ):

@@ -1,0 +1,10 @@
+item_id,matrix_arm,repeat_index,jats_state,pdf_state,jats_status,pdf_status,pair_class
+q_001,confirmatory,1,answer,answer,incorrect,correct,differ_correctness_differs
+q_001,confirmatory,2,answer,answer,incorrect,correct,differ_correctness_differs
+q_001,confirmatory,3,answer,answer,incorrect,correct,differ_correctness_differs
+q_002,confirmatory,1,answer,answer,correct,correct,both_correct
+q_002,confirmatory,2,answer,answer,incorrect,correct,differ_correctness_differs
+q_002,confirmatory,3,answer,answer,correct,correct,identical_bytes
+q_003,confirmatory,1,answer,answer,incorrect,incorrect,identical_bytes
+q_003,confirmatory,2,answer,abstained,incorrect,incorrect,not_comparable
+q_003,confirmatory,3,answer,answer,incorrect,incorrect,identical_bytes

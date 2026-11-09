@@ -36,6 +36,7 @@ from biorag_repro.evaluation.release_index import (
     publish_release_index,
     read_release_index,
 )
+from biorag_repro.evaluation.supplement import OfficialSupplementUnavailable, read_supplement
 from biorag_repro.generation.environment import system_probes
 
 
@@ -262,6 +263,26 @@ def rehearse_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def verify_supplement_command(args: argparse.Namespace) -> int:
+    """Read a supplement back against the verified rehearsal handoff, re-deriving its labels."""
+    build = _ref(args.handoff_build, args.handoff_sha256)
+    try:
+        verified = read_handoff(build, args.root)
+        read_supplement(args.root, args.supplement, args.sha256, verified=verified)
+    except OfficialSupplementUnavailable as error:
+        print(f"supplement unavailable: {error}", file=sys.stderr)
+        return 2
+    except OfficialProvenanceNotVerified:
+        print("an official handoff cannot be checked here; nothing is accepted.", file=sys.stderr)
+        return 2
+    except (ResultError, ValueError, OSError) as error:
+        print(f"supplement is not valid: {error}", file=sys.stderr)
+        return 1
+    print("valid synthetic supplement: labels re-derived and linked to the verified table")
+    print("SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS")
+    return 0
+
+
 def _index_inputs(args: argparse.Namespace) -> dict[str, str]:
     return {
         "handoff": args.handoff,
@@ -277,6 +298,8 @@ def release_index_command(args: argparse.Namespace) -> int:
             primary_dir=args.primary,
             secondary_dir=args.secondary,
             inputs=_index_inputs(args),
+            supplement_dir=args.supplement,
+            supplement_summary_dir=args.supplement_summary,
         )
         digest = publish_release_index(index, args.root, args.out)
     except (ResultError, ValueError, OSError) as error:
@@ -297,6 +320,8 @@ def verify_release_index_command(args: argparse.Namespace) -> int:
             primary_dir=args.primary,
             secondary_dir=args.secondary,
             inputs=_index_inputs(args),
+            supplement_dir=args.supplement,
+            supplement_summary_dir=args.supplement_summary,
         )
     except (ResultError, ValueError, OSError) as error:
         print(f"release index is not valid: {error}", file=sys.stderr)
@@ -318,6 +343,10 @@ def _index_arguments(parser: argparse.ArgumentParser) -> None:
         "--analysis-table", required=True, help="analysis table, relative to --root"
     )
     parser.add_argument("--preflight", required=True, help="preflight file, relative to --root")
+    parser.add_argument("--supplement", help="Python supplement directory, inside --root")
+    parser.add_argument(
+        "--supplement-summary", help="R supplement summary directory, inside --root"
+    )
 
 
 def _result_arguments(parser: argparse.ArgumentParser) -> None:
@@ -418,6 +447,20 @@ def main(argv: list[str] | None = None) -> int:
     index_check.add_argument("--index", required=True, help="index file, relative to --root")
     index_check.add_argument("--sha256", required=True, help="trusted SHA-256 of the index")
     index_check.set_defaults(run=verify_release_index_command)
+
+    supplement = operations.add_parser(
+        "verify-supplement", help="read a synthetic supplement back against its verified handoff"
+    )
+    supplement.add_argument("--root", type=Path, required=True)
+    supplement.add_argument("--handoff-build", required=True)
+    supplement.add_argument("--handoff-sha256", required=True)
+    supplement.add_argument(
+        "--supplement", required=True, help="supplement directory, inside --root"
+    )
+    supplement.add_argument(
+        "--sha256", required=True, help="trusted SHA-256 of supplement_record.json"
+    )
+    supplement.set_defaults(run=verify_supplement_command)
 
     args = parser.parse_args(argv)
     return int(args.run(args))

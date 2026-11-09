@@ -1,0 +1,7 @@
+item_id,matrix_arm,condition,n_rows,n_answers,stability_class,byte_identical
+q_001,confirmatory,JATS,3,3,incorrect_identical_normalized,no
+q_001,confirmatory,PDF_DOCLING,3,3,all_correct,yes
+q_002,confirmatory,JATS,3,3,mixed,no
+q_002,confirmatory,PDF_DOCLING,3,3,all_correct,no
+q_003,confirmatory,JATS,3,3,incorrect_varying,no
+q_003,confirmatory,PDF_DOCLING,3,2,contains_abstention_or_unparseable,NA

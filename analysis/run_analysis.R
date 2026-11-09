@@ -10,10 +10,14 @@
 #           [--primary-record-sha256 H]
 #   Rscript run_analysis.R verify-derived --result DIR [--record-sha256 H] [--primary DIR] \
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
+#   Rscript run_analysis.R supplement --handoff F --handoff-sha256 H --csv F --supplement DIR \
+#           --supplement-record-sha256 H --out-root DIR [--primary DIR --primary-record-sha256 H]
+#   Rscript run_analysis.R verify-supplement --result DIR [--record-sha256 H] [--primary DIR] \
+#           [--rerun --handoff F --handoff-sha256 H --csv F --supplement DIR]
 
 script_dir <- dirname(normalizePath(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1])))
 for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "inference.R",
-            "results.R", "provenance.R", "publish.R", "secondary.R", "derived.R")) {
+            "results.R", "provenance.R", "publish.R", "secondary.R", "derived.R", "supplement.R")) {
   source(file.path(script_dir, "R", f))
 }
 
@@ -21,16 +25,21 @@ OPTIONS <- list(
   run = c("handoff", "handoff-sha256", "csv", "lock-sha256", "seed", "seed-label", "out-root", "preflight", "preflight-sha256"),
   verify = c("result", "record-sha256", "lock-sha256", "handoff", "handoff-sha256", "csv"),
   derive = c("handoff", "handoff-sha256", "csv", "primary", "out-root", "primary-record-sha256"),
-  "verify-derived" = c("result", "record-sha256", "primary", "handoff", "handoff-sha256", "csv")
+  "verify-derived" = c("result", "record-sha256", "primary", "handoff", "handoff-sha256", "csv"),
+  supplement = c("handoff", "handoff-sha256", "csv", "supplement", "supplement-record-sha256", "out-root", "primary",
+                 "primary-record-sha256"),
+  "verify-supplement" = c("result", "record-sha256", "primary", "handoff", "handoff-sha256", "csv", "supplement")
 )
 REQUIRED <- list(run = setdiff(OPTIONS$run, c("preflight", "preflight-sha256")), verify = "result",
-                 derive = setdiff(OPTIONS$derive, "primary-record-sha256"), "verify-derived" = "result")
+                 derive = setdiff(OPTIONS$derive, "primary-record-sha256"), "verify-derived" = "result",
+                 supplement = setdiff(OPTIONS$supplement, c("primary", "primary-record-sha256")),
+                 "verify-supplement" = "result")
 
 parse_cli <- function(args) {
   command <- if (length(args)) args[1] else ""
-  if (!command %in% names(OPTIONS)) run_error("usage", "the command must be 'run', 'verify', 'derive' or 'verify-derived'")
+  if (!command %in% names(OPTIONS)) run_error("usage", "the command must be 'run', 'verify', 'derive', 'verify-derived', 'supplement' or 'verify-supplement'")
   rest <- args[-1]
-  flags <- if (command %in% c("verify", "verify-derived")) "rerun" else character(0)
+  flags <- if (command %in% c("verify", "verify-derived", "verify-supplement")) "rerun" else character(0)
   out <- list()
   i <- 1
   while (i <= length(rest)) {
@@ -50,11 +59,11 @@ parse_cli <- function(args) {
   if (command == "run" && xor("preflight" %in% names(out), "preflight-sha256" %in% names(out))) {
     run_error("usage", "--preflight and --preflight-sha256 are used together")
   }
-  if (command %in% c("verify", "verify-derived")) {
-    rerun_opts <- c("handoff", "handoff-sha256", "csv")
-    if (isTRUE(out$rerun) && length(setdiff(rerun_opts, names(out)))) run_error("usage", "--rerun needs --handoff, --handoff-sha256 and --csv")
+  if (command %in% c("verify", "verify-derived", "verify-supplement")) {
+    rerun_opts <- c("handoff", "handoff-sha256", "csv", if (command == "verify-supplement") "supplement")
+    if (isTRUE(out$rerun) && length(setdiff(rerun_opts, names(out)))) run_error("usage", "--rerun needs --handoff, --handoff-sha256, --csv (and --supplement)")
     if (command == "verify-derived" && isTRUE(out$rerun) && !"primary" %in% names(out)) run_error("usage", "--rerun needs --primary")
-    if (!isTRUE(out$rerun) && any(rerun_opts %in% names(out))) run_error("usage", "--handoff, --handoff-sha256 and --csv are only used with --rerun")
+    if (!isTRUE(out$rerun) && any(rerun_opts %in% names(out))) run_error("usage", "--handoff, --handoff-sha256, --csv and --supplement are only used with --rerun")
   }
   c(list(command = command), out)
 }
@@ -79,6 +88,23 @@ main <- function(args) {
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("secondary_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("secondary_result_sha256: ", r$secondary_result_sha256, "\n", sep = "")
+  } else if (a$command == "supplement") {
+    r <- run_supplement(a$handoff, a[["handoff-sha256"]], a$csv, a$supplement, a[["supplement-record-sha256"]],
+                        a[["out-root"]], script_dir, primary_dir = a$primary,
+                        expected_primary_record_sha256 = a[["primary-record-sha256"]])
+    cat("SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS\n")
+    cat("result directory: ", r$result_dir, "\n", sep = "")
+    cat("supplement_summary_record.json sha256: ", r$record_sha256, "\n", sep = "")
+    cat("supplement_summary_sha256: ", r$supplement_summary_sha256, "\n", sep = "")
+  } else if (a$command == "verify-supplement") {
+    v <- verify_supplement_summary(a$result, a[["record-sha256"]], primary_dir = a$primary)
+    cat("content verified: supplement summary files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    cat("read-only seal: ", if (v$sealed) "present (local file permissions only)" else "ABSENT", "\n", sep = "")
+    cat(if (v$record_authenticated) "record authenticated against the supplied sha256\n" else "record NOT authenticated: no --record-sha256 was supplied\n")
+    if (isTRUE(a$rerun)) {
+      r <- verify_supplement_rerun(a$result, a$handoff, a[["handoff-sha256"]], a$csv, a$supplement, a$primary)
+      cat("re-execution: ", r$comparison, "\n", sep = "")
+    }
   } else if (a$command == "verify-derived") {
     v <- verify_secondary(a$result, a[["record-sha256"]], primary_dir = a$primary)
     cat("content verified: secondary files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")

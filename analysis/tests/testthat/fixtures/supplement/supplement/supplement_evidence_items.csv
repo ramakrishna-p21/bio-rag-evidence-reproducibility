@@ -1,0 +1,4 @@
+item_id,item_sha256,n_jats_refs,n_pdf_refs,n_evidence_sets,n_sets_with_table_roles,jats_form,jats_location,pdf_form,form_relation,item_form
+q_001,5521efdf4b4b984bd6f651e91e2c3bbd2fec394b34d3a35e4570c1715e5ea228,1,1,1,0,prose,body,unresolved,pdf_not_established,prose
+q_002,b9393a92164d5dd2227ebb4ff24163c5449812ca50fd8e1567bf5039c1473ed5,1,1,1,0,table,body,table,agree,table
+q_003,0389e1b2eadee7515df3fa445516df2b5b74392d456a7871999a9faab33bebce,1,1,1,0,prose,abstract,unresolved,pdf_not_established,prose
