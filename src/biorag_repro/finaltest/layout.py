@@ -55,11 +55,13 @@ OPERATIONAL_EVENTS: Final = (
 )
 # Published only into rehearsal roots (P10-C2B). In a final-test root the verifier treats them
 # like any other event that nothing is authorized to publish.
-REHEARSAL_EVENTS: Final = ("batch_inputs_bound", "batch_authorized", "batch_resumed")
-# Known to the schema so that a later pass can add them without a version change, but nothing
-# publishes them and the verifier treats any occurrence as an unauthorized artifact.
-FUTURE_EVENTS: Final = ("batch_completed",)
-EVENT_TYPES: Final = OPERATIONAL_EVENTS + REHEARSAL_EVENTS + FUTURE_EVENTS
+REHEARSAL_EVENTS: Final = (
+    "batch_inputs_bound",
+    "batch_authorized",
+    "batch_resumed",
+    "batch_completed",
+)
+EVENT_TYPES: Final = OPERATIONAL_EVENTS + REHEARSAL_EVENTS
 # Not part of `REQUIRED_ROLES`: the event model must parse these events exactly as before so
 # that a final-test root is judged by the same rules. The rehearsal verifier and publisher
 # enforce the roles. `inputs_binding` is the hash of the binding file; `run_record` is the hash
@@ -83,6 +85,17 @@ REHEARSAL_ROLES: Final = {
         "readiness_report",
         "run_record",
     ],
+    # The event that ends a batch. `authorization_basis` is the digest of the record that shows
+    # who may publish the completion: the batch's latest citation when the session that ran the
+    # batch publishes it, the continuity assessment of a fresh report when a new session does.
+    "batch_completed": [
+        "batch_id",
+        "previous_authorization_event",
+        "authorization_basis",
+        "completion_record",
+        "readiness_report",
+        "run_record",
+    ],
 }
 # Rehearsal-only files, relative to the root.
 SESSION_LOCK_FILE: Final = "locks/session.lock"
@@ -94,6 +107,10 @@ ROSTERS_DIR: Final = "rosters"
 BINDING_NAME: Final = "binding.json"
 CITATIONS_DIR: Final = "citations"
 CITATION_NAME: Final = "000001.json"
+# Batch-level completion evidence (rehearsal roots only). The continuity file exists only when
+# the completion was authorized by a fresh report.
+COMPLETION_NAME: Final = "completion.json"
+COMPLETION_CONTINUITY_NAME: Final = "completion.continuity.json"
 
 
 def citation_name(ordinal: int) -> str:

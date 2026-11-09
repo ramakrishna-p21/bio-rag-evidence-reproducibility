@@ -269,7 +269,8 @@ def _require_held(held: HeldLock, root: Path) -> None:
 
 _BATCH_FILE = re.compile(
     r"^batches/[0-9a-f]{64}/(inputs/binding\.json|inputs/rosters/[0-9a-f]{64}\.json"
-    r"|citations/\d{6}\.json|citations/\d{6}\.continuity\.json)$"
+    r"|citations/\d{6}\.json|citations/\d{6}\.continuity\.json"
+    r"|completion\.json|completion\.continuity\.json)$"
 )
 
 
@@ -283,9 +284,9 @@ def append_event_locked(
     *,
     now: Callable[[], str] = utc_now,
 ) -> int:
-    """Append `batch_inputs_bound` or `batch_authorized` to a rehearsal root, then witness it.
+    """Append a rehearsal batch event to a rehearsal root, then witness it.
 
-    Only the two rehearsal event types, only with their exact evidence roles, only into a
+    Only the rehearsal event types, only with their exact evidence roles, only into a
     rehearsal root and only under the registry lock. The caller has verified the root.
     """
     _require_rehearsal(authorization)

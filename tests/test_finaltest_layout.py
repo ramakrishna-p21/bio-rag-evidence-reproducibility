@@ -133,11 +133,9 @@ def test_event_types_are_the_operational_and_the_reserved_future_ones():
         "batch_inputs_bound",
         "batch_authorized",
         "batch_resumed",
+        "batch_completed",
     )
-    assert layout.FUTURE_EVENTS == ("batch_completed",)
-    assert layout.EVENT_TYPES == (
-        layout.OPERATIONAL_EVENTS + layout.REHEARSAL_EVENTS + layout.FUTURE_EVENTS
-    )
+    assert layout.EVENT_TYPES == layout.OPERATIONAL_EVENTS + layout.REHEARSAL_EVENTS
 
 
 def test_an_unknown_event_type_is_rejected():

@@ -39,6 +39,7 @@ def test_run_record_type_is_known_only_to_its_schema_and_the_audit():
         "start.py",
         "finaltest_store.py",
         "resume.py",
+        "completion.py",
     }
 
 
@@ -102,15 +103,20 @@ def test_registry_events_are_not_activated():
         "batch_materialized",
         "batch_closed_incomplete",
     }
-    # P10-C2B publishes two rehearsal events and P10-C3 a third; only the rehearsal-gated
-    # modules mention them
-    assert layout.REHEARSAL_EVENTS == ("batch_inputs_bound", "batch_authorized", "batch_resumed")
+    # P10-C2B publishes two rehearsal events, P10-C3 a third and P10-C4 the last; only the
+    # rehearsal-gated modules mention them
+    assert layout.REHEARSAL_EVENTS == (
+        "batch_inputs_bound",
+        "batch_authorized",
+        "batch_resumed",
+        "batch_completed",
+    )
     for text in ("batch_inputs_bound", "batch_authorized"):
         users = {p.name for p in SRC.rglob("*.py") if text in p.read_text(encoding="utf-8")}
         assert (
             {"layout.py", "start.py"}
             <= users
-            <= {"layout.py", "inventory.py", "registry.py", "start.py", "resume.py"}
+            <= {"layout.py", "inventory.py", "registry.py", "start.py", "resume.py", "finish.py"}
         ), (text, users)
     users = {p.name for p in SRC.rglob("*.py") if "batch_resumed" in p.read_text(encoding="utf-8")}
     assert (

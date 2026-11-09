@@ -458,13 +458,12 @@ def test_a_missing_manifest_of_a_materialized_batch_is_incomplete(env):
         env.close(batch)
 
 
-def test_future_event_types_are_unauthorized_artifacts(env):
+def test_a_completion_event_without_its_roles_is_a_conflict(env):
     batch = env.reserve()
     env.materialize(batch)
     env.raw_event("batch_completed", [EvidenceCitation(role="readiness_report", sha256=sha("r"))])
     verdict = env.verify()
-    assert verdict.code == UNAUTH
-    assert any("unauthorized type batch_completed" in p for p in verdict.problems)
+    assert any("event 4 does not cite" in p for p in verdict.problems)
 
 
 def _reserve_cited(env, batch, plan=None, claim=None, manifest=None):

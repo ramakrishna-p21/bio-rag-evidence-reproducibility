@@ -46,7 +46,8 @@ from biorag_repro.finaltest.batches import (
     observed_state_sha256,
     verify_citation_chain,
 )
-from biorag_repro.finaltest.continuity import ContinuityAssessment
+from biorag_repro.finaltest.completion import BatchCompletion
+from biorag_repro.finaltest.continuity import ContinuityAssessment, continuity_assessment_sha256
 from biorag_repro.finaltest.inputs import BatchInputBinding, ConditionRoster, roster_sha256
 from biorag_repro.finaltest.layout import (
     EvidenceCitation,
@@ -103,7 +104,7 @@ class RegistryBusy(Exception):
 
 @dataclass(frozen=True)
 class BatchRecord:
-    state: str  # reserved, materialized, closed_incomplete
+    state: str  # reserved, materialized, closed_incomplete, inputs_bound, authorized, completed
     campaign_plan_sha256: str
     ownership_sha256: str
     manifest_sha256: str
@@ -112,6 +113,7 @@ class BatchRecord:
     authorization_event_sha256: str | None = None
     authorization_event_sequence: int | None = None
     resumes: int = 0
+    completion_sha256: str | None = None  # set once batch_completed is verified
 
 
 @dataclass(frozen=True)
@@ -239,6 +241,11 @@ def _rehearsal_role(entry: _Entry, deep: bool) -> str:
         return "holder" if entry.kind == "file" else "wrongkind"
     if _RUN_DIR.match(path):
         return "rundir" if entry.kind == "dir" else "wrongkind"
+    if len(parts) == 3 and parts[0] == layout.BATCHES_DIR:
+        if name in (layout.COMPLETION_NAME, layout.COMPLETION_CONTINUITY_NAME):
+            return "completion" if entry.kind == "file" else "wrongkind"
+        if entry.kind == "file" and _ANY_TEMP.match(name):
+            return "batchtemp"
     if len(parts) == 4 and parts[0] == layout.BATCHES_DIR and parts[2] == layout.INPUTS_DIR:
         if name == layout.BINDING_NAME:
             return "binding" if entry.kind == "file" else "wrongkind"
@@ -281,6 +288,7 @@ class _Artifacts:
     binding: dict[str, bytes | None] = field(default_factory=dict)
     rosters: dict[str, dict[str, bytes | None]] = field(default_factory=dict)
     citations: dict[str, dict[str, bytes | None]] = field(default_factory=dict)
+    completions: dict[str, dict[str, bytes | None]] = field(default_factory=dict)
     runs: dict[str, bytes | None] = field(default_factory=dict)  # run id -> run.json bytes
     runs_dir: bool = False
 
@@ -291,6 +299,8 @@ class _Artifacts:
             self.binding[batch] = data
         elif role == "roster":
             self.rosters.setdefault(batch, {})[name[:-5]] = data
+        elif role == "completion":
+            self.completions.setdefault(batch, {})[name] = data
         else:
             self.citations.setdefault(batch, {})[name] = data
 
@@ -433,7 +443,7 @@ def verify_root(
             manifest_bytes[batch] = data = _read(root, entry.path, problems)
             if data is not None:
                 hashes[entry.path] = sha256_bytes(data)
-        elif role in ("binding", "roster", "citation"):
+        elif role in ("binding", "roster", "citation", "completion"):
             data = _read(root, entry.path, problems)
             if data is not None:
                 hashes[entry.path] = sha256_bytes(data)
@@ -672,7 +682,7 @@ def _check_batches(
         if event is None or number == 1 or event.event_type == "root_initialized":
             continue
         kind = event.event_type
-        if kind in layout.FUTURE_EVENTS or (kind in layout.REHEARSAL_EVENTS and not rehearsal):
+        if kind in layout.REHEARSAL_EVENTS and not rehearsal:
             problems.append(("unexpected", f"event {number} has the unauthorized type {kind}"))
             continue
         cited = {c.role: c.sha256 for c in event.evidence}
@@ -785,13 +795,14 @@ def _check_batches(
             authorization_event_sha256=info.get("auth_event"),
             authorization_event_sequence=info.get("auth_sequence"),
             resumes=info.get("resumes", 0),
+            completion_sha256=info.get("completion"),
         )
         for batch, info in state.items()
     }
     return records, reconcile
 
 
-_PAST_MATERIALIZED = ("materialized", "inputs_bound", "authorized")
+_PAST_MATERIALIZED = ("materialized", "inputs_bound", "authorized", "completed")
 
 
 def _canonical(model: type[BaseModel], data: bytes | None) -> Any:
@@ -819,6 +830,17 @@ def _fold_rehearsal(
     problems: list[Problem],
 ) -> None:
     short = batch[:12]
+    if kind == "batch_completed":
+        info["completion_event"] = True  # its files are claimed even while it is unfinished
+        if info["state"] != "authorized":
+            problems.append(
+                ("conflicting", f"event {number} follows batch {short} {info['state']}")
+            )
+        elif cited["previous_authorization_event"] != info["auth_event"]:
+            problems.append(("conflicting", f"event {number} cites another authorizing event"))
+        elif _check_completion(number, batch, cited, info, artifacts, hashes, problems):
+            info.update(state="completed", completion=cited["completion_record"])
+        return
     if kind == "batch_resumed":
         if info["state"] != "authorized":
             problems.append(
@@ -1012,19 +1034,104 @@ def _check_resume(
     return True
 
 
+def _check_completion(
+    number: int,
+    batch: str,
+    cited: dict[str, str],
+    info: dict[str, Any],
+    artifacts: _Artifacts,
+    hashes: dict[str, str],
+    problems: list[Problem],
+) -> bool:
+    """One `batch_completed` event against its record, the batch's history and its authorization.
+
+    This checks the record against what the registry and the batch files establish. That every
+    observation really ended as the record says is checked against the run by `finish`.
+    """
+    short = batch[:12]
+    files = artifacts.completions.get(batch, {})
+    data = files.get(layout.COMPLETION_NAME)
+    if data is None:
+        problems.append(("incomplete", f"completed batch {short} has no completion record"))
+        return False
+    record = _canonical(BatchCompletion, data)
+    if record is None or sha256_bytes(data) != cited["completion_record"]:
+        problems.append(("conflicting", f"completion of batch {short} differs from its event"))
+        return False
+    chain = info["chain"]
+    head = hashes.get(f"{layout.REGISTRY_DIR}/{number - 1:06d}.json")
+    auth = record.authorization
+    if (
+        (record.batch_id, record.run_id, record.root_kind) != (batch, info["run_id"], "rehearsal")
+        or (record.campaign_plan_sha256, record.manifest_sha256, record.ownership_sha256)
+        != (info["plan"], info["manifest"], info["ownership"])
+        or record.inputs_set_sha256 != info["binding"]
+        or cited["run_record"] != info["run_record"]
+        or record.run_record_sha256 != info["run_record"]
+        or record.citation_count != len(chain)
+        or (record.first_citation_sha256, record.last_citation_sha256)
+        != (citation_sha256(chain[0]), info["last_citation"])
+        or record.authorizing_event_sha256 != info["auth_event"]
+        or (record.registry_head_sequence, record.registry_head_event_sha256) != (number - 1, head)
+        or auth.report_sha256 != cited["readiness_report"]
+        or auth.basis_sha256 != cited["authorization_basis"]
+        or auth.scientific_identity_sha256 != chain[0].scientific_identity_sha256
+    ):
+        problems.append(("conflicting", f"completion of batch {short} is about other evidence"))
+        return False
+    extra = set(files) - {layout.COMPLETION_NAME, layout.COMPLETION_CONTINUITY_NAME}
+    if auth.mode == "same_session":
+        # the session that ran the batch published it under the report of its latest citation
+        if (
+            auth.basis_sha256 != info["last_citation"]
+            or auth.report_sha256 != chain[-1].readiness_report_sha256
+            or auth.report_binding_sha256 != chain[-1].report_binding_sha256
+            or (auth.policy_sha256, auth.evaluator_code_sha256)
+            != (chain[-1].policy_sha256, chain[-1].evaluator_code_sha256)
+            or layout.COMPLETION_CONTINUITY_NAME in files
+        ):
+            problems.append(("conflicting", f"completion of {short} misstates its authorization"))
+            return False
+    else:
+        if auth.report_sha256 in {c.readiness_report_sha256 for c in chain}:
+            problems.append(("conflicting", f"completion of {short} reuses a cited report"))
+            return False
+        continuity_data = files.get(layout.COMPLETION_CONTINUITY_NAME)
+        if continuity_data is None:
+            problems.append(("incomplete", f"completion of {short} lacks its continuity record"))
+            return False
+        assessment = _canonical(ContinuityAssessment, continuity_data)
+        if (
+            assessment is None
+            or sha256_bytes(continuity_data) != auth.basis_sha256
+            or continuity_assessment_sha256(assessment) != auth.basis_sha256
+            or assessment.verdict != "continuous"
+            or assessment.initial_binding_sha256 != chain[0].report_binding_sha256
+            or assessment.later_binding_sha256 != auth.report_binding_sha256
+            or assessment.later_scientific_identity_sha256 != auth.scientific_identity_sha256
+        ):
+            problems.append(("conflicting", f"completion of {short} misstates its authorization"))
+            return False
+    if extra:
+        problems.append(("unexpected", f"completion file {min(extra)} of {short}"))
+        return False
+    return True
+
+
 def _check_unclaimed(
     state: dict[str, dict[str, Any]],
     artifacts: _Artifacts,
     claimed_runs: set[str],
     problems: list[Problem],
 ) -> None:
-    if artifacts.runs_dir and not any(i["state"] == "authorized" for i in state.values()):
+    started = ("authorized", "completed")
+    if artifacts.runs_dir and not any(i["state"] in started for i in state.values()):
         problems.append(("unexpected", "runs directory without an authorized batch"))
     for run_id in sorted(set(artifacts.runs) - claimed_runs):
         problems.append(("unexpected", f"run directory {run_id[:12]} is not an authorized run"))
     for batch, files in sorted(artifacts.citations.items()):
         accepted = state.get(batch, {}).get("accepted", set())
-        if state.get(batch, {}).get("state") == "authorized":
+        if state.get(batch, {}).get("state") in started:
             for extra in sorted(set(files) - accepted):
                 problems.append(
                     ("unexpected", f"citation {extra} of batch {batch[:12]} is not authorized")
@@ -1039,8 +1146,11 @@ def _check_unclaimed(
             "closed_incomplete",
         ):
             problems.append(("unexpected", f"binding of batch {batch[:12]} has no inputs event"))
-        elif batch in artifacts.citations and known != "authorized":
+        elif batch in artifacts.citations and known not in started:
             problems.append(("unexpected", f"citation of batch {batch[:12]} has no event"))
+    for batch in sorted(set(artifacts.completions)):
+        if not state.get(batch, {}).get("completion_event"):
+            problems.append(("unexpected", f"completion file of batch {batch[:12]} has no event"))
 
 
 def _manifest_consistent(

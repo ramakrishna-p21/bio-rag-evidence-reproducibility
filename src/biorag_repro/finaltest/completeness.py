@@ -92,7 +92,7 @@ def check_campaign(
         arm = batch.matrix_arm
         expected = set(expected_keys(plan, item_ids, arm))
         record = registry.batches.get(batch_id_for(root_id, plan_sha, arm))
-        if record is None or record.state != "materialized":
+        if record is None or record.state not in ("materialized", "completed"):
             structural_incomplete = True
             if record is not None and record.state == "closed_incomplete":
                 anomalies.append(

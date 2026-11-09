@@ -18,6 +18,7 @@ rehearsal roots only.
 written, and never calls `RunStore.open`, which would publish a missing seal:
 
     resumable                work remains and every record verifies
+    completed                batch_completed is published and verifies (read-only classification)
     already_complete         every observation is complete and sealed
     terminally_closed        closed incomplete, or only terminal outcomes are left
     structurally_incomplete  a publication is unfinished (never repaired or adopted)
@@ -98,6 +99,7 @@ from biorag_repro.finaltest.start import (
     _checked,
     _production_assessed,
 )
+from biorag_repro.generation.attempts import ObservationState
 from biorag_repro.generation.environment import EnvironmentRecord, utc_now
 from biorag_repro.generation.finaltest_store import hardware_identity, reopen_final_test_store
 from biorag_repro.readiness.models import ReadinessReport
@@ -106,6 +108,7 @@ PRODUCTION_RESUME: Final = False
 
 Classification = Literal[
     "resumable",
+    "completed",
     "already_complete",
     "terminally_closed",
     "structurally_incomplete",
@@ -153,6 +156,7 @@ class ResumeAssessment:
     assessments: Mapping[str, ContinuityAssessment] = field(default_factory=dict)
     record: FinalTestRunRecord | None = None
     hardware: tuple[dict[str, Any], ...] = ()  # distinct host/GPU identities of past attempts
+    states: tuple[ObservationState, ...] = ()  # every observation the verified run reports
 
     @property
     def grants_authorization(self) -> Literal[False]:
@@ -237,7 +241,7 @@ def assess_resume(
             "root_unverified",
             "; ".join(left[:2]),
         )
-    if info.state != "authorized" or info.run_id is None:
+    if info.state not in ("authorized", "completed") or info.run_id is None:
         return verdict_of("structurally_incomplete", f"batch_{info.state}")
 
     base = root / layout.BATCHES_DIR / batch_id
@@ -317,7 +321,13 @@ def assess_resume(
     if len(hardware) > 1:
         return verdict_of("contradictory", "host_conflict", "attempts ran on different hosts")
     known["hardware"] = hardware
+    known["states"] = tuple(audit.observed.states)
     pending = tuple(sorted(f.subject for f in incomplete if f.code in _PENDING))
+    if info.state == "completed":
+        # a completed batch must still show only decided observations: nothing may run after it
+        if pending:
+            return verdict_of("contradictory", "open_observation_after_completion", **known)
+        return verdict_of("completed", "batch_completed", **known)
     running = tuple(sorted(f.subject for f in incomplete if f.code == "interrupted_attempt"))
     known["pending"], known["running"] = pending, running
     if pending:

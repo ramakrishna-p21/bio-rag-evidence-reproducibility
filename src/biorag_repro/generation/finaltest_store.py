@@ -100,6 +100,10 @@ class FinalTestStore(RunStore):
         self._hardware = hardware  # set for a resumed run: the host and GPU it started on
         self._begun: dict[str, str] = {}  # attempt id -> key, for attempts started here
 
+    def check_unchanged(self) -> None:
+        """Run the session gate over everything the start or resume published. Writes nothing."""
+        self._gate("check_unchanged", None, None)
+
     # --- gated writers ---------------------------------------------------------------
 
     def plan(self, coordinates: Any) -> str:

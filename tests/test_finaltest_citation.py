@@ -269,7 +269,8 @@ def test_a_changed_policy_or_evaluator_in_the_later_report_is_visible_in_its_cit
 
 def test_the_citation_type_is_used_only_by_the_contract_modules_and_nothing_executes_it():
     # audit.py reads citations to compare a stored run with them; it verifies and grants nothing
-    allowed = {"batches.py", "audit.py", "inventory.py", "start.py", "resume.py"}
+    # completion.py reads the digests of a batch's citations into its record; it grants nothing
+    allowed = {"batches.py", "audit.py", "inventory.py", "start.py", "resume.py", "completion.py"}
     for path in SRC.rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         used = any(
