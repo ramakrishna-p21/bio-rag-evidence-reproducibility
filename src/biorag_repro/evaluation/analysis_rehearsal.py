@@ -24,6 +24,7 @@ from biorag_repro.evaluation.analysis_result import (
     PublishedResult,
     Rerun,
     publish_result_record,
+    r_process_env,
     read_result_record,
     rerun_in_r,
     verify_r_result,
@@ -72,6 +73,7 @@ def _run_r(
             text=True,
             timeout=R_TIMEOUT_SECONDS,
             check=False,
+            env=r_process_env(),
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise RehearsalError("r_run", f"R could not be run: {error}") from error

@@ -21,6 +21,17 @@ ENABLED = os.environ.get("BIORAG_MODEL_SMOKE") == "1"
 TIMEOUT_S = int(os.environ.get("BIORAG_SMOKE_TIMEOUT_S", "120"))
 
 
+def pytest_configure(config):
+    """Tests that start Rscript themselves get the same pinned BLAS kernel as the product code.
+
+    The pin is read when R starts, so it has to be in the environment of this process; see
+    biorag_repro.evaluation.analysis_result.R_BLAS_PIN.
+    """
+    from biorag_repro.evaluation.analysis_result import R_BLAS_PIN
+
+    os.environ.update(R_BLAS_PIN)
+
+
 def pytest_sessionstart(session):
     """BIORAG_REQUIRE_R=1 makes a missing R toolchain a failure instead of silent skips.
 

@@ -68,8 +68,25 @@ parse_cli <- function(args) {
   c(list(command = command), out)
 }
 
+# OpenBLAS picks its kernel from the CPU and the last bit of the CR2 standard error depends on
+# it, so the byte-compared result hash is only defined for this kernel and one thread. The
+# variables are read when R starts; setting them from here would be too late. The Python runner
+# sets them; src/biorag_repro/evaluation/analysis_result.py repeats these values and a test
+# compares them.
+BLAS_PIN <- c(OPENBLAS_CORETYPE = "HASWELL", OPENBLAS_NUM_THREADS = "1")
+
+require_blas_pin <- function() {
+  have <- Sys.getenv(names(BLAS_PIN), unset = NA_character_)
+  if (!identical(unname(have), unname(BLAS_PIN))) {
+    run_error("environment", sprintf(
+      "R must be started with OPENBLAS_CORETYPE=HASWELL and OPENBLAS_NUM_THREADS=1 in its environment (found OPENBLAS_CORETYPE=%s, OPENBLAS_NUM_THREADS=%s)",
+      have[["OPENBLAS_CORETYPE"]], have[["OPENBLAS_NUM_THREADS"]]))
+  }
+}
+
 main <- function(args) {
   a <- parse_cli(args)
+  if (a$command == "run" || (a$command == "verify" && isTRUE(a$rerun))) require_blas_pin()
   if (a$command == "run") {
     r <- run_analysis(a$handoff, a[["handoff-sha256"]], a$csv, a[["lock-sha256"]], parse_seed(a$seed), a[["seed-label"]],
                       a[["out-root"]], script_dir, preflight_path = a$preflight, preflight_sha256 = a[["preflight-sha256"]])
