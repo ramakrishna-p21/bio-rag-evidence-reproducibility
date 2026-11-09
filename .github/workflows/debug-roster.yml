@@ -22,5 +22,5 @@ jobs:
               hf_hub_download("Qwen/Qwen3-8B", n, revision="b968826d9c46dd6066d109eabc6255188de91218", local_dir="/tmp/qwen")
           EOF
           rm -rf /tmp/qwen/.cache
-      - run: BIORAG_QWEN_ROOT=/tmp/qwen python -m pytest -q -s tests/test_zz_debug.py -k test_dump | grep -E 'DEBUG|passed|failed'
-      - run: python -m pip freeze | grep -iE '^(numpy|pydantic|rfc8785|rank|jinja|tokenizers|transformers|huggingface)'; python --version
+      - run: BIORAG_QWEN_ROOT=/tmp/qwen python -m pytest -q -s tests/test_zz_debug.py -k test_dump -p no:randomly | grep -E 'DEBUG|passed|failed'
+      - run: python -m pip freeze | grep -iE '^(numpy|pydantic|rfc8785|rank|jinja|tokenizers|transformers|huggingface)'; python --version; python -m pip freeze | sed "s/^/FREEZE /"

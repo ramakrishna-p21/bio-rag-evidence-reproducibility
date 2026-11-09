@@ -1,14 +1,17 @@
-import json
+import hashlib
 
-from test_generation_roster import *  # noqa: F401,F403
-from test_generation_roster import build, make_scope
+import test_generation_roster as r
+from biorag_repro.benchmark.development_view import ArtifactRef
+from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.storage import serialize_project_json
+from biorag_repro.benchmark.split import PaperSplit  # noqa
 
 
-def test_dump(world):
-    directory, record_sha, _, _, _ = world
-    built = build(world, scope=make_scope(directory, record_sha, {"q_a", "q_b"}, repeats=(1, 2)))
-    rec = json.loads(built.record.model_dump_json())
-    print("DEBUGREC", json.dumps({k: v for k, v in rec.items() if k != "rows"}, sort_keys=True))
-    for r in rec["rows"]:
-        print("DEBUGROW", json.dumps(r, sort_keys=True))
-    print("DEBUGSHA", built.sha256)
+def test_dump():
+    items_bytes = r.encode_jsonl(r.ITEMS)
+    split_bytes = serialize_project_json(r.SPLIT, r.PaperSplit)
+    print("DEBUGIN items", sha256_bytes(items_bytes), len(items_bytes))
+    print("DEBUGIN split", sha256_bytes(split_bytes), len(split_bytes))
+    print("DEBUGIN splitjson", split_bytes.decode()[:600].replace("\n", " "))
+    for i, it in enumerate(r.ITEMS):
+        print("DEBUGIN item", i, hashlib.sha256(r.encode_jsonl([it])).hexdigest()[:16])
