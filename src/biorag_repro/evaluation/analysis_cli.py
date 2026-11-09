@@ -31,6 +31,11 @@ from biorag_repro.evaluation.analysis_result import (
     verify_r_result,
 )
 from biorag_repro.evaluation.analysis_storage import read_table
+from biorag_repro.evaluation.release_index import (
+    build_release_index,
+    publish_release_index,
+    read_release_index,
+)
 from biorag_repro.generation.environment import system_probes
 
 
@@ -257,6 +262,64 @@ def rehearse_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _index_inputs(args: argparse.Namespace) -> dict[str, str]:
+    return {
+        "handoff": args.handoff,
+        "analysis_table": args.analysis_table,
+        "preflight": args.preflight,
+    }
+
+
+def release_index_command(args: argparse.Namespace) -> int:
+    try:
+        index = build_release_index(
+            args.root,
+            primary_dir=args.primary,
+            secondary_dir=args.secondary,
+            inputs=_index_inputs(args),
+        )
+        digest = publish_release_index(index, args.root, args.out)
+    except (ResultError, ValueError, OSError) as error:
+        print(f"release index not written: {error}", file=sys.stderr)
+        return 1
+    print(f"release index: {args.root / args.out} {digest}")
+    print(f"{len(index.included)} files included, {len(index.external)} external resources listed")
+    print("SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS; not a final release index")
+    return 0
+
+
+def verify_release_index_command(args: argparse.Namespace) -> int:
+    try:
+        index = read_release_index(
+            args.root,
+            args.index,
+            args.sha256,
+            primary_dir=args.primary,
+            secondary_dir=args.secondary,
+            inputs=_index_inputs(args),
+        )
+    except (ResultError, ValueError, OSError) as error:
+        print(f"release index is not valid: {error}", file=sys.stderr)
+        return 1
+    print(f"valid release index: {len(index.included)} files, every reference re-established")
+    return 0
+
+
+def _index_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--root", type=Path, required=True)
+    parser.add_argument(
+        "--primary", required=True, help="R primary result directory, inside --root"
+    )
+    parser.add_argument(
+        "--secondary", required=True, help="R secondary result directory, inside --root"
+    )
+    parser.add_argument("--handoff", required=True, help="handoff file, relative to --root")
+    parser.add_argument(
+        "--analysis-table", required=True, help="analysis table, relative to --root"
+    )
+    parser.add_argument("--preflight", required=True, help="preflight file, relative to --root")
+
+
 def _result_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--preflight-build", required=True)
@@ -342,6 +405,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     rehearsal.add_argument("--rerun", action="store_true", help="also ask R to recompute")
     rehearsal.set_defaults(run=rehearse_command)
+
+    index = operations.add_parser(
+        "release-index", help="write the release index of a synthetic rehearsal"
+    )
+    _index_arguments(index)
+    index.add_argument("--out", required=True, help="index file to create, relative to --root")
+    index.set_defaults(run=release_index_command)
+
+    index_check = operations.add_parser("verify-release-index", help="read a release index back")
+    _index_arguments(index_check)
+    index_check.add_argument("--index", required=True, help="index file, relative to --root")
+    index_check.add_argument("--sha256", required=True, help="trusted SHA-256 of the index")
+    index_check.set_defaults(run=verify_release_index_command)
 
     args = parser.parse_args(argv)
     return int(args.run(args))

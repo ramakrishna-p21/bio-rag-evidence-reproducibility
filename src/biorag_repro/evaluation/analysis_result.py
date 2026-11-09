@@ -297,8 +297,10 @@ def _relative_parts(relative: str) -> list[str]:
     return parts
 
 
-def read_result_files(root: Path, relative: str) -> dict[str, bytes]:
-    """Read the five files of a result directory located under `root`.
+def read_result_files(
+    root: Path, relative: str, names: tuple[str, ...] | None = None, *, exact: bool = True
+) -> dict[str, bytes]:
+    """Read the files of a result directory located under `root` (the five R files by default).
 
     Every path component is opened with O_NOFOLLOW from a directory descriptor, so a link
     anywhere below the root is refused rather than followed. Only regular files are read.
@@ -321,13 +323,15 @@ def read_result_files(root: Path, relative: str) -> dict[str, bytes]:
                 ) from error
             os.close(fd)
             fd = inner
+        order = RESULT_FILES if names is None else names
+        expected = set(order)
         present = set(os.listdir(fd))
-        if present != set(RESULT_FILES):
+        if (present != expected) if exact else not expected <= present:
             raise ResultError(
                 "file_set",
-                f"missing {sorted(set(RESULT_FILES) - present)}, unexpected {sorted(present - set(RESULT_FILES))}",
+                f"missing {sorted(expected - present)}, unexpected {sorted(present - expected)}",
             )
-        return {name: _read_one(fd, name) for name in RESULT_FILES}
+        return {name: _read_one(fd, name) for name in order}
     finally:
         os.close(fd)
 

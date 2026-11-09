@@ -341,9 +341,10 @@ verify_rerun <- function(dir, handoff_path, handoff_sha256, csv_path, tolerance 
 #    complete, hash-consistent directory without them still passes content verification.
 # An ordinary failure removes only what this call created; an interrupt leaves an inert partial
 # directory whose name cannot be reused. Hard links need staging and target on one file system.
-publish_result <- function(staging, target, link = file.link, chmod = Sys.chmod) {
+publish_result <- function(staging, target, link = file.link, chmod = Sys.chmod, files = RESULT_FILES,
+                           verifier = verify_result) {
   # Nothing may become visible at the destination unless the staged content is already valid.
-  verify_result(staging)
+  verifier(staging)
   if (!dir.create(target, showWarnings = FALSE, mode = "0755")) {
     run_error("publish", "the result directory already exists or cannot be created; nothing was replaced")
   }
@@ -352,7 +353,7 @@ publish_result <- function(staging, target, link = file.link, chmod = Sys.chmod)
     suppressWarnings(file.remove(made))
     suppressWarnings(file.remove(target))
   }
-  for (f in RESULT_FILES) {                                  # RESULT_FILES ends with the record
+  for (f in files) {                                         # the file list ends with the record
     to <- file.path(target, f)
     if (!isTRUE(link(file.path(staging, f), to))) {
       undo()
@@ -360,11 +361,11 @@ publish_result <- function(staging, target, link = file.link, chmod = Sys.chmod)
     }
     made <- c(made, to)
   }
-  tryCatch(verify_result(target), error = function(e) { undo(); stop(e) })
+  tryCatch(verifier(target), error = function(e) { undo(); stop(e) })
   chmod(made, "0444")
   chmod(target, "0555")
   # Read-back of the published bytes once more, now that the directory is read-only.
-  verify_result(target, require_read_only = TRUE)
+  verifier(target, require_read_only = TRUE)
   invisible(target)
 }
 
