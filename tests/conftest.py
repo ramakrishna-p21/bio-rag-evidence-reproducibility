@@ -11,12 +11,27 @@ never disappear silently. Smoke results are engineering checks, never scientific
 """
 
 import os
+import shutil
 import signal
+from pathlib import Path
 
 import pytest
 
 ENABLED = os.environ.get("BIORAG_MODEL_SMOKE") == "1"
 TIMEOUT_S = int(os.environ.get("BIORAG_SMOKE_TIMEOUT_S", "120"))
+
+
+def pytest_sessionstart(session):
+    """BIORAG_REQUIRE_R=1 makes a missing R toolchain a failure instead of silent skips.
+
+    The Python/R handoff, rehearsal, result and supplement tests skip when Rscript or the
+    analysis renv library is absent. CI sets this so those tests cannot disappear unnoticed.
+    """
+    if os.environ.get("BIORAG_REQUIRE_R") != "1":
+        return
+    library = Path(__file__).resolve().parent.parent / "analysis" / "renv" / "library"
+    if shutil.which("Rscript") is None or not library.is_dir():
+        pytest.exit("BIORAG_REQUIRE_R=1 but Rscript or analysis/renv/library is missing", 2)
 
 
 def pytest_collection_modifyitems(config, items):
