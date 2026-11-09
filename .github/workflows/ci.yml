@@ -41,6 +41,13 @@ jobs:
       - name: renv library matches analysis/renv.lock
         working-directory: analysis
         run: Rscript -e 'st <- renv::status(); if (!isTRUE(st$synchronized)) quit(status = 1)'
+      - name: Runner CPU and OpenBLAS kernel
+        # Recorded so that a numerical difference can be tied to hardware. The pinned kernel is
+        # set for the R testthat step and by the Python runner for every R subprocess.
+        run: |
+          lscpu | grep -E 'Model name|Flags' | sed -E 's/(Flags:).*(avx512f).*/\1 ... avx512f .../' | cut -c1-120
+          OPENBLAS_VERBOSE=2 Rscript -e 'invisible(1)' 2>&1 | head -1
+          OPENBLAS_VERBOSE=2 OPENBLAS_CORETYPE=HASWELL OPENBLAS_NUM_THREADS=1 Rscript -e 'invisible(1)' 2>&1 | head -1
       - run: python -m pip install 'torch==2.15.0' --index-url https://download.pytorch.org/whl/cpu
       - run: python -m pip install -e '.[dev,benchmark,bm25,dense]'
       - run: python -m pip check
@@ -68,5 +75,9 @@ jobs:
       - run: python -m pytest -q -rs
       - name: R testthat suite
         working-directory: analysis
+        env:
+          # Same kernel as R_BLAS_PIN in the Python package; OpenBLAS reads these when R starts.
+          OPENBLAS_CORETYPE: HASWELL
+          OPENBLAS_NUM_THREADS: '1'
         run: Rscript -e 'testthat::test_dir("tests/testthat", reporter = "summary", stop_on_failure = TRUE)'
       - run: python -m build

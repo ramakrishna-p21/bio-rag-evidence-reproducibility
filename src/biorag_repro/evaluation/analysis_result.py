@@ -79,6 +79,18 @@ DATA_FILES: Final = RESULT_FILES[:4]
 MAX_FILE_BYTES: Final = 16 * 1024 * 1024
 REQUIRED_CLUBSANDWICH_VERSION: Final = "0.7.0"
 
+# OpenBLAS picks its kernel from the CPU, and the last bit of the CR2 standard error depends on
+# the kernel. The result hash is byte-compared, so R always runs with the kernel the synthetic
+# golden was produced with and one thread. analysis/run_analysis.R repeats these values and a test
+# compares them; R has to see them in its environment before it starts.
+R_BLAS_PIN: Final = {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"}
+
+
+def r_process_env() -> dict[str, str]:
+    """The environment for every R subprocess: the caller's, with the BLAS kernel pinned."""
+    return {**os.environ, **R_BLAS_PIN}
+
+
 # R's column schemas, repeated here on purpose so that a change on either side is noticed: a test
 # compares these with the declarations in analysis/R/results.R.
 COPRIMARY_SCHEMA: Final = {
@@ -1287,7 +1299,14 @@ def rerun_in_r(
         str(root / csv_ref.logical_ref),
     ]
     try:
-        done = run(command, cwd=analysis_dir, capture_output=True, text=True, timeout=1800)
+        done = run(
+            command,
+            cwd=analysis_dir,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            env=r_process_env(),
+        )
     except (OSError, subprocess.SubprocessError) as error:
         raise ResultError("rerun", f"R could not be run: {error}") from error
     found = re.search(
