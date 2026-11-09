@@ -16,7 +16,7 @@ from biorag_repro.core.storage import (
     serialize_project_json,
     verify_manifest_outputs,
 )
-from biorag_repro.documents.chunking import read_chunking
+from biorag_repro.documents.chunking import read_chunking, verified_once
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval.models import (
     Chunk,
@@ -162,6 +162,19 @@ def assemble(
     tokenizer_root: Path | None,
     *,
     fixture_counter: Callable[[str], int] | None = None,
+) -> ContextRecord:
+    with verified_once():
+        return _assemble(
+            selected, configuration, configuration_root, tokenizer_root, fixture_counter
+        )
+
+
+def _assemble(
+    selected: Selection,
+    configuration: ConfigurationRef,
+    configuration_root: Path,
+    tokenizer_root: Path | None,
+    fixture_counter: Callable[[str], int] | None,
 ) -> ContextRecord:
     settings = load_configuration(configuration, configuration_root)
     previous = load_configuration(

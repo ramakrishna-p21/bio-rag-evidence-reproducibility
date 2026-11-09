@@ -1,0 +1,292 @@
+{
+  "$defs": {
+    "ArtifactRef": {
+      "additionalProperties": false,
+      "properties": {
+        "artifact_id": {
+          "minLength": 1,
+          "title": "Artifact Id",
+          "type": "string"
+        },
+        "logical_ref": {
+          "minLength": 1,
+          "title": "Logical Ref",
+          "type": "string"
+        },
+        "sha256": {
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact_id",
+        "logical_ref",
+        "sha256"
+      ],
+      "title": "ArtifactRef",
+      "type": "object"
+    },
+    "ComponentLocus": {
+      "additionalProperties": false,
+      "description": "Canonical text occurrences carrying one benchmark evidence component.\n\nA component is located in one of four ways, never mixed:\nverbatim (the benchmark text occurs in the canonical text); `observed_text`\n(a genuine source-to-canonical alteration, recorded for analysis);\n`equivalence_note` (reviewer-attested: the benchmark descriptor is a\nparaphrase and the occurrences are the structural anchors that carry it);\nor `form=\"mean_sd\"` (the answer is the leading mean of a `mean ± SD` cell).\nOnly the first is machine-verified text identity.",
+      "properties": {
+        "equivalence_note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Equivalence Note"
+        },
+        "form": {
+          "anyOf": [
+            {
+              "const": "mean_sd",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Form"
+        },
+        "observed_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Text"
+        },
+        "occurrence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Occurrence Ids",
+          "type": "array"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "text",
+        "occurrence_ids"
+      ],
+      "title": "ComponentLocus",
+      "type": "object"
+    },
+    "Placement": {
+      "additionalProperties": false,
+      "description": "One canonical context (block or table) that holds a complete evidence set.",
+      "properties": {
+        "components": {
+          "items": {
+            "$ref": "#/$defs/ComponentLocus"
+          },
+          "minItems": 1,
+          "title": "Components",
+          "type": "array"
+        },
+        "container_node_id": {
+          "title": "Container Node Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "container_node_id",
+        "components"
+      ],
+      "title": "Placement",
+      "type": "object"
+    },
+    "SetLocus": {
+      "additionalProperties": false,
+      "description": "Placements of one benchmark evidence set; alternative sets stay separate.",
+      "properties": {
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/Placement"
+          },
+          "minItems": 1,
+          "title": "Placements",
+          "type": "array"
+        },
+        "set_index": {
+          "minimum": 0,
+          "title": "Set Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "set_index",
+        "placements"
+      ],
+      "title": "SetLocus",
+      "type": "object"
+    },
+    "Suggestion": {
+      "additionalProperties": false,
+      "description": "Advisory evidence for a reviewer; never a Stage A label.",
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "component_not_found",
+            "split_across_contexts",
+            "association_mismatch",
+            "qualified_mapping",
+            "contained_in_longer_token",
+            "sign_difference",
+            "numeric_digit_sequence_match",
+            "incomplete_canonical"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "occurrence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Occurrence Ids",
+          "type": "array"
+        },
+        "role": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Role"
+        },
+        "set_index": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Set Index"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "title": "Suggestion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Inspectable output of the locator: pending review unless strictly preserved.",
+  "properties": {
+    "benchmark_version": {
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "canonical": {
+      "$ref": "#/$defs/ArtifactRef"
+    },
+    "corpus_version": {
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "determination": {
+      "enum": [
+        "automatic_preserved",
+        "needs_review"
+      ],
+      "title": "Determination",
+      "type": "string"
+    },
+    "item_id": {
+      "title": "Item Id",
+      "type": "string"
+    },
+    "item_sha256": {
+      "title": "Item Sha256",
+      "type": "string"
+    },
+    "paper_id": {
+      "title": "Paper Id",
+      "type": "string"
+    },
+    "qualifications": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Qualifications",
+      "type": "array"
+    },
+    "representation": {
+      "enum": [
+        "JATS",
+        "PDF_DOCLING"
+      ],
+      "title": "Representation",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "sets": {
+      "items": {
+        "$ref": "#/$defs/SetLocus"
+      },
+      "title": "Sets",
+      "type": "array"
+    },
+    "suggestions": {
+      "items": {
+        "$ref": "#/$defs/Suggestion"
+      },
+      "title": "Suggestions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "benchmark_version",
+    "corpus_version",
+    "item_id",
+    "item_sha256",
+    "paper_id",
+    "representation",
+    "canonical",
+    "determination",
+    "sets",
+    "suggestions",
+    "qualifications"
+  ],
+  "title": "StageACandidate",
+  "type": "object"
+}

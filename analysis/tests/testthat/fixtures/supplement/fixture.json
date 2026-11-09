@@ -1,0 +1,8 @@
+{
+  "csv_sha256": "514b68179d499f008debb0714c789d432ecd898f5b93e2eb85aeafa0a3164931",
+  "handoff_sha256": "ad985e41d92072064c1a3778cdeef3a29a0d48572981b461dbd8c871162a6a04",
+  "note": "synthetic supplement fixture; no scientific authority; not a result",
+  "python_check": "read_supplement passed on these bytes when they were generated",
+  "supplement_record_sha256": "79423f24ca2a8748fa5ad98ac7b42a9a6f2e0f83da659aaa865d8ffd8cf7d433",
+  "supplement_sha256": "444cb71ef7639976882c95bb84258baa8177ca062f375ce2b7924ec6b7b7523f"
+}

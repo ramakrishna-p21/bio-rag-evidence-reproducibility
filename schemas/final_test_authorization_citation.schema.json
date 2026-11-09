@@ -1,0 +1,149 @@
+{
+  "additionalProperties": false,
+  "description": "One authorization assessment of a batch, as a historical record.\n\nEach assessment is its own immutable record. A resume cites a fresh readiness report, the\nprevious citation and the continuity assessment that compared it with the first one; it\nnever rewrites anything. The hash of a readiness report is evidence of an assessment at\nsome time, not a reusable credential, so a report can be cited once, and nothing in this\npackage publishes or accepts a citation as permission. `head_authority` records what was\nestablished about the registry head at that time and has no value for independent authority:\nnone exists. Nothing in the repository publishes a citation yet.",
+  "properties": {
+    "batch_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "continuity_assessment_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Continuity Assessment Sha256"
+    },
+    "created_utc": {
+      "title": "Created Utc",
+      "type": "string"
+    },
+    "evaluator_code_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Evaluator Code Sha256",
+      "type": "string"
+    },
+    "guard_scope": {
+      "const": "final_test_batch_start",
+      "default": "final_test_batch_start",
+      "title": "Guard Scope",
+      "type": "string"
+    },
+    "head_authority": {
+      "enum": [
+        "genesis_anchored",
+        "not_established"
+      ],
+      "title": "Head Authority",
+      "type": "string"
+    },
+    "head_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Head Sha",
+      "type": "string"
+    },
+    "initial_report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Initial Report Sha256",
+      "type": "string"
+    },
+    "inputs_set_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Inputs Set Sha256"
+    },
+    "kind": {
+      "enum": [
+        "initial",
+        "resume"
+      ],
+      "title": "Kind",
+      "type": "string"
+    },
+    "policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Policy Sha256",
+      "type": "string"
+    },
+    "previous_citation_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Previous Citation Sha256"
+    },
+    "readiness_report_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Readiness Report Sha256",
+      "type": "string"
+    },
+    "registry_head_event_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Registry Head Event Sha256",
+      "type": "string"
+    },
+    "registry_head_sequence": {
+      "title": "Registry Head Sequence",
+      "type": "integer"
+    },
+    "report_binding_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Report Binding Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "2",
+      "default": "2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scientific_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Scientific Identity Sha256",
+      "type": "string"
+    },
+    "scientific_source_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Scientific Source Identity Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "batch_id",
+    "initial_report_sha256",
+    "readiness_report_sha256",
+    "policy_sha256",
+    "evaluator_code_sha256",
+    "report_binding_sha256",
+    "head_sha",
+    "scientific_source_identity_sha256",
+    "scientific_identity_sha256",
+    "registry_head_sequence",
+    "registry_head_event_sha256",
+    "head_authority",
+    "inputs_set_sha256",
+    "previous_citation_sha256",
+    "continuity_assessment_sha256",
+    "created_utc"
+  ],
+  "title": "AuthorizationCitation",
+  "type": "object"
+}

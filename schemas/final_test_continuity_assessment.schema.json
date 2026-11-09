@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "ComponentFinding": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "pattern": "\\S",
+          "title": "Component",
+          "type": "string"
+        },
+        "initial": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Initial"
+        },
+        "later": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Later"
+        },
+        "note": {
+          "title": "Note",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "identical",
+            "compatible_recorded",
+            "blocking"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        }
+      },
+      "required": [
+        "component",
+        "verdict",
+        "initial",
+        "later",
+        "note"
+      ],
+      "title": "ComponentFinding",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "items": {
+        "$ref": "#/$defs/ComponentFinding"
+      },
+      "title": "Findings",
+      "type": "array"
+    },
+    "initial_binding_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Initial Binding Sha256",
+      "type": "string"
+    },
+    "initial_scientific_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Initial Scientific Identity Sha256",
+      "type": "string"
+    },
+    "later_binding_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Later Binding Sha256",
+      "type": "string"
+    },
+    "later_scientific_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Later Scientific Identity Sha256",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "verdict": {
+      "enum": [
+        "continuous",
+        "blocked"
+      ],
+      "title": "Verdict",
+      "type": "string"
+    }
+  },
+  "required": [
+    "findings",
+    "verdict",
+    "initial_binding_sha256",
+    "later_binding_sha256",
+    "initial_scientific_identity_sha256",
+    "later_scientific_identity_sha256"
+  ],
+  "title": "ContinuityAssessment",
+  "type": "object"
+}

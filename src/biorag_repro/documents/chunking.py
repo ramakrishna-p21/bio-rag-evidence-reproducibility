@@ -1,9 +1,12 @@
 """Canonical-only occurrence discovery, whole-unit rendering, and chunk construction."""
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from biorag_repro.benchmark.storage import encode_jsonl, read_jsonl
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, verify_file_sha256
@@ -855,6 +858,28 @@ def publish_chunking(
     return ref, ArtifactRef(artifact_id="build_" + digest, logical_ref=logical_ref, sha256=digest)
 
 
+_verified_reads: ContextVar[
+    dict[tuple[Any, ...], tuple[ChunkingResult, tuple[Any, ...]]] | None
+] = ContextVar("verified_chunk_reads", default=None)
+
+
+@contextmanager
+def verified_once() -> Iterator[None]:
+    """Let one verification read each distinct chunk set once instead of once per consumer.
+
+    A context is checked by recomputing its index, its ranking and its packing, and each of
+    those used to reopen and re-chunk the same chunk set. Inside this scope, a second read
+    with identical inputs returns the first, fully verified result. The scope belongs to a
+    single verification: it is never kept between calls, so an artifact that changes
+    afterwards is read and checked again.
+    """
+    token = _verified_reads.set({})
+    try:
+        yield
+    finally:
+        _verified_reads.reset(token)
+
+
 def read_chunking(
     ref: ArtifactRef,
     manifest_ref: ArtifactRef,
@@ -867,6 +892,47 @@ def read_chunking(
     fixture_counter: Counter | None = None,
 ) -> ChunkingResult:
     """Read exact bytes and independently selected upstream evidence before scientific reuse."""
+    reads = _verified_reads.get()
+    key = (
+        ref.model_dump_json(),
+        manifest_ref.model_dump_json(),
+        configuration.model_dump_json(),
+        str(configuration_root),
+        str(output_root),
+        str(tokenizer_root),
+        id(authority),
+        id(fixture_counter),
+    )
+    if reads is not None and key in reads:
+        shared = reads[key][0]
+        return ChunkingResult(list(shared.chunks), shared.chunk_set)
+    result = _read_chunking(
+        ref,
+        manifest_ref,
+        authority,
+        configuration,
+        configuration_root,
+        output_root,
+        tokenizer_root=tokenizer_root,
+        fixture_counter=fixture_counter,
+    )
+    if reads is not None:
+        # The authority and counter are kept so that their ids cannot be reused in this scope.
+        reads[key] = (result, (authority, fixture_counter))
+    return ChunkingResult(list(result.chunks), result.chunk_set)
+
+
+def _read_chunking(
+    ref: ArtifactRef,
+    manifest_ref: ArtifactRef,
+    authority: CanonicalAuthority,
+    configuration: ConfigurationRef,
+    configuration_root: Path,
+    output_root: Path,
+    *,
+    tokenizer_root: Path | None,
+    fixture_counter: Counter | None,
+) -> ChunkingResult:
     metadata = read_project_json(output_root / ref.logical_ref, ref.sha256, ChunkSet)
     if ref != record_ref(metadata):
         raise ValueError("chunk-set reference identity mismatch")

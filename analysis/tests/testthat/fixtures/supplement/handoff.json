@@ -1,0 +1,476 @@
+{
+  "accounting": [
+    {
+      "complete_item_ids": [
+        "q_001",
+        "q_002",
+        "q_003"
+      ],
+      "eligible_items": [
+        {
+          "complete_case": true,
+          "item_id": "q_001",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_e16a29452c43beefcabbd9b65690edbc0a654b2493fcbb1f7bbd63ab33eb3a3d",
+            "reason": null,
+            "state": "yes"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_8cf577ab649d0984ba0f9bc779a0d2754278792642098492a022429b980b83e4",
+            "reason": null,
+            "state": "yes"
+          }
+        },
+        {
+          "complete_case": true,
+          "item_id": "q_002",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_cb05c4bffdbaac9005da3475e2c486e9f9658fb3163189d5a3a559a42dc1a637",
+            "reason": null,
+            "state": "yes"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_dcf62971ff764c53723d67ea8a462b4c99e0feaddb7e5c9e574e3f9b55dffcc4",
+            "reason": null,
+            "state": "yes"
+          }
+        },
+        {
+          "complete_case": true,
+          "item_id": "q_003",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_e6fc125f7e1b2fc46133b4c59a538cf4f47730751caed4fd6976571e9cbba9dd",
+            "reason": null,
+            "state": "yes"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_edfae36e137b2e8a0efa28b7f5e8a3cc3816826b57a6e8c559409898b711b382",
+            "reason": null,
+            "state": "yes"
+          }
+        }
+      ],
+      "outcome": "evidence_delivered",
+      "papers": [
+        {
+          "complete": 3,
+          "eligible": 3,
+          "paper_id": "P001"
+        }
+      ],
+      "state_counts": {
+        "JATS|yes": 3,
+        "PDF_DOCLING|yes": 3
+      }
+    },
+    {
+      "complete_item_ids": [
+        "q_001",
+        "q_002",
+        "q_003"
+      ],
+      "eligible_items": [
+        {
+          "complete_case": true,
+          "item_id": "q_001",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_e16a29452c43beefcabbd9b65690edbc0a654b2493fcbb1f7bbd63ab33eb3a3d",
+            "reason": "value_mismatch",
+            "state": "no"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_8cf577ab649d0984ba0f9bc779a0d2754278792642098492a022429b980b83e4",
+            "reason": null,
+            "state": "yes"
+          }
+        },
+        {
+          "complete_case": true,
+          "item_id": "q_002",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_cb05c4bffdbaac9005da3475e2c486e9f9658fb3163189d5a3a559a42dc1a637",
+            "reason": null,
+            "state": "yes"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_dcf62971ff764c53723d67ea8a462b4c99e0feaddb7e5c9e574e3f9b55dffcc4",
+            "reason": null,
+            "state": "yes"
+          }
+        },
+        {
+          "complete_case": true,
+          "item_id": "q_003",
+          "jats": {
+            "execution_status": "completed",
+            "observation_key": "obs_e6fc125f7e1b2fc46133b4c59a538cf4f47730751caed4fd6976571e9cbba9dd",
+            "reason": "value_mismatch",
+            "state": "no"
+          },
+          "paper_id": "P001",
+          "pdf_docling": {
+            "execution_status": "completed",
+            "observation_key": "obs_edfae36e137b2e8a0efa28b7f5e8a3cc3816826b57a6e8c559409898b711b382",
+            "reason": "value_mismatch",
+            "state": "no"
+          }
+        }
+      ],
+      "outcome": "answer_correct",
+      "papers": [
+        {
+          "complete": 3,
+          "eligible": 3,
+          "paper_id": "P001"
+        }
+      ],
+      "state_counts": {
+        "JATS|no": 2,
+        "JATS|yes": 1,
+        "PDF_DOCLING|no": 1,
+        "PDF_DOCLING|yes": 2
+      }
+    }
+  ],
+  "analysis_spec": {
+    "bootstrap_method": "whole_paper_percentile",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed_name": "primary_bootstrap",
+    "cluster_key": "paper_id",
+    "contrast": "JATS - PDF_DOCLING",
+    "direction": "JATS_minus_PDF_DOCLING",
+    "estimand": "item_weighted_paired_risk_difference",
+    "interval_percent": 95,
+    "model": "intercept_only_paired_differences",
+    "multiplicity": "holm",
+    "multiplicity_family": [
+      "evidence_delivered",
+      "answer_correct"
+    ],
+    "outcomes": [
+      {
+        "column": "evidence_delivered",
+        "failure": "no",
+        "name": "evidence_delivered",
+        "non_evaluable": [
+          "non_evaluable",
+          "not_applicable"
+        ],
+        "success": "yes"
+      },
+      {
+        "column": "answer_correct",
+        "failure": "no",
+        "name": "answer_correct",
+        "non_evaluable": [
+          "non_evaluable",
+          "missing",
+          "not_executed"
+        ],
+        "success": "yes"
+      }
+    ],
+    "package": "clubSandwich",
+    "pair_key": "item_id",
+    "primary_scope": "matrix_arm = confirmatory AND condition IN (JATS, PDF_DOCLING) AND primary_row = TRUE AND analysis_role = confirmatory; paired on item_id; development tables carry analysis_role = development and hold no confirmatory result; robustness arms are secondary, closed_book is secondary and unpaired, repeats 2 and 3 are not primary",
+    "sensitivity": [
+      "equal_paper_weighted",
+      "best_worst_case_bounds"
+    ],
+    "spec_version": "analysis_spec_v1",
+    "test": "satterthwaite_wald_two_sided",
+    "variance": "CR2"
+  },
+  "arms": [
+    {
+      "matrix_arm": "confirmatory",
+      "resolved_config_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "retrieval_config_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "awaiting_approval": [
+    "primary_bootstrap_seed"
+  ],
+  "benchmark_version": "benchmark_v1",
+  "code": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dirty": false,
+    "dirty_paths": 0,
+    "status": "ok"
+  },
+  "corpus_version": "corpus_v1",
+  "csv": {
+    "artifact_id": "drv_eaa3a205dde831dfac769df8f04b90fae9b6fece2e0183ef54dc14033c382176",
+    "logical_ref": "analysis/analysis_table/drv_eaa3a205dde831dfac769df8f04b90fae9b6fece2e0183ef54dc14033c382176.csv",
+    "sha256": "514b68179d499f008debb0714c789d432ecd898f5b93e2eb85aeafa0a3164931"
+  },
+  "csv_contract": {
+    "byte_order_mark": false,
+    "columns": [
+      {
+        "name": "benchmark_version",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "corpus_version",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "item_id",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "item_sha256",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "paper_id",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "answer_class",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "split",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "phase",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "analysis_role",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "matrix_arm",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "condition",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "repeat_index",
+        "nullable": false,
+        "type": "integer"
+      },
+      {
+        "name": "primary_row",
+        "nullable": false,
+        "type": "logical"
+      },
+      {
+        "name": "observation_key",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "config_sha256",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "retrieval_config_sha256",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "run_id",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "attempt_id",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "execution_status",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "completion_kind",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_a_label",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_a_artifact",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_b_status",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_b_artifact",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "context_artifact",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "context_composition",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "context_provenance",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "generator_input_artifact",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "evidence_delivered",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "evidence_reason",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_c_status",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_c_reason",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_c_basis",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "stage_c_artifact",
+        "nullable": true,
+        "type": "string"
+      },
+      {
+        "name": "answer_correct",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "earliest_failure",
+        "nullable": false,
+        "type": "string"
+      },
+      {
+        "name": "correct_without_evidence",
+        "nullable": false,
+        "type": "string"
+      }
+    ],
+    "columns_sha256": "1d893f27de6ba6523c259e556c41e1eceaab93ee95e43e3820159bef23ab8d10",
+    "delimiter": ",",
+    "encoding": "utf-8",
+    "header_row": true,
+    "integer_pattern": "^(0|[1-9][0-9]*)$",
+    "line_ending": "\n",
+    "logical_tokens": [
+      "TRUE",
+      "FALSE"
+    ],
+    "missing_token": "NA",
+    "na_value_columns": [
+      "correct_without_evidence"
+    ],
+    "quote": "\"",
+    "quote_escape": "doubled",
+    "row_count": 18,
+    "sort_collation": "unicode_code_point",
+    "sort_key": [
+      "matrix_arm",
+      "item_id",
+      "condition",
+      "repeat_index",
+      "observation_key"
+    ]
+  },
+  "execution_provenance_required": [
+    "analysis_script_git_sha",
+    "analysis_script_sha256",
+    "applied_bootstrap_seed",
+    "handoff_sha256",
+    "installed_package_inventory_sha256",
+    "output_hashes",
+    "package_versions_used",
+    "r_dependency_lock_sha256",
+    "r_version"
+  ],
+  "input_origin": "synthetic_rehearsal",
+  "inventory": {
+    "artifact_id": "drv_588544ee5e3737e67f6e87a78be136cf6932f8d140bd8dd9f29c6c4d2e730e44",
+    "logical_ref": "analysis/analysis_inventory/drv_588544ee5e3737e67f6e87a78be136cf6932f8d140bd8dd9f29c6c4d2e730e44.json",
+    "sha256": "9ea072f0b46007893b137ef8bd42cbea58a0bd5e7d5dc041383a828dbd1610a8"
+  },
+  "kind": "analysis_handoff",
+  "non_included_items": [],
+  "phase": "development",
+  "roster": {
+    "artifact_id": "drv_b1d8038ce17bb38e17bbd4f52de26667a46bf4e1576a56d6b43554f4b7d4772b",
+    "logical_ref": "analysis/planned_roster/drv_b1d8038ce17bb38e17bbd4f52de26667a46bf4e1576a56d6b43554f4b7d4772b.json",
+    "sha256": "6a9fdc3c4104262e5418266cd36615b11563211e2b235b2ea04d7012528ce537"
+  },
+  "schema_version": "1",
+  "scope": "partial_development",
+  "scoring_reference": {
+    "stage_a": "stage_a_judgment_v1",
+    "stage_b": "stage_b_judgment_v1",
+    "stage_c": "stage_c_score_v1",
+    "table": "analysis_table_v1"
+  },
+  "source_runs": [],
+  "table_build": {
+    "artifact_id": "build_ccc8a5093f7cf516dbb5e35203672b00e899ace8d21a4abc5fea06abefe81b43",
+    "logical_ref": "analysis/build/dba5f28e39da2def70f92af8966b0289d3aa016c1ce9bb4caf74a3c6f0733da5.build.json",
+    "sha256": "ccc8a5093f7cf516dbb5e35203672b00e899ace8d21a4abc5fea06abefe81b43"
+  }
+}

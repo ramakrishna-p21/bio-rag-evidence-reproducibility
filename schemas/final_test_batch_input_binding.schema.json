@@ -1,0 +1,215 @@
+{
+  "$defs": {
+    "RepeatSeed": {
+      "additionalProperties": false,
+      "properties": {
+        "repeat_index": {
+          "minimum": 1,
+          "title": "Repeat Index",
+          "type": "integer"
+        },
+        "seed": {
+          "maximum": 4294967295,
+          "minimum": 0,
+          "title": "Seed",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "repeat_index",
+        "seed"
+      ],
+      "title": "RepeatSeed",
+      "type": "object"
+    },
+    "RosterRef": {
+      "additionalProperties": false,
+      "properties": {
+        "condition": {
+          "pattern": "\\S",
+          "title": "Condition",
+          "type": "string"
+        },
+        "roster_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Roster Sha256",
+          "type": "string"
+        },
+        "row_count": {
+          "minimum": 1,
+          "title": "Row Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "condition",
+        "roster_sha256",
+        "row_count"
+      ],
+      "title": "RosterRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "batch_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Batch Id",
+      "type": "string"
+    },
+    "benchmark_release_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Benchmark Release Sha256",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "pattern": "\\S",
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "campaign_plan_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Campaign Plan Sha256",
+      "type": "string"
+    },
+    "corpus_content_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Corpus Content Sha256",
+      "type": "string"
+    },
+    "expected_count": {
+      "minimum": 1,
+      "title": "Expected Count",
+      "type": "integer"
+    },
+    "generation_seed_registry_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Generation Seed Registry Sha256",
+      "type": "string"
+    },
+    "key_set_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Key Set Sha256",
+      "type": "string"
+    },
+    "layout_version": {
+      "const": "final_test_v1",
+      "default": "final_test_v1",
+      "title": "Layout Version",
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Manifest Sha256",
+      "type": "string"
+    },
+    "matrix_arm": {
+      "pattern": "\\S",
+      "title": "Matrix Arm",
+      "type": "string"
+    },
+    "model_repository": {
+      "pattern": "\\S",
+      "title": "Model Repository",
+      "type": "string"
+    },
+    "model_revision": {
+      "pattern": "\\S",
+      "title": "Model Revision",
+      "type": "string"
+    },
+    "prompt_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Prompt Sha256",
+      "type": "string"
+    },
+    "resolved_config_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Resolved Config Sha256",
+      "type": "string"
+    },
+    "retrieval_config_sha256": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{64}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Retrieval Config Sha256"
+    },
+    "retry_policy_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Retry Policy Sha256",
+      "type": "string"
+    },
+    "root_id": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Root Id",
+      "type": "string"
+    },
+    "rosters": {
+      "items": {
+        "$ref": "#/$defs/RosterRef"
+      },
+      "title": "Rosters",
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "seeds": {
+      "items": {
+        "$ref": "#/$defs/RepeatSeed"
+      },
+      "title": "Seeds",
+      "type": "array"
+    },
+    "split_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Split Sha256",
+      "type": "string"
+    },
+    "tokenizer_repository": {
+      "pattern": "\\S",
+      "title": "Tokenizer Repository",
+      "type": "string"
+    },
+    "tokenizer_revision": {
+      "pattern": "\\S",
+      "title": "Tokenizer Revision",
+      "type": "string"
+    }
+  },
+  "required": [
+    "root_id",
+    "campaign_plan_sha256",
+    "manifest_sha256",
+    "batch_id",
+    "matrix_arm",
+    "resolved_config_sha256",
+    "benchmark_version",
+    "corpus_content_sha256",
+    "benchmark_release_sha256",
+    "split_sha256",
+    "model_repository",
+    "model_revision",
+    "tokenizer_repository",
+    "tokenizer_revision",
+    "prompt_sha256",
+    "retrieval_config_sha256",
+    "generation_seed_registry_sha256",
+    "seeds",
+    "retry_policy_sha256",
+    "rosters",
+    "key_set_sha256",
+    "expected_count"
+  ],
+  "title": "BatchInputBinding",
+  "type": "object"
+}

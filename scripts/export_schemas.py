@@ -23,6 +23,46 @@ from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
 from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
+from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff
+from biorag_repro.evaluation.analysis_models import AnalysisInventory, AnalysisRow, GeneratorInput
+from biorag_repro.evaluation.analysis_preflight import AnalysisPreflight
+from biorag_repro.evaluation.analysis_result import AnalysisResultRecord
+from biorag_repro.evaluation.models import StageACandidate, StageAJudgment
+from biorag_repro.evaluation.stage_b_models import StageBCandidate, StageBJudgment
+from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
+from biorag_repro.evaluation.supplement import SupplementRecord
+from biorag_repro.finaltest.batches import AuthorizationCitation, BatchManifest
+from biorag_repro.finaltest.campaign import CampaignPlan
+from biorag_repro.finaltest.continuity import ContinuityAssessment
+from biorag_repro.finaltest.head import HeadAttestation
+from biorag_repro.finaltest.inputs import BatchInputBinding, ConditionRoster
+from biorag_repro.finaltest.layout import (
+    HeadWitness,
+    RegistryEvent,
+    RootAnchor,
+    RootRecord,
+    StorageAuthorization,
+)
+from biorag_repro.finaltest.runrecord import FinalTestRunRecord
+from biorag_repro.generation.attempts import AttemptEvent, RunRecord
+from biorag_repro.generation.checkpoint import CheckpointInventory, CheckpointManifest
+from biorag_repro.generation.completion import RunCompletion
+from biorag_repro.generation.config import GeneratorConfiguration
+from biorag_repro.generation.driver import Anchor
+from biorag_repro.generation.environment import EnvironmentRecord
+from biorag_repro.generation.environment_lock import (
+    EnvironmentInventory,
+    EnvironmentSpec,
+    EnvironmentVerification,
+)
+from biorag_repro.generation.inputs import GeneratorInputRecord
+from biorag_repro.generation.prompt import PromptArtifact, RenderedInput
+from biorag_repro.generation.qualification import QualificationReport
+from biorag_repro.generation.receipt import ExecutionReceipt
+from biorag_repro.generation.roster import RosterRecord
+from biorag_repro.generation.seeds import GenerationSeedRegistry
+from biorag_repro.generation.sources import ContextSourceSpec
+from biorag_repro.readiness.models import ReadinessReport
 from biorag_repro.retrieval.models import (
     Bm25Index,
     CanonicalInput,
@@ -36,6 +76,38 @@ from biorag_repro.retrieval.models import (
 
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "schemas"
 SCHEMAS: dict[str, type[BaseModel]] = {
+    "stage_a_candidate.schema.json": StageACandidate,
+    "stage_a_judgment.schema.json": StageAJudgment,
+    "stage_b_candidate.schema.json": StageBCandidate,
+    "stage_b_judgment.schema.json": StageBJudgment,
+    "generation_result.schema.json": GenerationResult,
+    "stage_c_score.schema.json": StageCScore,
+    "analysis_row.schema.json": AnalysisRow,
+    "analysis_inventory.schema.json": AnalysisInventory,
+    "analysis_handoff.schema.json": AnalysisHandoff,
+    "analysis_supplement.schema.json": SupplementRecord,
+    "analysis_preflight.schema.json": AnalysisPreflight,
+    "analysis_result_record.schema.json": AnalysisResultRecord,
+    "generator_input.schema.json": GeneratorInput,
+    "generator_configuration.schema.json": GeneratorConfiguration,
+    "generator_prompt.schema.json": PromptArtifact,
+    "generator_rendered_input.schema.json": RenderedInput,
+    "generation_seed_registry.schema.json": GenerationSeedRegistry,
+    "checkpoint_inventory.schema.json": CheckpointInventory,
+    "checkpoint_manifest.schema.json": CheckpointManifest,
+    "generation_run.schema.json": RunRecord,
+    "generation_attempt_event.schema.json": AttemptEvent,
+    "generation_environment.schema.json": EnvironmentRecord,
+    "environment_inventory.schema.json": EnvironmentInventory,
+    "environment_spec.schema.json": EnvironmentSpec,
+    "environment_verification.schema.json": EnvironmentVerification,
+    "generation_qualification_report.schema.json": QualificationReport,
+    "generation_roster.schema.json": RosterRecord,
+    "generation_run_completion.schema.json": RunCompletion,
+    "generation_input_record.schema.json": GeneratorInputRecord,
+    "generation_execution_receipt.schema.json": ExecutionReceipt,
+    "generation_run_anchor.schema.json": Anchor,
+    "generation_context_sources.schema.json": ContextSourceSpec,
     "phase5_configuration.schema.json": Phase5Configuration,
     "canonical_input.schema.json": CanonicalInput,
     "chunk.schema.json": Chunk,
@@ -70,6 +142,20 @@ SCHEMAS: dict[str, type[BaseModel]] = {
     "phase4_jats_build.schema.json": JatsBuild,
     "phase4_validation.schema.json": Phase4Validation,
     "phase4_gate_index.schema.json": Phase4GateIndex,
+    "readiness_report.schema.json": ReadinessReport,
+    "final_test_storage_authorization.schema.json": StorageAuthorization,
+    "final_test_root.schema.json": RootRecord,
+    "final_test_root_anchor.schema.json": RootAnchor,
+    "final_test_registry_event.schema.json": RegistryEvent,
+    "final_test_campaign_plan.schema.json": CampaignPlan,
+    "final_test_batch_manifest.schema.json": BatchManifest,
+    "final_test_authorization_citation.schema.json": AuthorizationCitation,
+    "final_test_head_witness.schema.json": HeadWitness,
+    "final_test_head_attestation.schema.json": HeadAttestation,
+    "final_test_continuity_assessment.schema.json": ContinuityAssessment,
+    "final_test_batch_input_binding.schema.json": BatchInputBinding,
+    "final_test_condition_roster.schema.json": ConditionRoster,
+    "final_test_run_record.schema.json": FinalTestRunRecord,
 }
 SCHEMA_PATH = SCHEMA_DIR / "build_manifest.schema.json"
 

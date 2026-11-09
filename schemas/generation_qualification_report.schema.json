@@ -1,0 +1,657 @@
+{
+  "$defs": {
+    "AttemptCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "failure_kinds": {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "title": "Failure Kinds",
+          "type": "object"
+        },
+        "interrupted_events": {
+          "minimum": 0,
+          "title": "Interrupted Events",
+          "type": "integer"
+        },
+        "observations_with_retries": {
+          "minimum": 0,
+          "title": "Observations With Retries",
+          "type": "integer"
+        },
+        "retryable_failure_events": {
+          "minimum": 0,
+          "title": "Retryable Failure Events",
+          "type": "integer"
+        },
+        "terminal_failure_events": {
+          "minimum": 0,
+          "title": "Terminal Failure Events",
+          "type": "integer"
+        },
+        "total": {
+          "minimum": 0,
+          "title": "Total",
+          "type": "integer"
+        },
+        "untimed_attempts": {
+          "minimum": 0,
+          "title": "Untimed Attempts",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total",
+        "observations_with_retries",
+        "retryable_failure_events",
+        "terminal_failure_events",
+        "interrupted_events",
+        "untimed_attempts",
+        "failure_kinds"
+      ],
+      "title": "AttemptCounts",
+      "type": "object"
+    },
+    "EnvironmentEvidenceRef": {
+      "additionalProperties": false,
+      "properties": {
+        "lock_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Lock Sha256"
+        },
+        "status": {
+          "enum": [
+            "verified",
+            "not_applicable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "verification_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Verification Sha256"
+        }
+      },
+      "required": [
+        "status",
+        "verification_sha256",
+        "lock_sha256"
+      ],
+      "title": "EnvironmentEvidenceRef",
+      "type": "object"
+    },
+    "EnvironmentUse": {
+      "additionalProperties": false,
+      "description": "What an environment record of the run says; the record is cited by hash.",
+      "properties": {
+        "backend_kind": {
+          "enum": [
+            "official",
+            "smoke",
+            "mock"
+          ],
+          "title": "Backend Kind",
+          "type": "string"
+        },
+        "backend_name": {
+          "title": "Backend Name",
+          "type": "string"
+        },
+        "backend_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Backend Version"
+        },
+        "checkpoint_manifest_sha256": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Checkpoint Manifest Sha256"
+        },
+        "device": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Device"
+        },
+        "device_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Device Name"
+        },
+        "dtype": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dtype"
+        },
+        "environment_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Environment Sha256",
+          "type": "string"
+        },
+        "gpu_status": {
+          "enum": [
+            "ok",
+            "no_nvidia_smi",
+            "failed"
+          ],
+          "title": "Gpu Status",
+          "type": "string"
+        },
+        "model_repository": {
+          "title": "Model Repository",
+          "type": "string"
+        },
+        "model_revision": {
+          "title": "Model Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "environment_sha256",
+        "backend_kind",
+        "backend_name",
+        "backend_version",
+        "model_repository",
+        "model_revision",
+        "checkpoint_manifest_sha256",
+        "device",
+        "device_name",
+        "dtype",
+        "gpu_status"
+      ],
+      "title": "EnvironmentUse",
+      "type": "object"
+    },
+    "Fraction": {
+      "additionalProperties": false,
+      "description": "A count with its denominator; the ratio is left to the reader.",
+      "properties": {
+        "denominator": {
+          "minimum": 0,
+          "title": "Denominator",
+          "type": "integer"
+        },
+        "numerator": {
+          "minimum": 0,
+          "title": "Numerator",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "numerator",
+        "denominator"
+      ],
+      "title": "Fraction",
+      "type": "object"
+    },
+    "ObservationCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "attempted": {
+          "minimum": 0,
+          "title": "Attempted",
+          "type": "integer"
+        },
+        "completed": {
+          "minimum": 0,
+          "title": "Completed",
+          "type": "integer"
+        },
+        "missing": {
+          "minimum": 0,
+          "title": "Missing",
+          "type": "integer"
+        },
+        "planned": {
+          "minimum": 0,
+          "title": "Planned",
+          "type": "integer"
+        },
+        "retries_exhausted": {
+          "minimum": 0,
+          "title": "Retries Exhausted",
+          "type": "integer"
+        },
+        "terminal_failure": {
+          "minimum": 0,
+          "title": "Terminal Failure",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "planned",
+        "attempted",
+        "completed",
+        "missing",
+        "terminal_failure",
+        "retries_exhausted"
+      ],
+      "title": "ObservationCounts",
+      "type": "object"
+    },
+    "ParseCounts": {
+      "additionalProperties": false,
+      "properties": {
+        "abstained": {
+          "$ref": "#/$defs/Fraction"
+        },
+        "parsed": {
+          "$ref": "#/$defs/Fraction"
+        },
+        "unparseable": {
+          "$ref": "#/$defs/Fraction"
+        }
+      },
+      "required": [
+        "parsed",
+        "unparseable",
+        "abstained"
+      ],
+      "title": "ParseCounts",
+      "type": "object"
+    },
+    "RunIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "backend_kind": {
+          "enum": [
+            "official",
+            "smoke",
+            "mock"
+          ],
+          "title": "Backend Kind",
+          "type": "string"
+        },
+        "completion_manifest_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Completion Manifest Sha256",
+          "type": "string"
+        },
+        "completion_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Completion Sha256",
+          "type": "string"
+        },
+        "matrix_arm": {
+          "title": "Matrix Arm",
+          "type": "string"
+        },
+        "phase": {
+          "enum": [
+            "development",
+            "qualification"
+          ],
+          "title": "Phase",
+          "type": "string"
+        },
+        "purpose": {
+          "title": "Purpose",
+          "type": "string"
+        },
+        "raw_config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Raw Config Sha256",
+          "type": "string"
+        },
+        "resolved_config_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Resolved Config Sha256",
+          "type": "string"
+        },
+        "roster_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Roster Sha256",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "run_record_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Run Record Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run_id",
+        "run_record_sha256",
+        "resolved_config_sha256",
+        "raw_config_sha256",
+        "roster_sha256",
+        "completion_sha256",
+        "completion_manifest_sha256",
+        "matrix_arm",
+        "backend_kind",
+        "purpose",
+        "phase"
+      ],
+      "title": "RunIdentity",
+      "type": "object"
+    },
+    "Series": {
+      "additionalProperties": false,
+      "description": "Integer values, one per unit counted, summarised exactly.",
+      "properties": {
+        "maximum": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Maximum"
+        },
+        "minimum": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Minimum"
+        },
+        "n": {
+          "minimum": 0,
+          "title": "N",
+          "type": "integer"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "observed",
+            "derived",
+            "unavailable",
+            "not_applicable"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Total"
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "n",
+        "total",
+        "minimum",
+        "maximum"
+      ],
+      "title": "Series",
+      "type": "object"
+    },
+    "Throughput": {
+      "additionalProperties": false,
+      "description": "Output tokens over a duration in nanoseconds, kept as the two integers they come from.",
+      "properties": {
+        "attempts": {
+          "minimum": 0,
+          "title": "Attempts",
+          "type": "integer"
+        },
+        "duration_ns": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Duration Ns"
+        },
+        "output_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Output Tokens"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reason"
+        },
+        "status": {
+          "enum": [
+            "observed",
+            "derived",
+            "unavailable",
+            "not_applicable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status",
+        "reason",
+        "attempts",
+        "output_tokens",
+        "duration_ns"
+      ],
+      "title": "Throughput",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "attempt_duration_us": {
+      "$ref": "#/$defs/Series"
+    },
+    "attempt_throughput": {
+      "$ref": "#/$defs/Throughput"
+    },
+    "attempts": {
+      "$ref": "#/$defs/AttemptCounts"
+    },
+    "device_used_after_bytes": {
+      "$ref": "#/$defs/Series"
+    },
+    "environment_verification": {
+      "$ref": "#/$defs/EnvironmentEvidenceRef"
+    },
+    "environments": {
+      "items": {
+        "$ref": "#/$defs/EnvironmentUse"
+      },
+      "title": "Environments",
+      "type": "array"
+    },
+    "evidence_class": {
+      "enum": [
+        "synthetic_engineering",
+        "smoke_engineering",
+        "official_development"
+      ],
+      "title": "Evidence Class",
+      "type": "string"
+    },
+    "generation_duration_ns": {
+      "$ref": "#/$defs/Series"
+    },
+    "generation_throughput": {
+      "$ref": "#/$defs/Throughput"
+    },
+    "input_tokens_received": {
+      "$ref": "#/$defs/Series"
+    },
+    "limitations": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Limitations",
+      "type": "array"
+    },
+    "measurements": {
+      "$ref": "#/$defs/Fraction"
+    },
+    "memory_device_indices": {
+      "items": {
+        "type": "integer"
+      },
+      "title": "Memory Device Indices",
+      "type": "array"
+    },
+    "memory_readings": {
+      "$ref": "#/$defs/Fraction"
+    },
+    "observations": {
+      "$ref": "#/$defs/ObservationCounts"
+    },
+    "output_tokens": {
+      "$ref": "#/$defs/Series"
+    },
+    "parse": {
+      "$ref": "#/$defs/ParseCounts"
+    },
+    "peak_allocated_bytes": {
+      "$ref": "#/$defs/Series"
+    },
+    "peak_reserved_bytes": {
+      "$ref": "#/$defs/Series"
+    },
+    "planned_input_tokens": {
+      "$ref": "#/$defs/Series"
+    },
+    "receipts": {
+      "$ref": "#/$defs/Fraction"
+    },
+    "report_kind": {
+      "const": "descriptive_qualification_evidence",
+      "default": "descriptive_qualification_evidence",
+      "title": "Report Kind",
+      "type": "string"
+    },
+    "run": {
+      "$ref": "#/$defs/RunIdentity"
+    },
+    "schema_version": {
+      "const": "2",
+      "default": "2",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scientific_gate": {
+      "const": "not_evaluated",
+      "default": "not_evaluated",
+      "title": "Scientific Gate",
+      "type": "string"
+    },
+    "stop_reasons": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Stop Reasons",
+      "type": "object"
+    }
+  },
+  "required": [
+    "evidence_class",
+    "run",
+    "environments",
+    "environment_verification",
+    "observations",
+    "attempts",
+    "parse",
+    "receipts",
+    "planned_input_tokens",
+    "input_tokens_received",
+    "output_tokens",
+    "stop_reasons",
+    "attempt_duration_us",
+    "attempt_throughput",
+    "measurements",
+    "memory_readings",
+    "memory_device_indices",
+    "generation_duration_ns",
+    "generation_throughput",
+    "peak_allocated_bytes",
+    "peak_reserved_bytes",
+    "device_used_after_bytes",
+    "limitations"
+  ],
+  "title": "QualificationReport",
+  "type": "object"
+}

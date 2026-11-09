@@ -1,0 +1,7 @@
+{
+  "csv_sha256": "d42bec74408ebb61865414c6e81214ed174a1d48e77422c42ba3e7de7aec9156",
+  "handoff_sha256": "48dcf54d19505b90c7f1a53e5b1070d4bedb21d908fc6c4ec4b26462fe13ec89",
+  "input_origin": "synthetic_rehearsal",
+  "note": "synthetic rehearsal fixture; no scientific authority; not a result",
+  "python_preflight": "read_handoff passed on these bytes when they were generated"
+}

@@ -31,3 +31,17 @@ assets. Selected chunk, index and ranking artifacts pass their existing scientif
 readers; this command does not construct or replace those upstream artifacts.
 Output publication refuses to overwrite existing files. These development
 operations do not establish generator qualification or final-test readiness.
+
+## R analysis checks
+
+The pre-specified inferential analysis is in `analysis/` and uses a project-local renv library locked in `analysis/renv.lock` (R 4.6.1). From `analysis/`, run `Rscript -e 'renv::restore()'`, then `Rscript -e 'testthat::test_dir("tests/testthat")'`. Several Python tests (Python/R handoff, rehearsal, result verification, supplement chain) call `Rscript` and skip when R or the renv library is absent; set `BIORAG_REQUIRE_R=1` to make that a failure instead. CI sets it. Python remains authoritative for scientific scoring; R only consumes the validated analysis table.
+
+## Project status (checkpoint)
+
+Implemented and tested on synthetic fixtures only: evidence preservation, delivery and answer scoring (Stages A, B, C); generation run and attempt lifecycle with exact supplied-context records; the validated Python-to-R analysis handoff; the R estimators, whole-paper bootstrap and CR2 inference with verified result publication; secondary tables, a derived report and a records-only release index; the readiness gate and the protected final-test execution architecture with rehearsal start, resume and completion.
+
+`analysis_supplement` (answer-identity and evidence-form labels) is a separate, versioned, hash-linked artifact. The frozen primary analysis table is unchanged by it.
+
+What this checkpoint establishes: the infrastructure behaves as specified on synthetic data, and its Python and R tests run in CI. What it does not establish: any scientific result. No official model qualification, development execution or final-test observation has been run, readiness is not approved (production final-test execution is disabled), and the real Phase 11 analysis gate has not been passed. Benchmark gold, frozen sources and final-test material stay outside Git.
+
+Next planned work: Phase 7 generator environment and GPU qualification, then Phase 8 official development execution.

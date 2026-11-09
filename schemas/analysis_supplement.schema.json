@@ -1,0 +1,112 @@
+{
+  "$defs": {
+    "SupplementFile": {
+      "additionalProperties": false,
+      "properties": {
+        "bytes": {
+          "minimum": 1,
+          "title": "Bytes",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "bytes",
+        "sha256"
+      ],
+      "title": "SupplementFile",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "analysis_table_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Analysis Table Sha256",
+      "type": "string"
+    },
+    "banner": {
+      "const": "SYNTHETIC REHEARSAL — NOT SCIENTIFIC FINDINGS",
+      "default": "SYNTHETIC REHEARSAL — NOT SCIENTIFIC FINDINGS",
+      "title": "Banner",
+      "type": "string"
+    },
+    "benchmark_version": {
+      "minLength": 1,
+      "title": "Benchmark Version",
+      "type": "string"
+    },
+    "corpus_version": {
+      "minLength": 1,
+      "title": "Corpus Version",
+      "type": "string"
+    },
+    "definitions_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Definitions Version",
+      "type": "string"
+    },
+    "files": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SupplementFile"
+      },
+      "title": "Files",
+      "type": "object"
+    },
+    "final": {
+      "const": false,
+      "default": false,
+      "title": "Final",
+      "type": "boolean"
+    },
+    "handoff_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Handoff Sha256",
+      "type": "string"
+    },
+    "kind": {
+      "const": "analysis_supplement",
+      "default": "analysis_supplement",
+      "title": "Kind",
+      "type": "string"
+    },
+    "purpose": {
+      "const": "synthetic_rehearsal",
+      "default": "synthetic_rehearsal",
+      "title": "Purpose",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "scientific_authority": {
+      "const": "none",
+      "default": "none",
+      "title": "Scientific Authority",
+      "type": "string"
+    },
+    "supplement_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Supplement Sha256",
+      "type": "string"
+    }
+  },
+  "required": [
+    "benchmark_version",
+    "corpus_version",
+    "analysis_table_sha256",
+    "handoff_sha256",
+    "files",
+    "supplement_sha256"
+  ],
+  "title": "SupplementRecord",
+  "type": "object"
+}

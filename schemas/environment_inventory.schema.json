@@ -1,0 +1,147 @@
+{
+  "$defs": {
+    "GpuDevice": {
+      "additionalProperties": false,
+      "properties": {
+        "driver_version": {
+          "minLength": 1,
+          "title": "Driver Version",
+          "type": "string"
+        },
+        "index": {
+          "minimum": 0,
+          "title": "Index",
+          "type": "integer"
+        },
+        "memory_total_mib": {
+          "exclusiveMinimum": 0,
+          "title": "Memory Total Mib",
+          "type": "integer"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "index",
+        "name",
+        "memory_total_mib",
+        "driver_version"
+      ],
+      "title": "GpuDevice",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Machine facts only: no hostname, path or timestamp, so equal machines hash equal.",
+  "properties": {
+    "gpu_status": {
+      "enum": [
+        "ok",
+        "no_nvidia_smi",
+        "failed"
+      ],
+      "title": "Gpu Status",
+      "type": "string"
+    },
+    "gpus": {
+      "items": {
+        "$ref": "#/$defs/GpuDevice"
+      },
+      "title": "Gpus",
+      "type": "array"
+    },
+    "machine": {
+      "title": "Machine",
+      "type": "string"
+    },
+    "package_problems": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Package Problems",
+      "type": "array"
+    },
+    "packages": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Packages",
+      "type": "object"
+    },
+    "python_implementation": {
+      "title": "Python Implementation",
+      "type": "string"
+    },
+    "python_version": {
+      "title": "Python Version",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1",
+      "default": "1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "system": {
+      "title": "System",
+      "type": "string"
+    },
+    "torch_cuda_available": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Torch Cuda Available"
+    },
+    "torch_cuda_build": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Torch Cuda Build"
+    },
+    "torch_device_names": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Torch Device Names",
+      "type": "array"
+    },
+    "torch_status": {
+      "enum": [
+        "ok",
+        "not_installed",
+        "failed"
+      ],
+      "title": "Torch Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "python_version",
+    "python_implementation",
+    "system",
+    "machine",
+    "packages",
+    "gpu_status",
+    "gpus",
+    "torch_status",
+    "torch_cuda_build",
+    "torch_cuda_available",
+    "torch_device_names",
+    "package_problems"
+  ],
+  "title": "EnvironmentInventory",
+  "type": "object"
+}
