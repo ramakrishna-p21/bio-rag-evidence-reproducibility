@@ -33,10 +33,12 @@ test_that("the first library on the path wins when a package is installed twice"
 
 test_that("the real environment passes the gate and its inventory equals the lock", {
   inv <- real_inventory(); l <- real_lock()
-  # Every locked package is installed at exactly its locked version. lattice is locked but comes
-  # from the R installation; the other recommended packages are installed and not locked.
+  # Every locked package is installed at exactly its locked version. lattice is locked and may come
+  # from the R installation (when that copy has the locked version) or from the project library
+  # (when the installation ships another version); the other recommended packages are installed
+  # and not locked.
   expect_identical(setNames(inv$version, inv$package)[names(l$packages)], l$packages)
-  expect_identical(inv$library_role[inv$package == "lattice"], "r_other")
+  expect_true(inv$library_role[inv$package == "lattice"] %in% c("project", "r_other"))
   expect_true(all(inv$in_lock[inv$library_role == "project"] == "yes"))
   expect_true(all(c("base", "stats", "MASS") %in% inv$package))
   expect_silent(check_environment(l, inv, analysis_dir()))
