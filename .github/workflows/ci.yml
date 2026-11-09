@@ -16,7 +16,9 @@ concurrency:
 
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    # Pinned to the platform of the locked renv library (linux-ubuntu-jammy): the primary R
+    # result hash is byte-compared and has only been reproduced with that platform's numerics.
+    runs-on: ubuntu-22.04
     timeout-minutes: 60
     env:
       # The Python/R handoff, rehearsal, result and supplement tests must run, not skip.
