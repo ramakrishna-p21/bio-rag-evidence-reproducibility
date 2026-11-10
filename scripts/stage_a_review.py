@@ -134,15 +134,42 @@ def check_separation(order: list[tuple[str, str]], gap: int) -> None:
             raise ReviewError(f"{item_id} representations are closer than {gap} positions")
 
 
+def orientations(
+    ids: list[str], groups: dict[str, str] | None, rng: random.Random
+) -> dict[str, str]:
+    """Which representation each item shows first: balanced overall and within each group.
+
+    Inside a group the first arms alternate from a random start; a group with an odd count
+    leaves one extra, given to whichever side is behind so the total differs by at most one.
+    """
+    by_group: dict[str, list[str]] = {}
+    for item_id in ids:
+        by_group.setdefault((groups or {}).get(item_id, ""), []).append(item_id)
+    first: dict[str, str] = {}
+    totals = {"JATS": 0, "PDF_DOCLING": 0}
+    for group in sorted(by_group):
+        members = by_group[group]
+        rng.shuffle(members)
+        behind = min(totals, key=lambda a: (totals[a], rng.random()))
+        other = "PDF_DOCLING" if behind == "JATS" else "JATS"
+        for k, item_id in enumerate(members):
+            first[item_id] = behind if k % 2 == 0 else other
+            totals[first[item_id]] += 1
+    return first
+
+
 def schedule(
-    item_ids: list[str], seed: int, fraction: float = GAP_FRACTION
+    item_ids: list[str],
+    seed: int,
+    fraction: float = GAP_FRACTION,
+    groups: dict[str, str] | None = None,
 ) -> list[tuple[str, str]]:
     """Seeded order in which the two arms of an item are at least `gap` positions apart.
 
     Construction, not rejection: item i's first arm is placed at i and its second arm at
     n + (i + shift) % n with shift >= gap, which keeps every distance >= gap. Seeded swaps
-    that preserve the invariant then remove the regular layout. Arm orientation is drawn
-    independently per item.
+    that preserve both the distance and each item's first arm then remove the regular
+    layout, so the balanced orientation (see `orientations`) survives.
     """
     if not item_ids or len(set(item_ids)) != len(item_ids):
         raise ReviewError("items must be nonempty and distinct")
@@ -152,22 +179,31 @@ def schedule(
     n = len(ids)
     gap = min_gap(n, fraction)
     shift = rng.randint(gap, n)
+    first = orientations(ids, groups, rng)
     order: list[tuple[str, str]] = [("", "")] * (2 * n)
     for i, item_id in enumerate(ids):
-        arms = list(REPRESENTATIONS)
-        rng.shuffle(arms)
-        order[i] = (item_id, arms[0])
-        order[n + (i + shift) % n] = (item_id, arms[1])
+        other = "PDF_DOCLING" if first[item_id] == "JATS" else "JATS"
+        order[i] = (item_id, first[item_id])
+        order[n + (i + shift) % n] = (item_id, other)
     check_separation(order, gap)
     for _ in range(20 * n):
         a, b = rng.sample(range(2 * n), 2)
         order[a], order[b] = order[b], order[a]
         try:
             check_separation(order, gap)
+            if first_arms(order) != first:
+                raise ReviewError("orientation changed")
         except ReviewError:
             order[a], order[b] = order[b], order[a]
     check_separation(order, gap)
     return order
+
+
+def first_arms(order: list[tuple[str, str]]) -> dict[str, str]:
+    seen: dict[str, str] = {}
+    for item_id, representation in order:
+        seen.setdefault(item_id, representation)
+    return seen
 
 
 # ---- masked rendering -----------------------------------------------------------------
@@ -422,7 +458,9 @@ def build_packet(
     if role == "intra_rater":
         check_washout(previous_manifest, seed, created_utc)
     chosen = select_items(items, papers, count, seed)
-    order = schedule([i.item_id for i in chosen], seed)
+    order = schedule(
+        [i.item_id for i in chosen], seed, groups={i.item_id: i.paper_id for i in chosen}
+    )
     analyses: list[Analysis] = []
     for position, (item_id, representation) in enumerate(order, 1):
         analyses.append(Analysis(f"R{position:03d}", seed, sources[(item_id, representation)]))
@@ -447,6 +485,7 @@ def build_packet(
                 "seed": seed,
                 "gap_fraction": GAP_FRACTION,
                 "gap": min_gap(len(chosen)),
+                "orientation": "balanced overall and within papers",
                 "order": [[a.handle, i, r] for a, (i, r) in zip(analyses, order, strict=True)],
             }
         ),

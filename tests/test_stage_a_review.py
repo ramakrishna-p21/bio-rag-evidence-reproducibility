@@ -525,3 +525,42 @@ def test_selection_prefers_rare_strata_within_a_paper(tmp_path):
     for seed in range(5):
         chosen = sar.select_items(items, ("P001",), 1, seed)
         assert chosen[0].answer_class == "biological_entity"
+
+
+# ---- balanced orientation ------------------------------------------------------------
+
+
+def first_arms(order):
+    seen: dict[str, str] = {}
+    for item_id, rep in order:
+        seen.setdefault(item_id, rep)
+    return seen
+
+
+PAPER_SIZES = {"A": 5, "B": 5, "C": 5, "D": 5, "E": 6}
+GROUPS = {f"{p}{n}": p for p, size in PAPER_SIZES.items() for n in range(size)}
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_orientation_is_balanced_overall_and_within_papers(seed):
+    order = sar.schedule(sorted(GROUPS), seed, groups=GROUPS)
+    firsts = first_arms(order)
+    assert sum(r == "JATS" for r in firsts.values()) == 13
+    for paper, size in PAPER_SIZES.items():
+        jats = sum(firsts[i] == "JATS" for i in GROUPS if GROUPS[i] == paper)
+        assert abs(jats - (size - jats)) <= 1
+    sar.check_separation(order, sar.min_gap(26))
+    assert sar.min_gap(26) == 16
+
+
+def test_balanced_schedule_is_reproducible_and_still_seed_dependent():
+    ids = sorted(GROUPS)
+    assert sar.schedule(ids, 4, groups=GROUPS) == sar.schedule(ids, 4, groups=GROUPS)
+    assert sar.schedule(ids, 4, groups=GROUPS) != sar.schedule(ids, 5, groups=GROUPS)
+
+
+@pytest.mark.parametrize("pairs", [1, 2, 3, 7, 26, 41])
+def test_orientation_without_groups_differs_by_at_most_one(pairs):
+    firsts = first_arms(sar.schedule([f"q{n:03d}" for n in range(pairs)], 3))
+    jats = sum(r == "JATS" for r in firsts.values())
+    assert abs(jats - (pairs - jats)) <= 1
