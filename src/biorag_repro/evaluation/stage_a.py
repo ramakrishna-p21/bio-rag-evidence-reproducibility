@@ -524,8 +524,11 @@ def _mean_sd_matches(
 def _row_anchor(cell: TableCell, answer: TableCell) -> bool:
     if cell.mapping.kind == "docling" and cell.is_header and not cell.native_row_header:
         return False
-    return cell.row <= answer.row < cell.row + cell.row_span and (
-        cell.column + cell.column_span <= answer.column
+    # The answer cell may span several rows; any covered row links a row label to it.
+    return (
+        cell.row < answer.row + answer.row_span
+        and answer.row < cell.row + cell.row_span
+        and (cell.column + cell.column_span <= answer.column)
     )
 
 
@@ -534,8 +537,10 @@ def _column_anchor(cell: TableCell, answer: TableCell) -> bool:
         return False
     if cell.mapping.kind == "docling" and not cell.native_column_header:
         return False
-    return cell.column <= answer.column < cell.column + cell.column_span and (
-        cell.row + cell.row_span <= answer.row
+    return (
+        cell.column < answer.column + answer.column_span
+        and answer.column < cell.column + cell.column_span
+        and cell.row + cell.row_span <= answer.row
     )
 
 
