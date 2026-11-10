@@ -78,7 +78,9 @@ class Phase5Configuration(Record):
     evidence_tokens: Literal[2048] = 2048
     duplicate_policy: Literal["text_and_scientific_provenance"] = "text_and_scientific_provenance"
     stop_policy: Literal["first_nonfitting"] = "first_nonfitting"
-    chunking_algorithm: Literal["canonical_whole_units_v1"] = "canonical_whole_units_v1"
+    chunking_algorithm: Literal["canonical_whole_units_v1", "canonical_whole_units_v2"] = (
+        "canonical_whole_units_v1"
+    )
     construction_counting: Literal["no_special_tokens_no_padding_no_truncation"] = (
         "no_special_tokens_no_padding_no_truncation"
     )

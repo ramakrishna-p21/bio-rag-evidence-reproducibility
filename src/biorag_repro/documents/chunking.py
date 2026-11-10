@@ -1,5 +1,6 @@
 """Canonical-only occurrence discovery, whole-unit rendering, and chunk construction."""
 
+from collections import Counter as Tally
 from collections import defaultdict
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -46,6 +47,7 @@ from biorag_repro.retrieval.validation import (
 )
 
 Counter = Callable[[str], int]
+V2_LEGEND = "Omitted cell attributes inherit cell_defaults."
 _BLOCKS = {"paragraph", "caption", "title", "formula", "reference", "list_item"}
 _INLINE = {
     "italic",
@@ -208,9 +210,15 @@ def _qualifications(items: list[SourceOccurrence]) -> list[str]:
 
 
 def render_units(
-    document: CanonicalDocument, occurrences: list[SourceOccurrence]
+    document: CanonicalDocument,
+    occurrences: list[SourceOccurrence],
+    algorithm: str = "canonical_whole_units_v1",
 ) -> list[RenderedUnit]:
-    """Render only recorded structure; retain source strings inside derived wrappers."""
+    """Render only recorded structure; retain source strings inside derived wrappers.
+
+    v1 prints every cell attribute on every cell. v2 declares the most frequent value of each
+    attribute once per table and prints a cell attribute only where it differs.
+    """
     nodes, children = _tree(document)
     by_owner: dict[str, list[SourceOccurrence]] = defaultdict(list)
     by_slot = {o.mapping.path: o for o in occurrences if o.field == "segment"}
@@ -414,7 +422,33 @@ def render_units(
     def bool_text(value: bool | None) -> str:
         return "?" if value is None else str(value).lower()
 
+    cell_attributes = (
+        ("header", "is_header"),
+        ("row_header", "native_row_header"),
+        ("column_header", "native_column_header"),
+        ("row_section", "native_row_section"),
+        ("fillable", "native_fillable"),
+    )
+    defaults: dict[str, bool | None] = {}
+
+    def table_defaults(cells: list[TableCell]) -> None:
+        # Ties resolve false, then true, then unknown, so the declaration is deterministic.
+        rank = {False: 0, True: 1, None: 2}
+        for name, attribute in cell_attributes:
+            counts = Tally(getattr(cell, attribute) for cell in cells)
+            defaults[name] = min(counts, key=lambda value: (-counts[value], rank[value]))
+
     def cell_line(cell: TableCell) -> str:
+        if algorithm == "canonical_whole_units_v2":
+            parts = [f"r{cell.row}c{cell.column}"]
+            if (cell.row_span, cell.column_span) != (1, 1):
+                parts.append(f"span={cell.row_span}x{cell.column_span}")
+            parts += [
+                f"{name}={bool_text(getattr(cell, attribute))}"
+                for name, attribute in cell_attributes
+                if getattr(cell, attribute) != defaults[name]
+            ]
+            return f"[{' '.join(parts)}] {cell_text(cell)}"
         return (
             f"[r{cell.row}c{cell.column} span={cell.row_span}x{cell.column_span} "
             f"header={bool_text(cell.is_header)} row_header={bool_text(cell.native_row_header)} "
@@ -445,6 +479,10 @@ def render_units(
                         "repeated_context",
                     )
                 )
+        if algorithm == "canonical_whole_units_v2" and table.cells:
+            table_defaults(table.cells)
+            declared = " ".join(f"{name}={bool_text(value)}" for name, value in defaults.items())
+            relations += f"[cell_defaults span=1x1 {declared}]\n{V2_LEGEND}\n"
         for row in range(table.row_count):
             cells = sorted(
                 [cell for cell in table.cells if cell.row <= row < cell.row + cell.row_span],
@@ -504,7 +542,7 @@ def render_units(
 
 
 def chunks_ref(
-    chunks: list[Chunk], selected: CanonicalInput, configuration: ConfigurationRef
+    chunks: list[Chunk], selected: CanonicalInput, configuration: ConfigurationRef, algorithm: str
 ) -> ArtifactRef:
     content = encode_jsonl(chunks)
     digest = sha256_bytes(content)
@@ -516,7 +554,7 @@ def chunks_ref(
                 "configuration", configuration.artifact.artifact_id, configuration.artifact.sha256
             ),
         ],
-        transformation_id="canonical_whole_units_v1",
+        transformation_id=algorithm,
         transformation_settings_sha256=configuration.resolved_sha256,
         output_sha256=digest,
         output_format="jsonl",
@@ -530,7 +568,7 @@ def chunks_ref(
 
 
 def _chunks_manifest(
-    ref: ArtifactRef, selected: CanonicalInput, cfg: ConfigurationRef
+    ref: ArtifactRef, selected: CanonicalInput, cfg: ConfigurationRef, algorithm: str
 ) -> BuildManifest:
     return BuildManifest(
         schema_version="1",
@@ -538,7 +576,7 @@ def _chunks_manifest(
             BuildInput(role="canonical", artifact=selected.canonical),
             BuildInput(role="configuration", artifact=cfg.artifact),
         ],
-        transformation_id="canonical_whole_units_v1",
+        transformation_id=algorithm,
         transformation_settings_sha256=cfg.resolved_sha256,
         outputs=[
             DerivedOutput(
@@ -554,9 +592,9 @@ def _chunks_manifest(
 
 
 def _chunks_manifest_ref(
-    ref: ArtifactRef, selected: CanonicalInput, cfg: ConfigurationRef
+    ref: ArtifactRef, selected: CanonicalInput, cfg: ConfigurationRef, algorithm: str
 ) -> ArtifactRef:
-    digest = sha256_bytes(serialize_manifest(_chunks_manifest(ref, selected, cfg)))
+    digest = sha256_bytes(serialize_manifest(_chunks_manifest(ref, selected, cfg, algorithm)))
     return ArtifactRef(
         artifact_id="build_" + digest, logical_ref=ref.logical_ref + ".build.json", sha256=digest
     )
@@ -575,7 +613,7 @@ def chunk_document(
     if configuration.resolved_sha256 != sha256_bytes(canonical_json_bytes(settings.model_dump())):
         raise ValueError("chunk configuration identity mismatch")
     occurrences = discover_occurrences(document, selected.canonical)
-    units = render_units(document, occurrences)
+    units = render_units(document, occurrences, settings.chunking_algorithm)
     chunks: list[Chunk] = []
     diagnostics: list[ChunkingDiagnostic] = []
     pending: list[RenderedUnit] = []
@@ -709,13 +747,15 @@ def chunk_document(
     metadata = ChunkSet(
         input=selected,
         configuration=configuration,
-        chunks=chunks_ref(chunks, selected, configuration),
+        chunks=chunks_ref(chunks, selected, configuration, settings.chunking_algorithm),
         chunk_ids=ids,
         occurrences=occurrences,
         accounting=accounting,
         diagnostics=diagnostics,
     )
-    metadata.chunks_build_manifest = _chunks_manifest_ref(metadata.chunks, selected, configuration)
+    metadata.chunks_build_manifest = _chunks_manifest_ref(
+        metadata.chunks, selected, configuration, settings.chunking_algorithm
+    )
     return ChunkingResult(chunks, metadata)
 
 
@@ -838,7 +878,7 @@ def publish_chunking(
     manifest_ref = metadata.chunks_build_manifest
     assert manifest_ref is not None
     publish_manifest(
-        _chunks_manifest(chunks, metadata.input, configuration),
+        _chunks_manifest(chunks, metadata.input, configuration, settings.chunking_algorithm),
         output_root / manifest_ref.logical_ref,
         {chunks.logical_ref: target},
     )
@@ -943,20 +983,23 @@ def _read_chunking(
         raise ValueError("chunk-set manifest contract mismatch")
     verify_manifest_outputs(manifest, {ref.logical_ref: output_root / ref.logical_ref})
     assert metadata.chunks_build_manifest is not None
+    settings = load_configuration(configuration, configuration_root)
     chunk_manifest = read_manifest(
         output_root / metadata.chunks_build_manifest.logical_ref,
         metadata.chunks_build_manifest.sha256,
     )
+    algorithm = settings.chunking_algorithm
     if metadata.chunks_build_manifest != _chunks_manifest_ref(
-        metadata.chunks, metadata.input, configuration
-    ) or chunk_manifest != _chunks_manifest(metadata.chunks, metadata.input, configuration):
+        metadata.chunks, metadata.input, configuration, algorithm
+    ) or chunk_manifest != _chunks_manifest(
+        metadata.chunks, metadata.input, configuration, algorithm
+    ):
         raise ValueError("chunks manifest contract mismatch")
     verify_manifest_outputs(
         chunk_manifest, {metadata.chunks.logical_ref: output_root / metadata.chunks.logical_ref}
     )
     chunks = read_jsonl(output_root / metadata.chunks.logical_ref, metadata.chunks.sha256, Chunk)
     result = ChunkingResult(chunks, metadata)
-    settings = load_configuration(configuration, configuration_root)
     document = load_canonical_input(metadata.input, authority)
     validate_chunking(
         result,

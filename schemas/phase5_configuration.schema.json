@@ -79,8 +79,11 @@
       "type": "integer"
     },
     "chunking_algorithm": {
-      "const": "canonical_whole_units_v1",
       "default": "canonical_whole_units_v1",
+      "enum": [
+        "canonical_whole_units_v1",
+        "canonical_whole_units_v2"
+      ],
       "title": "Chunking Algorithm",
       "type": "string"
     },

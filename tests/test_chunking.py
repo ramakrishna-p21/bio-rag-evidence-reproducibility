@@ -270,7 +270,7 @@ def test_rehashed_scientific_counterfeits_reject_at_the_same_boundary(attack):
     from biorag_repro.documents.chunking import chunks_ref
 
     bad.chunk_set.chunk_ids = [record_ref(c).artifact_id for c in bad.chunks]
-    bad.chunk_set.chunks = chunks_ref(bad.chunks, selected, cfgref)
+    bad.chunk_set.chunks = chunks_ref(bad.chunks, selected, cfgref, "canonical_whole_units_v1")
     with pytest.raises(ValueError):
         validate_chunking(bad, doc, selected, cfgref, cfg, len)
 
@@ -459,7 +459,7 @@ def test_rehashed_table_relationship_counterfeits_reject(old, new):
     target = next(chunk for chunk in bad.chunks if old in chunk.rendered_text)
     target.rendered_text = target.rendered_text.replace(old, new)
     bad.chunk_set.chunk_ids = [record_ref(chunk).artifact_id for chunk in bad.chunks]
-    bad.chunk_set.chunks = chunks_ref(bad.chunks, selected, cfgref)
+    bad.chunk_set.chunks = chunks_ref(bad.chunks, selected, cfgref, "canonical_whole_units_v1")
     with pytest.raises(ValueError):
         validate_chunking(bad, doc, selected, cfgref, cfg, counter)
 
