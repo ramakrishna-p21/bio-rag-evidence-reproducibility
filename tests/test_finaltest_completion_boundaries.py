@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from finaltest_completion_support import finished
 from finaltest_resume_support import renew
-from test_c3_resume import _mk
+from test_finaltest_resume import _mk
 
 import biorag_repro
 from biorag_repro.finaltest import finish

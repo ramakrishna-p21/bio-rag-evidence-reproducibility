@@ -1,8 +1,8 @@
 """Publication checks use synthetic inputs and a clearly marked fixture counter."""
 
 import pytest
-from test_phase4_publication_authorization import authority as authority  # noqa: PLC0414
-from test_phase4_publication_authorization import pair as pair  # noqa: PLC0414
+from test_publication_authorization import authority as authority  # noqa: PLC0414
+from test_publication_authorization import pair as pair  # noqa: PLC0414
 from test_retrieval_input import selected, trusted
 from test_retrieval_models import ref, settings
 

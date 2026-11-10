@@ -3,9 +3,9 @@
 from dataclasses import replace
 
 import pytest
-from test_phase4_publication_authorization import attack
-from test_phase4_publication_authorization import authority as authority  # noqa: PLC0414
-from test_phase4_publication_authorization import pair as pair  # noqa: PLC0414
+from test_publication_authorization import attack
+from test_publication_authorization import authority as authority  # noqa: PLC0414
+from test_publication_authorization import pair as pair  # noqa: PLC0414
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import BuildManifest

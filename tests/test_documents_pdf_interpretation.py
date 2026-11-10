@@ -5,9 +5,9 @@ from types import SimpleNamespace as Item
 
 import pytest
 from test_documents_table_fidelity import _native_data, _typed_native
-from test_phase4_publication_authorization import CASES, attack, candidate
-from test_phase4_publication_authorization import authority as authority  # noqa: PLC0414
-from test_phase4_publication_authorization import pair as pair  # noqa: PLC0414
+from test_publication_authorization import CASES, attack, candidate
+from test_publication_authorization import authority as authority  # noqa: PLC0414
+from test_publication_authorization import pair as pair  # noqa: PLC0414
 
 from biorag_repro.core.identity import ArtifactInput
 from biorag_repro.core.manifest import ArtifactRef, BuildInput

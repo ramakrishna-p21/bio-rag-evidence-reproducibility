@@ -177,7 +177,7 @@ def test_recorded_terminal_failures_complete_the_batch_as_recorded_missing(tmp_p
 
 
 def test_exhausted_retries_complete_the_batch_as_recorded_missing(tmp_path):
-    from test_c3_recovery import attempt
+    from test_finaltest_resume_recovery import attempt
 
     w, started = stopped(tmp_path)
     with pytest.raises(Stop):

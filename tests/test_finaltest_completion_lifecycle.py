@@ -23,8 +23,8 @@ from finaltest_start_support import (
     make_world,
     mock_environment,
 )
-from test_c2b_start import audit
-from test_c3_recovery import attempt
+from test_finaltest_resume_recovery import attempt
+from test_finaltest_start import audit
 from test_generation_config import to_toml
 
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX

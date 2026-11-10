@@ -19,7 +19,7 @@ from test_analysis_handoff_pairing import (
 )
 from test_analysis_rehearsal import rehearse
 from test_analysis_result import needs_r
-from test_phase8_matrix_rehearsal import ARM_CONFIG
+from test_matrix_rehearsal import ARM_CONFIG
 from test_r_input_fixture import CODE
 from test_release_index import derive
 from test_stage_b import Case, deliver
