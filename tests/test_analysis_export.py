@@ -978,8 +978,8 @@ def test_read_back_checks_the_inventory_against_the_rows(tmp_path, monkeypatch):
     _, _, build_ref = publish_table(sample_table(), tmp_path)
     honest = analysis_storage.make_inventory
 
-    def miscounted(rows, csv_ref, roster, roster_ref):
-        return honest(rows, csv_ref, roster, roster_ref).model_copy(update={"row_count": 99})
+    def miscounted(*args):
+        return honest(*args).model_copy(update={"row_count": 99})
 
     monkeypatch.setattr(analysis_storage, "make_inventory", miscounted)
     with pytest.raises(ValueError, match="inventory"):

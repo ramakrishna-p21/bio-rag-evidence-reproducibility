@@ -49,8 +49,9 @@ def generation_digest(result: GenerationResult) -> str:
     return sha256_bytes(serialize_project_json(result, GenerationResult))
 
 
-def _identity(item: BenchmarkItem, result: GenerationResult) -> dict[str, Any]:
+def _identity(item: BenchmarkItem, result: GenerationResult, rules: str) -> dict[str, Any]:
     return {
+        "scoring_rules": rules,
         "benchmark_version": item.benchmark_version,
         "corpus_version": item.corpus_version,
         "item_id": item.item_id,
@@ -65,8 +66,11 @@ def _identity(item: BenchmarkItem, result: GenerationResult) -> dict[str, Any]:
     }
 
 
-def score(item: BenchmarkItem, result: GenerationResult) -> StageCScore:
-    """The automatic score. Gold is checked first; a missing generation is not an error."""
+def score(item: BenchmarkItem, result: GenerationResult, rules: str = "v1") -> StageCScore:
+    """The automatic score. Gold is checked first; a missing generation is not an error.
+
+    `rules` selects the scoring-rule version and defaults to "v1"; v2 is never implied.
+    """
     check_result(item, result)
     if item.candidate_status != "accepted":
         v = Verdict("non_evaluable", "gold_unusable", "item is not an accepted benchmark item")
@@ -78,9 +82,9 @@ def score(item: BenchmarkItem, result: GenerationResult) -> StageCScore:
         v = Verdict("incorrect", "abstained", "completed abstention on an answerable item")
     else:
         assert result.answer is not None
-        v = score_answer(item.gold, result.answer)
+        v = score_answer(item.gold, result.answer, rules)
     return StageCScore(
-        **_identity(item, result),
+        **_identity(item, result, rules),
         status=v.status,
         basis="deterministic",
         reason=v.reason,
@@ -117,6 +121,7 @@ def adjudicate(
 
 def _identity_fields() -> list[str]:
     return [
+        "scoring_rules",
         "benchmark_version",
         "corpus_version",
         "item_id",
@@ -133,7 +138,7 @@ def _identity_fields() -> list[str]:
 
 def validate_score(value: StageCScore, item: BenchmarkItem, result: GenerationResult) -> None:
     """Scientific read-back: the record must be what scoring these inputs produces."""
-    automatic = score(item, result)
+    automatic = score(item, result, value.scoring_rules)
     if value.basis == "deterministic":
         expected = automatic
     else:
@@ -176,6 +181,10 @@ def dependencies(value: StageCScore) -> list[tuple[str, ArtifactRef]]:
     return items
 
 
+def transformation_id(value: StageCScore) -> str:
+    return f"stage_c_score_{value.scoring_rules}"
+
+
 def score_ref(value: StageCScore) -> ArtifactRef:
     """Identify a score by its bytes and the exact item, generation and output it came from."""
     digest = sha256_bytes(serialize_project_json(value, StageCScore))
@@ -184,7 +193,7 @@ def score_ref(value: StageCScore) -> ArtifactRef:
         inputs=[
             ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies(value)
         ],
-        transformation_id="stage_c_score_v1",
+        transformation_id=transformation_id(value),
         transformation_settings_sha256=None,
         output_sha256=digest,
         output_format="json",

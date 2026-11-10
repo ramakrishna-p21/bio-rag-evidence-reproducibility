@@ -172,6 +172,15 @@
       "title": "Schema Version",
       "type": "string"
     },
+    "scoring_rules": {
+      "default": "v1",
+      "enum": [
+        "v1",
+        "v2"
+      ],
+      "title": "Scoring Rules",
+      "type": "string"
+    },
     "status": {
       "enum": [
         "correct",

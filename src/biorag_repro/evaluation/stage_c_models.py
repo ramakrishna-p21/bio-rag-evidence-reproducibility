@@ -119,6 +119,8 @@ class StageCScore(Record):
     attempt_id: str
     generation_sha256: str
     output: ArtifactRef | None = None
+    # Omitted when "v1" so that v1 records keep their published bytes and identities.
+    scoring_rules: Literal["v1", "v2"] = Field("v1", exclude_if=lambda rules: rules == "v1")
     status: Status
     basis: Literal["deterministic", "reviewer"]
     reason: str | None = None

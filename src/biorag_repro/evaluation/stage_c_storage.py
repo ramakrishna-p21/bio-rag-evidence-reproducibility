@@ -10,7 +10,12 @@ from biorag_repro.core.storage import (
     read_project_json,
     serialize_project_json,
 )
-from biorag_repro.evaluation.stage_c import dependencies, score_ref, validate_score
+from biorag_repro.evaluation.stage_c import (
+    dependencies,
+    score_ref,
+    transformation_id,
+    validate_score,
+)
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 
 
@@ -30,7 +35,7 @@ def publish_score(
     manifest = BuildManifest(
         schema_version="1",
         inputs=[BuildInput(role=r, artifact=a) for r, a in dependencies(value)],
-        transformation_id="stage_c_score_v1",
+        transformation_id=transformation_id(value),
         outputs=[
             DerivedOutput(
                 artifact=ref,

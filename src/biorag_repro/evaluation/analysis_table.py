@@ -64,6 +64,21 @@ SCORING_REFERENCE = {
     "stage_c": "stage_c_score_v1",
     "table": "analysis_table_v1",
 }
+
+
+def scoring_reference(rules: str = "v1") -> dict[str, str]:
+    """The scoring identities a table was built under; v1 equals SCORING_REFERENCE."""
+    return SCORING_REFERENCE | {"stage_c": f"stage_c_score_{rules}"}
+
+
+def rules_of(reference: dict[str, str]) -> str:
+    """Scoring rules named by a table's reference; anything but v1 or v2 is refused."""
+    for rules in ("v1", "v2"):
+        if reference == scoring_reference(rules):
+            return rules
+    raise ValueError("table names unknown scoring identities")
+
+
 ROW_GRAIN = "one planned observation: phase, matrix_arm, item_id, condition, repeat_index"
 PAIRING = (
     "JATS and PDF_DOCLING rows pair on item_id, matrix_arm and repeat_index; primary_row marks "
@@ -106,6 +121,7 @@ class Table:
     rows: list[AnalysisRow]
     roster: PlannedRoster
     inputs: list[BuildInput] = field(default_factory=list)
+    stage_c_rules: str = "v1"
 
 
 def _check_evidence(obs: Observation, evidence: Evidence) -> None:
@@ -327,6 +343,9 @@ def _order(row: AnalysisRow) -> tuple[str, str, str, int, str]:
 
 
 def build_table(observations: list[Observation], roster: PlannedRoster) -> Table:
+    versions = {o.score.scoring_rules for o in observations if o.score is not None}
+    if len(versions) > 1:
+        raise ValueError(f"mixed Stage C scoring rules in one analysis table: {sorted(versions)}")
     built = [build_row(o) for o in observations]
     rows = sorted((r for r, _ in built), key=_order)
     unique: dict[tuple[str, str], BuildInput] = {}
@@ -337,7 +356,7 @@ def build_table(observations: list[Observation], roster: PlannedRoster) -> Table
                 raise ValueError("one artifact id names two different references")
     check_rows(rows)
     check_roster(rows, roster)
-    return Table(rows, roster, [unique[k] for k in sorted(unique)])
+    return Table(rows, roster, [unique[k] for k in sorted(unique)], next(iter(versions), "v1"))
 
 
 def roster_items_from_development_view(
@@ -550,7 +569,11 @@ def parse_csv(data: bytes) -> list[AnalysisRow]:
 
 
 def make_inventory(
-    rows: list[AnalysisRow], csv_ref: ArtifactRef, roster: PlannedRoster, roster_ref: ArtifactRef
+    rows: list[AnalysisRow],
+    csv_ref: ArtifactRef,
+    roster: PlannedRoster,
+    roster_ref: ArtifactRef,
+    stage_c_rules: str = "v1",
 ) -> AnalysisInventory:
     counts: dict[str, int] = defaultdict(int)
     open_rows = []
@@ -589,7 +612,7 @@ def make_inventory(
         items=roster.items,
         planned_observations=len(roster.coordinates()),
         executed_observations=sum(r.execution_status != "planned_not_executed" for r in rows),
-        scoring_reference=SCORING_REFERENCE,
+        scoring_reference=scoring_reference(stage_c_rules),
         columns=[
             ColumnSpec(name=n, type=_TYPES[n], nullable=n in _NULLABLE)  # type: ignore[arg-type]
             for n in COLUMNS

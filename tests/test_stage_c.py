@@ -432,7 +432,7 @@ def test_unusable_gold_is_not_scored_incorrect():
 
 def test_correct_answer_is_correct_whatever_evidence_did():
     """Stage C takes no Stage A/B argument: correctness cannot depend on them."""
-    assert list(inspect.signature(stage_c.score).parameters) == ["item", "result"]
+    assert list(inspect.signature(stage_c.score).parameters) == ["item", "result", "rules"]
     fields = set(StageCScore.model_fields) | set(GenerationResult.model_fields)
     assert not any("stage_a" in f or "stage_b" in f or "context" in f for f in fields)
     item = make_item(quantity("0.05"))
