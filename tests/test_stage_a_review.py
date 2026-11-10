@@ -564,3 +564,31 @@ def test_orientation_without_groups_differs_by_at_most_one(pairs):
     firsts = first_arms(sar.schedule([f"q{n:03d}" for n in range(pairs)], 3))
     jats = sum(r == "JATS" for r in firsts.values())
     assert abs(jats - (pairs - jats)) <= 1
+
+
+def flat_pdf_analysis(section):
+    from test_stage_a_pdf_scope import HEADING, SENTENCE, pdf_document, pdf_refs
+
+    blocks = [
+        ("title", HEADING, [(1, 50, 700, 570, 680)]),
+        ("paragraph", SENTENCE + ".", [(1, 50, 670, 570, 600)]),
+    ]
+    document = pdf_document(blocks)
+    item = make_item(
+        document,
+        [("subject", "F1-score"), ("relation", "coefficient of variation"), ("answer", "below 2%")],
+        pdf_refs=pdf_refs(section),
+    )
+    canonical = ArtifactRef(artifact_id="drv_c", logical_ref="c/c.json", sha256="e" * 64)
+    return sar.Analysis("R001", 7, sar.Source(item, document, Path("."), canonical)), HEADING
+
+
+def test_packet_shows_an_accepted_flat_pdf_heading_and_no_other():
+    analysis, heading = flat_pdf_analysis(None)
+    container = next(c for c, u in analysis.index.units.items() if "coefficient" in u[0].text)
+    assert not any(
+        "section title" in "".join(map(str, x)) for x in analysis.render_container(container)
+    )
+    analysis, heading = flat_pdf_analysis(heading)
+    text = "".join(str(part) for line in analysis.render_container(container) for part in line)
+    assert "section title" in text and heading in text

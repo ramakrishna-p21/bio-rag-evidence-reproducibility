@@ -38,7 +38,9 @@ def find(document, text):
     raise AssertionError(text)
 
 
-def scoped_judgment(document, title="Performance on the original networks", *, label="preserved"):
+def scoped_judgment(
+    document, title="Performance on the original networks", *, label="preserved", **changes
+):
     container, sentence = find(document, SENTENCE)
     _, heading = find(document, title)
     _, bound = find(document, "below 2%")
@@ -49,7 +51,7 @@ def scoped_judgment(document, title="Performance on the original networks", *, l
         ),
         component("answer", "below 2%", bound),
     ]
-    item = make_item(document, COMPONENTS)
+    item = make_item(document, COMPONENTS, **changes)
     placement = Placement(container_node_id=container, components=parts)
     result = judgment(item, document, label, sets=[SetLocus(set_index=0, placements=[placement])])
     return item, result
@@ -126,6 +128,52 @@ def test_flat_group_headings_do_not_count_as_a_native_section(scoped):
     item, result = scoped_judgment(flat)
     with pytest.raises(ValueError, match="not text in the named container"):
         validate_judgment(result, item, flat, CANONICAL)
+
+
+def labelled_refs(document, section):
+    """JATS and PDF references that carry a frozen benchmark section label."""
+    return {
+        "jats_refs": [
+            {
+                "artifact_id": document.source.artifact_id,
+                "source_sha256": document.source.sha256,
+                "paper_id": document.paper_id,
+                "xml_path": "/article/body/p[1]",
+                "source_text": "source",
+                "section": section,
+            }
+        ],
+        "pdf_refs": [
+            {
+                "artifact_id": "raw_pdf",
+                "source_sha256": "b" * 64,
+                "paper_id": document.paper_id,
+                "page": 1,
+                "source_text": "source",
+                "section": section,
+            }
+        ],
+    }
+
+
+def test_a_matching_benchmark_label_does_not_rescue_a_jats_heading_without_native_ancestry(scoped):
+    title = "Performance on the original networks"
+    paragraph, _ = find(scoped, SENTENCE)
+    parent = next(n for n in scoped.nodes if n.node_id == paragraph).parent_node_id
+
+    def flatten(data):
+        next(n for n in data["nodes"] if n["node_id"] == parent)["kind"] = "source_construct"
+
+    flat = mutate(scoped, flatten)
+    item, result = scoped_judgment(flat, title, **labelled_refs(flat, title))
+    with pytest.raises(ValueError, match="not text in the named container"):
+        validate_judgment(result, item, flat, CANONICAL)
+
+
+def test_jats_native_ancestors_do_not_depend_on_the_benchmark_label(scoped):
+    for title in ("Results", "Performance on the original networks"):
+        item, result = scoped_judgment(scoped, title, **labelled_refs(scoped, "Another section"))
+        validate_judgment(result, item, scoped, CANONICAL)
 
 
 def test_automatic_stage_a_does_not_use_section_titles(scoped):

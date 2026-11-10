@@ -38,7 +38,7 @@ from biorag_repro.evaluation.models import (
 from biorag_repro.evaluation.stage_a import (
     Index,
     _index,
-    _scope_titles,
+    _scope_titles_for,
     _spans,
     item_digest,
     locate,
@@ -268,7 +268,7 @@ class Analysis:
     def render_container(self, container: str) -> list[Line]:
         node = self.nodes[container]
         lines: list[Line] = [[S(f"[{self.handles[container]}] {node.kind}")]]
-        scope = _scope_titles(self.index, container)
+        scope = _scope_titles_for(self.index, container, self.source.item)
         titles = [t for t in self.index.units if t in scope]
         for title in titles:
             lines.append(

@@ -5,7 +5,9 @@ evidence of absence or corruption: those labels need a reviewer's judgment.
 """
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -13,7 +15,12 @@ from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.documents.chunking import discover_occurrences
-from biorag_repro.documents.models import CanonicalDocument, TableCell, TableData
+from biorag_repro.documents.models import (
+    CanonicalDocument,
+    CanonicalNode,
+    TableCell,
+    TableData,
+)
 from biorag_repro.evaluation.models import (
     ComponentLocus,
     Placement,
@@ -32,6 +39,21 @@ _NUMBER = re.compile(r"\d[\d.,]*")
 _SD_TAIL = re.compile(r"\s*±\s*\d+(?:\.\d+)?\s*")
 _MEAN_STATEMENT = re.compile(r"\bmean\s*±", re.IGNORECASE)
 _SUGGESTION_LIMIT = 5
+# Dashes and quotation marks differ between sources and Docling; minus signs, plus signs,
+# comparison symbols, Greek letters and super/subscripts carry scientific meaning and stay.
+_TYPOGRAPHY = {
+    **dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015"), "-"),
+    **dict.fromkeys(map(ord, "\u2018\u2019"), "'"),
+    **dict.fromkeys(map(ord, "\u201c\u201d"), '"'),
+    0xAD: None,  # soft hyphen
+}
+_Box = tuple[int, float, float, float, float]  # page, left, top, right, bottom
+_Layouts = dict[int, tuple[float, float, bool]]
+_TEXT_FLOW = {"title", "paragraph", "list_item"}
+_NOT_A_HEADING_PARENT = {"figure", "table", "table_cell", "caption"}
+_WIDE = 0.6  # box at least this fraction of the page text width spans the columns
+_COLUMN_SLACK = 0.08  # fraction of the text width allowed across the column midline
+_VERTICAL_TOLERANCE = 2.0  # points; Docling boxes are approximate
 
 
 class IneligibleItem(ValueError):
@@ -611,6 +633,180 @@ def _scope_titles(index: Index, container: str) -> set[str]:
     return titles
 
 
+def _heading_key(text: str) -> str:
+    """Comparison key for a heading: typography is ignored, scientific signs and symbols are not."""
+    text = "".join(
+        unicodedata.normalize("NFKC", c) if "\ufb00" <= c <= "\ufb06" else c for c in text
+    )
+    text = unicodedata.normalize("NFC", text).translate(_TYPOGRAPHY)
+    return " ".join(text.split()).casefold()
+
+
+def _boxes(node: CanonicalNode) -> list[_Box] | None:
+    """(page, left, top, right, bottom) per provenance entry; None if any entry is unusable."""
+    boxes = []
+    for entry in node.mapping.provenance:
+        box = entry.bbox
+        if (
+            entry.page_no is None
+            or box is None
+            or box.coord_origin != "BOTTOMLEFT"
+            or box.b > box.t
+        ):
+            return None
+        boxes.append((entry.page_no, box.l, box.t, box.r, box.b))
+    return boxes or None
+
+
+def _layouts(nodes: list[CanonicalNode]) -> _Layouts:
+    """Per page: text extent and whether the page's own text boxes demonstrate two columns."""
+    boxes: dict[int, list[tuple[float, float]]] = {}
+    for n in nodes:
+        if n.kind in _TEXT_FLOW and n.native_content_layer == "body":
+            for page, left, _, right, _ in _boxes(n) or []:
+                boxes.setdefault(page, []).append((left, right))
+    layouts = {}
+    for page, spans in boxes.items():
+        low, high = min(s[0] for s in spans), max(s[1] for s in spans)
+        middle, slack = (low + high) / 2, _COLUMN_SLACK * (high - low)
+        narrow = [s for s in spans if s[1] - s[0] < _WIDE * (high - low)]
+        two = any(s[1] <= middle + slack for s in narrow) and any(
+            s[0] >= middle - slack for s in narrow
+        )
+        layouts[page] = (low, high, two)
+    return layouts
+
+
+def _column(box: _Box, layouts: _Layouts) -> str | None:
+    """'full', 'left' or 'right'; a page without demonstrated columns is read as one column.
+
+    None when a box on a two-column page cannot be placed in a column.
+    """
+    low, high, two = layouts[box[0]]
+    width, middle = high - low, (low + high) / 2
+    if not two or box[3] - box[1] >= _WIDE * width:
+        return "full"
+    if box[3] <= middle + _COLUMN_SLACK * width:
+        return "left"
+    if box[1] >= middle - _COLUMN_SLACK * width:
+        return "right"
+    return None
+
+
+def _reads_forward(before: _Box, after: _Box, layouts: _Layouts) -> bool:
+    """Whether `after` can follow `before` in reading order on this page layout.
+
+    Only layouts this check can establish are accepted: a later page, the same column or a
+    full-width box lower on the page, or the left column followed by the right column.
+    """
+    if after[0] != before[0]:
+        return after[0] > before[0]
+    first, second = _column(before, layouts), _column(after, layouts)
+    if first is None or second is None:
+        return False
+    if first == second or "full" in (first, second):
+        return after[2] <= before[4] + _VERTICAL_TOLERANCE
+    return first == "left"
+
+
+def _flat_heading(
+    index: Index, container: str, item: BenchmarkItem, set_index: int | None = None
+) -> str | None:
+    """The flat PDF heading that may anchor scope for `container`, or None (fail closed).
+
+    The canonical PDF has no section ancestry, so nothing is inferred from a nearby title
+    alone. The heading must be the nearest preceding title in the same document, equal one
+    of the item's frozen PDF section labels (a check on existing canonical text, never a
+    source of text), and the page and column geometry along the reading chain from the
+    heading to the container must contradict nothing. Tables, tied or competing headings,
+    unpositioned or unmeasurable nodes, and a complete verbatim placement of the same
+    evidence elsewhere in the heading's extent all reject. Structural identity is not
+    scientific sufficiency; that stays with the reviewer.
+    """
+    document = index.document
+    if document.representation != "PDF_DOCLING":
+        return None
+    nodes = document.nodes
+    block = next(n for n in nodes if n.node_id == container)
+    if block.kind not in {"paragraph", "list_item"} or block.native_content_layer != "body":
+        return None
+    before = [
+        t
+        for t in nodes[: block.order]
+        if t.kind == "title" and t.native_content_layer != "furniture"
+    ]
+    if not before:
+        return None
+    heading = before[-1]
+    parent = next((n for n in nodes if n.node_id == heading.parent_node_id), None)
+    if (
+        heading.native_content_layer != "body"
+        or heading.native_label != "section_header"
+        or heading.node_id not in index.units
+        or (parent is not None and parent.kind in _NOT_A_HEADING_PARENT)
+    ):
+        return None
+    labels = {_heading_key(r.section) for r in item.pdf_refs if r.section}
+    if _heading_key(" ".join(u.text for u in index.units[heading.node_id])) not in labels:
+        return None
+    chain = [
+        n
+        for n in nodes[heading.order : block.order + 1]
+        if n.kind in _TEXT_FLOW and n.native_content_layer == "body"
+    ]
+    measured = [_boxes(n) for n in chain]
+    if any(m is None for m in measured) or any(
+        n.native_order_state == "unpositioned" for n in chain
+    ):
+        return None
+    entries = [e for m in measured if m for e in m]
+    layouts = _layouts(nodes)
+    if any(not _reads_forward(a, b, layouts) for a, b in pairwise(entries)):
+        return None
+    # Body text outside the chain that sits on a page the chain skips, before the heading on
+    # a later page, or after the block on an earlier page means the order is not established.
+    inside = {n.node_id for n in chain}
+    first_page, last_page = entries[0][0], entries[-1][0]
+    for n in nodes:
+        if n.node_id in inside or n.kind not in _TEXT_FLOW or n.native_content_layer != "body":
+            continue
+        pages = [e[0] for e in _boxes(n) or []]
+        if pages and (
+            any(first_page < page < last_page for page in pages)
+            or (n.order < heading.order and max(pages) > first_page)
+            or (n.order > block.order and min(pages) < last_page)
+        ):
+            return None
+    end = next(
+        (
+            n.order
+            for n in nodes[block.order + 1 :]
+            if n.kind == "title" and n.native_content_layer != "furniture"
+        ),
+        len(nodes),
+    )
+    for other in index.units:
+        position = next(n.order for n in nodes if n.node_id == other)
+        if other == container or not heading.order < position < end:
+            continue
+        for number in range(len(item.evidence_sets)) if set_index is None else [set_index]:
+            components: list[tuple[str, str]] = [
+                (c.role, c.text) for c in item.evidence_sets[number].components
+            ]
+            if _place(index, other, components, [], number, set()) is not None:
+                return None
+    return heading.node_id
+
+
+def _scope_titles_for(
+    index: Index, container: str, item: BenchmarkItem, set_index: int | None = None
+) -> set[str]:
+    """Native ancestor titles, plus the accepted flat PDF heading when there is one."""
+    titles = _scope_titles(index, container)
+    heading = _flat_heading(index, container, item, set_index)
+    return titles | {heading} if heading is not None else titles
+
+
 def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> None:
     for locus in judgment.sets:
         if locus.set_index >= len(item.evidence_sets):
@@ -626,8 +822,8 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                 for n in index.document.nodes
                 if n.node_id == placement.container_node_id
             )
+            scope = _scope_titles_for(index, placement.container_node_id, item, locus.set_index)
             for component in placement.components:
-                scope = _scope_titles(index, placement.container_node_id)
                 for occ_id in component.occurrence_ids:
                     owner = index.where.get(occ_id)
                     if owner == placement.container_node_id:
