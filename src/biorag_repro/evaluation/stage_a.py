@@ -29,6 +29,7 @@ from biorag_repro.evaluation.models import (
     StageAJudgment,
     Suggestion,
 )
+from biorag_repro.evaluation.surface import surface_problem
 from biorag_repro.retrieval.models import SourceOccurrence
 
 BLOCKS = {"paragraph", "list_item", "caption", "title", "formula", "figure", "reference"}
@@ -833,11 +834,19 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                         raise ValueError("occurrence is not text in the named container")
                 if component.equivalence_note is not None:
                     continue  # attested; the anchors are checked structurally below
+                surface = component.answer_surface
+                if surface is not None:
+                    if table:
+                        raise ValueError("an answer surface applies to prose containers only")
+                    others = [c.text for c in placement.components if c is not component]
+                    if problem := surface_problem(component.text, surface, others):
+                        raise ValueError(f"answer surface rejected: {problem}")
+                carried = surface.canonical_text if surface else component.observed_text
                 if component.form == "mean_sd":
                     if not table:
                         raise ValueError("mean ± SD applies to table cells only")
                     found = _mean_sd_matches(index, placement.container_node_id, component.text)
-                elif component.observed_text is None:
+                elif carried is None:
                     found = _component_matches(
                         index, placement.container_node_id, component.role, component.text, table
                     )
@@ -845,7 +854,7 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                     found = [
                         (u, s)
                         for u in index.units[placement.container_node_id]
-                        if (s := _spans(u.text, component.observed_text, bounded=False))
+                        if (s := _spans(u.text, carried, bounded=False))
                     ]
                 allowed = {i for unit, spans in found for i in unit.ids(spans)}
                 if not allowed or not set(component.occurrence_ids) <= allowed:

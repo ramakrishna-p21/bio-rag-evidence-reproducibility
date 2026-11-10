@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "AnswerSurface": {
+      "additionalProperties": false,
+      "description": "Reviewer attestation that canonical wording carries the benchmark answer.\n\nThis concerns benchmark wording only; it is not an ingestion alteration.",
+      "properties": {
+        "canonical_text": {
+          "title": "Canonical Text",
+          "type": "string"
+        },
+        "note": {
+          "title": "Note",
+          "type": "string"
+        }
+      },
+      "required": [
+        "canonical_text",
+        "note"
+      ],
+      "title": "AnswerSurface",
+      "type": "object"
+    },
     "ArtifactRef": {
       "additionalProperties": false,
       "properties": {
@@ -28,8 +48,19 @@
     },
     "ComponentLocus": {
       "additionalProperties": false,
-      "description": "Canonical text occurrences carrying one benchmark evidence component.\n\nA component is located in one of four ways, never mixed:\nverbatim (the benchmark text occurs in the canonical text); `observed_text`\n(a genuine source-to-canonical alteration, recorded for analysis);\n`equivalence_note` (reviewer-attested: the benchmark descriptor is a\nparaphrase and the occurrences are the structural anchors that carry it);\nor `form=\"mean_sd\"` (the answer is the leading mean of a `mean ± SD` cell).\nOnly the first is machine-verified text identity.",
+      "description": "Canonical text occurrences carrying one benchmark evidence component.\n\nA component is located in one of five ways, never mixed:\nverbatim (the benchmark text occurs in the canonical text); `observed_text`\n(a genuine source-to-canonical alteration, recorded for analysis);\n`equivalence_note` (reviewer-attested: the benchmark descriptor is a\nparaphrase and the occurrences are the structural anchors that carry it);\n`form=\"mean_sd\"` (the answer is the leading mean of a `mean ± SD` cell);\nor `answer_surface` (reviewer-attested: the canonical wording is the benchmark answer\nstated differently; the canonical text is verified, the equivalence is not).\nOnly the first is machine-verified text identity.",
       "properties": {
+        "answer_surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnswerSurface"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "equivalence_note": {
           "anyOf": [
             {

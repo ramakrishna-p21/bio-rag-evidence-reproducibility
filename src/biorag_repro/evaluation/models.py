@@ -29,15 +29,33 @@ SuggestionKind = Literal[
 ]
 
 
+class AnswerSurface(Record):
+    """Reviewer attestation that canonical wording carries the benchmark answer.
+
+    This concerns benchmark wording only; it is not an ingestion alteration.
+    """
+
+    canonical_text: str
+    note: str
+
+    @model_validator(mode="after")
+    def nonblank(self) -> Self:
+        if not self.canonical_text.strip() or not self.note.strip():
+            raise ValueError("an answer surface needs canonical text and a reviewer note")
+        return self
+
+
 class ComponentLocus(Record):
     """Canonical text occurrences carrying one benchmark evidence component.
 
-    A component is located in one of four ways, never mixed:
+    A component is located in one of five ways, never mixed:
     verbatim (the benchmark text occurs in the canonical text); `observed_text`
     (a genuine source-to-canonical alteration, recorded for analysis);
     `equivalence_note` (reviewer-attested: the benchmark descriptor is a
     paraphrase and the occurrences are the structural anchors that carry it);
-    or `form="mean_sd"` (the answer is the leading mean of a `mean ± SD` cell).
+    `form="mean_sd"` (the answer is the leading mean of a `mean ± SD` cell);
+    or `answer_surface` (reviewer-attested: the canonical wording is the benchmark answer
+    stated differently; the canonical text is verified, the equivalence is not).
     Only the first is machine-verified text identity.
     """
 
@@ -47,12 +65,13 @@ class ComponentLocus(Record):
     observed_text: str | None = None  # None: the benchmark text occurs verbatim
     equivalence_note: str | None = None
     form: Literal["mean_sd"] | None = None
+    answer_surface: AnswerSurface | None = None
 
     @model_serializer(mode="wrap")
     def omit_unused_attestation(self, handler):  # type: ignore[no-untyped-def]
         # Records written before these fields existed keep their exact bytes and identity.
         data = handler(self)
-        for name in ("equivalence_note", "form"):
+        for name in ("equivalence_note", "form", "answer_surface"):
             if data.get(name) is None:
                 data.pop(name, None)
         return data
@@ -67,8 +86,14 @@ class ComponentLocus(Record):
             raise ValueError("duplicate occurrence in component locus")
         if self.equivalence_note is not None and not self.equivalence_note.strip():
             raise ValueError("reviewer equivalence needs an explanation")
-        if sum(x is not None for x in (self.observed_text, self.equivalence_note, self.form)) > 1:
+        located = (self.observed_text, self.equivalence_note, self.form, self.answer_surface)
+        if sum(x is not None for x in located) > 1:
             raise ValueError("a component is verbatim, altered, equivalent or mean ± SD, not mixed")
+        if self.answer_surface is not None:
+            if self.role != "answer":
+                raise ValueError("an answer surface applies to the answer component only")
+            if self.answer_surface.canonical_text == self.text:
+                raise ValueError("an answer surface must differ from the benchmark answer")
         if self.equivalence_note is not None and self.role == "answer":
             raise ValueError("an answer value is never accepted as a reviewer equivalence")
         if self.form is not None and self.role != "answer":
@@ -77,7 +102,12 @@ class ComponentLocus(Record):
 
     @property
     def verbatim(self) -> bool:
-        return self.observed_text is None and self.equivalence_note is None and self.form is None
+        return (
+            self.observed_text is None
+            and self.equivalence_note is None
+            and self.form is None
+            and self.answer_surface is None
+        )
 
 
 class Placement(Record):
