@@ -1,7 +1,7 @@
 """Execution driver: dry run, mock or smoke execution, anchoring and verification.
 
 The driver chains the pieces that already exist: the authorized roster built from verified
-Phase 5 contexts, the run store, a configured backend, the completion manifest, an anchor
+retrieval contexts, the run store, a configured backend, the completion manifest, an anchor
 kept outside the run, and read-back verification. It is generic: nothing in it knows which
 items or papers are run.
 
@@ -97,7 +97,7 @@ class DriverPlan:
     view_record_sha256: str
     scope: Path
     repository: Path  # checkout whose git state each environment record captures
-    context_sources: Path | None = None  # serialized Phase 5 context sources (generation.sources)
+    context_sources: Path | None = None  # serialized context sources (generation.sources)
     context_sources_sha256: str | None = None  # their pinned hash; required with the file
 
 

@@ -8,7 +8,7 @@ counter; an interrupted attempt keeps counting toward the retry limit.
 Two entry points, as in `start.py`.
 
 `resume_batch(data_root, report_sha256, repo=..., batch_id=...)` is the production route. It
-calls the Phase 9 guard and then refuses (`PRODUCTION_RESUME` is False). After genesis the
+calls the readiness guard and then refuses (`PRODUCTION_RESUME` is False). After genesis the
 real G13 gate is unavailable, so the guard refuses first; no real batch can exist to resume.
 
 `_resume_with` is the orchestration, reached by tests with a fixture assessor. It accepts

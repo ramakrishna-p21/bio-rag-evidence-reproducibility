@@ -1,4 +1,4 @@
-"""P10-C3: the verifier's view of resume records, and interruption at each publication.
+"""The verifier's view of resume records, and interruption at each publication.
 
 Every tampering test starts from a real synthetic resume and changes one stored fact, so the
 expected refusal is the one check that fact is protected by.

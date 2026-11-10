@@ -1,6 +1,6 @@
 """Scientific continuity between an initial and a later readiness assessment of one batch.
 
-The Phase 9 guard compares one stored report with one live evaluation. It does not compare two
+The readiness guard compares one stored report with one live evaluation. It does not compare two
 authorizations with each other, so a seed approval, configuration or benchmark that changed
 between a batch's first authorization and a resume would pass if the later report were READY.
 This module is that comparison. It is a pure function of two reports and two batch scopes; it

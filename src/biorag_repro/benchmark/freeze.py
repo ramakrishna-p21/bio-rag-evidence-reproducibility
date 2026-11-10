@@ -1,4 +1,4 @@
-"""Final benchmark publication checks; Phase 3 Pass B calls these after code commit."""
+"""Final benchmark publication checks, called by the release process after the code commit."""
 
 import subprocess
 from pathlib import Path

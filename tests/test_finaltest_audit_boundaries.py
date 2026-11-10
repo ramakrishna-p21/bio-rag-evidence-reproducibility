@@ -1,4 +1,4 @@
-"""P10-C2A adds contracts and a read-only audit: no execution path, no authority."""
+"""The audit layer adds contracts and a read-only audit: no execution path, no authority."""
 
 import ast
 import types
@@ -103,7 +103,7 @@ def test_registry_events_are_not_activated():
         "batch_materialized",
         "batch_closed_incomplete",
     }
-    # P10-C2B publishes two rehearsal events, P10-C3 a third and P10-C4 the last; only the
+    # Rehearsal start publishes two events, resume a third and completion the last; only the
     # rehearsal-gated modules mention them
     assert layout.REHEARSAL_EVENTS == (
         "batch_inputs_bound",

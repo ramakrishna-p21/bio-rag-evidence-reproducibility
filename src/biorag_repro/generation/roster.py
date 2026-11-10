@@ -2,7 +2,7 @@
 
 Membership comes from the published development-only benchmark view and the declared
 scope, never from the caller's list of contexts. Every retrieval context is read back
-through the Phase 5 reader, so its text, token count and lineage are recomputed from the
+through the context reader, so its text, token count and lineage are recomputed from the
 independent selection; the generator input is rendered from that exact text and nothing
 is truncated. A closed-book roster carries no context at all.
 """

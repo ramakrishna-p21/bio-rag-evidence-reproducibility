@@ -1,4 +1,4 @@
-"""P10-C4: all five frozen arms through start, interruption, resume and completion.
+"""All five frozen arms through start, interruption, resume and completion.
 
 Two separate synthetic campaigns, each in one disposable rehearsal root with the mock backend.
 Expected keys and counts come from the campaign planner and the frozen matrix, never from the

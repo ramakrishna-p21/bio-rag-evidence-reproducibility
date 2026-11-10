@@ -1,4 +1,4 @@
-"""P10-C1 adds contracts only: no execution path, no authority, no change to the real project."""
+"""Contracts only: no execution path, no authority, no change to the real project."""
 
 import ast
 import hashlib
@@ -33,7 +33,7 @@ def names_defined(tree: ast.AST) -> set[str]:
 
 
 def test_no_execution_entrypoint_exists():
-    # P10-C2B defines start_batch and P10-C3 resume_batch; each always refuses and exists only
+    # The start path defines start_batch and the resume path resume_batch; each always refuses and exists only
     # in its own module (finaltest/start.py, finaltest/resume.py)
     forbidden = {"create_final_test", "open_final_test"}
     for path in SRC.rglob("*.py"):

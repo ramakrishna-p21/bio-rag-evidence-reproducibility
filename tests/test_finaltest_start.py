@@ -1,4 +1,4 @@
-"""P10-C2B: the guard-connected start of a rehearsal batch, end to end, on synthetic data.
+"""The guard-connected start of a rehearsal batch, end to end, on synthetic data.
 
 Every test runs on a disposable rehearsal root with fixture readiness evidence, the mock
 backend and invented protected inputs. Negative tests assert the exception type or code of the

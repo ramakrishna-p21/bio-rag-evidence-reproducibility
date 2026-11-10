@@ -6,7 +6,7 @@ The plan is derived from the verified benchmark release and the frozen matrix
 matrix, the seed registry and the roster; they are passed to the key function unchanged.
 
 A plan is structural. It names candidate configuration identities per matrix arm and cannot
-authorize anything: authorization exists only as the Phase 9 guard's result at execution time.
+authorize anything: authorization exists only as the readiness guard's result at execution time.
 Only identifiers and split metadata are read from the benchmark items; question text, gold
 answers and evidence are never parsed into a record here.
 """

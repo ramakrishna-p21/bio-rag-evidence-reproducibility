@@ -1,4 +1,4 @@
-"""P10-C4: the verifier's view of `batch_completed`, its record and its authorization.
+"""The verifier's view of `batch_completed`, its record and its authorization.
 
 Each tampering test starts from a real synthetic completion and changes one stored fact, so the
 expected problem is the one check that fact is protected by. Field-level checks call the

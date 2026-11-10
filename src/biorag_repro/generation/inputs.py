@@ -1,7 +1,7 @@
 """Persisted generator inputs.
 
 A record keeps the exact rendered text, the token ids that text becomes, the pinned
-tokenizer, the prompt and configuration identities and the Phase 5 context it was built
+tokenizer, the prompt and configuration identities and the retrieval context it was built
 from, for one observation. It is published once under its own hash and verified on every
 read. Storing a record says what the generator is meant to receive; whether a call
 received it is shown only by an execution receipt.
@@ -34,7 +34,7 @@ class GeneratorInputRecord(Record):
     schema_version: str = "1"
     observation_key: ObservationKey
     rendered: RenderedInput
-    context: ArtifactRef | None  # the Phase 5 context record; None only in the closed-book arm
+    context: ArtifactRef | None  # the context record; None only in the closed-book arm
     tokenizer: TokenizerPin
     input_token_ids: list[int]
 

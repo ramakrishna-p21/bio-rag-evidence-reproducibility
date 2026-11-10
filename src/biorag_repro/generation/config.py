@@ -131,6 +131,6 @@ def resolve_generator_config(raw_toml: bytes) -> ResolvedConfiguration[Generator
 
 
 def check_retrieval_reference(config: GeneratorConfiguration, phase5_sha256: str | None) -> None:
-    """The configuration must name the Phase 5 retrieval configuration actually used."""
+    """The configuration must name the retrieval configuration actually used."""
     if config.retrieval_config_sha256 != phase5_sha256:
         raise ValueError("retrieval configuration does not match the one the generator names")

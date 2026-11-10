@@ -1,4 +1,4 @@
-"""P10-C3: attempt recovery, evidence integrity, sessions, and the stopped-worker rule.
+"""Attempt recovery, evidence integrity, sessions, and the stopped-worker rule.
 
 The retry limit of the synthetic configuration is two attempts per observation. A run
 directory is damaged only after a real interrupted run, so each refusal names the check that the

@@ -3,7 +3,7 @@
 `ProtectedInputs` is a narrow interface. In this version nothing in `src/` implements it for
 real final-test content: the only implementations are synthetic and live in the tests, and
 the public start path stops at the readiness guard before it could call one. A future reader
-of the real benchmark items and the Phase 5 contexts has to be written, reviewed and enabled
+of the real benchmark items and the retrieval contexts has to be written, reviewed and enabled
 separately.
 
 `build_rosters` renders every observation with the same function the development roster uses

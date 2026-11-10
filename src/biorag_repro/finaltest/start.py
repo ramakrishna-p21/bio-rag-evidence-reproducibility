@@ -4,7 +4,7 @@ Two entry points, deliberately different in kind.
 
 `start_batch(data_root, report_sha256, repo=..., matrix_arm=...)` is the production route. It
 takes no policy, evaluator, authorization object, flag or path other than the data root and
-the repository. It calls the Phase 9 guard (`authorize_final_test`) and then refuses:
+the repository. It calls the readiness guard (`authorize_final_test`) and then refuses:
 `PRODUCTION_START` is False and no production request builder exists, so even a guard result
 of READY ends in `ProductionStartRefused` before any file is written, any lock taken or any
 protected input read. Today the guard itself refuses first (no approval is set, G13 is
@@ -12,7 +12,7 @@ unavailable), and that refusal is what callers see.
 
 `_start_with` is the orchestration itself, written once. It takes an `assess` callable and an
 open `Session`, accepts rehearsal roots only (`allowed_root_kinds`), and is used by tests with
-a fixture assessor built on the existing Phase 9 test seam. The same refusal of root kinds is
+a fixture assessor built on the existing readiness test seam. The same refusal of root kinds is
 made again by every publisher it calls (`registry`, `finaltest_store`) and by the verifier, so
 removing the check here does not open a final-test root. None of this is a security boundary
 against code that can edit this package: it makes the intended route the only convenient

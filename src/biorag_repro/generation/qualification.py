@@ -6,7 +6,7 @@ here and nothing is inferred. Each series says whether it was observed, derived 
 recorded observations, unavailable, or not applicable, and each rate keeps its denominator.
 
 The report describes how a run behaved. It does not score answers, does not say whether any
-answer is correct, and never says that a Phase 7 gate is met. Failed attempts are operational
+answer is correct, and never says that a qualification gate is met. Failed attempts are operational
 facts, kept apart from answers that parsed but may be scientifically wrong.
 
 Two durations are kept apart. The attempt duration is the difference between the wall-clock

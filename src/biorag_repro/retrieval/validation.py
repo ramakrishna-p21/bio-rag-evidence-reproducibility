@@ -29,7 +29,7 @@ class CanonicalAuthority:
     """Caller-selected evidence, not a deserializable approval or execution proof.
 
     The caller must select reviewed evidence outside the submitted input record.
-    Existing Phase 4 validation supplies the frozen release/config/native checks.
+    Existing source validation supplies the frozen release/config/native checks.
     """
 
     corpus_root: Path

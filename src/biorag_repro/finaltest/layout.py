@@ -8,7 +8,7 @@ directory. Later passes add batches below it; none exist here.
         registry/NNNNNN.json registry events, one file each
         locks/registry.lock  empty file used only for flock
 
-    batches/<id>/manifest.json   structural batch record (one per matrix arm), added by P10-B
+    batches/<id>/manifest.json   structural batch record (one per matrix arm), added with the batch layout
 
 Reserved for later passes and neither created nor permitted yet: `anchors/`, `runs/`.
 
@@ -53,7 +53,7 @@ OPERATIONAL_EVENTS: Final = (
     "batch_materialized",
     "batch_closed_incomplete",
 )
-# Published only into rehearsal roots (P10-C2B). In a final-test root the verifier treats them
+# Published only into rehearsal roots. In a final-test root the verifier treats them
 # like any other event that nothing is authorized to publish.
 REHEARSAL_EVENTS: Final = (
     "batch_inputs_bound",
@@ -319,7 +319,7 @@ class HeadWitness(FrozenRecord):
 class HeadCheckpoint(FrozenRecord):
     """A latest-head claim from a source the caller trusts independently of the root.
 
-    P10-B defines the shape and checks continuity against it, but no source in this repository
+    The batch layout defines the shape and checks continuity against it, but no source in this repository
     can establish that a checkpoint is the latest authorized head, so a checkpoint never makes
     a history authoritative.
     """

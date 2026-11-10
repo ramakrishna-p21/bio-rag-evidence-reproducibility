@@ -1,4 +1,4 @@
-"""P10-C3: what the resume code may and may not touch, checked on the source."""
+"""What the resume code may and may not touch, checked on the source."""
 
 import ast
 from pathlib import Path

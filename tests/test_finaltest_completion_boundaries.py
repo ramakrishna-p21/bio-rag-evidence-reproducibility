@@ -1,4 +1,4 @@
-"""P10-C4: what the completion code may and may not do, checked on the source and the routes."""
+"""What the completion code may and may not do, checked on the source and the routes."""
 
 import ast
 import inspect

@@ -1,4 +1,4 @@
-"""Batch manifest, authorization citation and the boundaries P10-B must not cross."""
+"""Batch manifest, authorization citation and the boundaries the batch layout must not cross."""
 
 import ast
 import hashlib

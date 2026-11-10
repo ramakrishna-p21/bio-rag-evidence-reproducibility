@@ -157,7 +157,7 @@ def test_only_the_readiness_package_refers_to_the_guard():
                 names = [a.name for a in node.names]
             if any("readiness.guard" in n or n == "guard" for n in names):
                 users.append(str(path.relative_to(SRC)))
-    # P10-C2B: finaltest/start.py is the one module that calls the guard (and always refuses
+    # finaltest/start.py is the one module that calls the guard (and always refuses
     # afterwards in production); any other user is an unreviewed integration
     assert set(users) == {"finaltest/start.py"}, f"{users} use the authorization guard"
 

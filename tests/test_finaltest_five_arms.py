@@ -1,4 +1,4 @@
-"""P10-C2C: all five frozen matrix arms through the guarded rehearsal lifecycle.
+"""All five frozen matrix arms through the guarded rehearsal lifecycle.
 
 Synthetic content, disposable rehearsal roots, mock backend. Expected counts and keys come from
 the campaign planner and the frozen matrix, not from the code under test.

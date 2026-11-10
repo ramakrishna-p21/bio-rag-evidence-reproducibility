@@ -1,4 +1,4 @@
-"""P10-C4: completion eligibility, authorization, publication and read-back of one batch.
+"""Completion eligibility, authorization, publication and read-back of one batch.
 
 Synthetic rehearsal roots, mock backend. Expected keys come from the campaign planner, never
 from the code under test. Every refusal test compares the whole storage before and after.

@@ -1,4 +1,4 @@
-"""Frozen paired-source lookup, Phase 4 builds, and lineage validation."""
+"""Paired-source lookup, JATS and PDF evidence builds, and lineage validation."""
 
 import json
 import re

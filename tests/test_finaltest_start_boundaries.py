@@ -1,4 +1,4 @@
-"""P10-C2B boundaries: the read-only view, the guarded store, production refusal, development.
+"""Boundaries of the start path: the read-only view, the guarded store, production refusal, development.
 
 These tests classify every writable path of `RunStore`, so a method added later fails here
 until someone decides which side of the line it is on.

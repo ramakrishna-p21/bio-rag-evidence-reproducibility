@@ -8,7 +8,7 @@ regenerated. Counting files proves nothing: a key is accounted for only if the s
 for it carries exactly the coordinates and run identity that produce that key.
 
 Trust limits: the result is only as good as the verified store behind it and the registry head,
-which P10-B cannot independently establish; `limits` says so whenever it applies.
+which the batch layout cannot independently establish; `limits` says so whenever it applies.
 """
 
 from collections import Counter

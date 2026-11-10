@@ -1,4 +1,4 @@
-"""Assemble or scientifically validate explicitly selected Phase 5 evidence."""
+"""Assemble or scientifically validate explicitly selected evidence contexts."""
 
 import argparse
 from pathlib import Path

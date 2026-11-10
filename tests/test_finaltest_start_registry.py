@@ -1,4 +1,4 @@
-"""Rehearsal-only registry events and the verifier's view of them (P10-C2B).
+"""Rehearsal-only registry events and the verifier's view of them.
 
 A final-test root must be judged exactly as before: the two new event types and the new files
 stay unauthorized artifacts there. A rehearsal root accepts them only when every cited file

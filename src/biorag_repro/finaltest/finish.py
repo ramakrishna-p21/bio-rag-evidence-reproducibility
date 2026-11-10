@@ -3,7 +3,7 @@
 Two entry points, as in `start.py` and `resume.py`.
 
 `complete_batch(data_root, report_sha256, repo=..., batch_id=...)` is the production route. It
-calls the Phase 9 guard and then refuses (`PRODUCTION_COMPLETION` is False).
+calls the readiness guard and then refuses (`PRODUCTION_COMPLETION` is False).
 
 `complete_in_session` and `complete_in_new_session` are reached by tests with a fixture assessor
 and accept rehearsal roots only. A completion is a scientifically consequential publication, so

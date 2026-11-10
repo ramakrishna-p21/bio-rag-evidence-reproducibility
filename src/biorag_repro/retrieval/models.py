@@ -1,4 +1,4 @@
-"""Versioned Phase 5 interfaces; validation does not execute scientific transforms."""
+"""Versioned retrieval and context interfaces; validation does not execute scientific transforms."""
 
 from typing import Annotated, Literal, Self
 

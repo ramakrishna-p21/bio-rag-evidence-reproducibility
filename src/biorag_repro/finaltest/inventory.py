@@ -10,7 +10,7 @@ nothing and raises `AuthorityNotEstablished`.
 
 Everything else is classified into the history codes fixed by `readiness.models`, using
 `readiness.history.classify_history`: the first match of incomplete, conflicting, unauthorized
-or unverified, otherwise `no_prior_final_test_execution`. P10-A has no batches, so any entry
+or unverified, otherwise `no_prior_final_test_execution`. A root with no batches has none, so any entry
 outside the genesis files is unauthorized.
 
 Limits. Entries are listed and read through no-follow descriptors, which guards against
@@ -147,7 +147,7 @@ def _enters(path: str, deep: bool) -> bool:
         path
     ):
         return True
-    if not deep:  # final-test roots: nothing beyond the P10-B layout is looked into
+    if not deep:  # final-test roots: nothing beyond the batch layout is looked into
         return False
     if path == layout.RUNS_DIR:  # the run directories are listed, never entered
         return True

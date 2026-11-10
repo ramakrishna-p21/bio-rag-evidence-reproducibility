@@ -109,7 +109,7 @@ class Observation:
     condition: Condition
     repeat_index: int
     resolved_config_sha256: str  # full observation identity (REPRODUCIBILITY_SPEC section 2)
-    retrieval_config_sha256: str | None = None  # Phase 5 retrieval/context identity it contains
+    retrieval_config_sha256: str | None = None  # retrieval/context identity it contains
     result: GenerationResult | None = None
     score: StageCScore | None = None
     evidence: Evidence | None = None

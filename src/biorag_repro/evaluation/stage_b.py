@@ -45,7 +45,7 @@ LOSS_ORDER: list[Reason] = [
 
 @dataclass(frozen=True)
 class Inputs:
-    """Records the caller obtained through the authoritative Phase 5 readers."""
+    """Records the caller obtained through the authoritative context readers."""
 
     item: BenchmarkItem
     document: CanonicalDocument

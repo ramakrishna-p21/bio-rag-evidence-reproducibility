@@ -2,7 +2,7 @@
 
 An inventory row is only an index. Every judgment is read back through its authoritative
 reader, which recomputes its validity from the benchmark item, the canonical document and
-(for Stage B) the Phase 5 records; the row's label, status, reviewer and timestamp must then
+(for Stage B) the context records; the row's label, status, reviewer and timestamp must then
 agree with the stored record. Nothing is invented for a missing judgment:
 
 * no Stage A row            -> no entry (the caller sees `None`, a planned observation
@@ -164,9 +164,9 @@ def read_evidence(
 
 
 class SourceInputs:
-    """`document_for` and `inputs_for` built from the Phase 5 context sources of a roster.
+    """`document_for` and `inputs_for` built from the context sources of a roster.
 
-    Every record is re-read through the authoritative Phase 5 readers; the sources only say
+    Every record is re-read through the authoritative context readers; the sources only say
     where to look. Designated-paper sources are supported: Stage B inputs name one chunk set.
     """
 

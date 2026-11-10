@@ -1,4 +1,4 @@
-"""P10-C3: authorized resume of an interrupted rehearsal batch, on synthetic data.
+"""Authorized resume of an interrupted rehearsal batch, on synthetic data.
 
 The positive path uses disposable rehearsal roots, fixture readiness evidence and the mock
 backend. Negative tests name the exact refusal and compare the storage before and after.

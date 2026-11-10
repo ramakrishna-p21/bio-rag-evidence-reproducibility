@@ -1,8 +1,8 @@
-"""Serialized description of the Phase 5 contexts a generator roster is built from.
+"""Serialized description of the retrieval contexts a generator roster is built from.
 
 A spec names published artifacts and the roots they are read from; it contains no scientific
 content. The question of each query is taken from the development-only benchmark view, and
-the roster builder still recomputes every context through the Phase 5 reader, so a wrong
+the roster builder still recomputes every context through the context reader, so a wrong
 hash or a substituted artifact stops the run instead of being repaired here.
 
 Only BM25 sources can be described. Dense retrieval needs an encoder object that a file
@@ -206,7 +206,7 @@ def load_context_sources(
 
     Relative paths are relative to the spec file. Beyond the development view and the (hash-checked) chunk-set record that
     names each entry's representation, nothing is read here; the roster builder verifies
-    the rest through Phase 5.
+    the rest through the context reader.
     """
     try:
         raw = path.read_bytes()
