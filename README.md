@@ -1,47 +1,137 @@
-# Bioinformatics RAG evidence reproducibility
+# Evidence reproducibility in retrieval-augmented scientific question answering
 
-Research software for evaluating how two representations of the same frozen publication affect scientific evidence delivery and answer correctness. The source corpus, benchmark, and later run artifacts are versioned separately. The benchmark is built from original JATS and original PDFs before experimental PDF ingestion.
+Research software for studying how alternative representations of the same scientific publication
+affect retrieval-augmented question answering in bioinformatics.
 
-## Local setup
+## Research objective
 
-Python 3.11 is required. Install the project and development tools with `python -m pip install -e '.[dev,benchmark,bm25,dense]'`. PyMuPDF is used only to locate evidence in original PDFs for human review.
+A retrieval-augmented system never sees a publication itself. It sees one representation of it:
+structured text from the publisher's JATS XML, or text recovered from the published PDF by a layout
+parser. This project asks whether the choice of representation changes
 
-## Benchmark construction
+- whether the evidence needed to answer a question is preserved in the representation;
+- whether retrieval delivers that evidence in the context supplied to the generator;
+- whether the generated answer is scientifically correct;
+- whether those answers are reproducible across repeated runs.
 
-`scripts/benchmark.py` has `split`, `discover`, `review-pack`, `pdf-search`, `validate`, and `audit-draw` commands. Each command requires an external data root and the **explicit path and SHA-256** of the selected corpus release record. `split` also requires a hash-checked related-paper record. `discover` accepts a paper in the frozen split and writes source-located leads and an unfilled review worksheet. `review-pack` combines selected JATS leads, flags, and PDF search hints. `pdf-search` returns page and region hints; a reviewer must inspect the original PDF before an item is accepted. `validate` checks typed items and their original-source locations. `audit-draw` samples accepted item IDs and is intended for the full proposed benchmark before final freeze.
+Each question is graded against the original source, and each result stays traceable through the chain
 
-The frozen source files and production benchmark working artifacts remain outside Git. Candidate leads and search hits are never gold answers or source-equivalence decisions. The 10/40 paper split remains fixed after its prospective seeded assignment. No Docling, retrieval, or generator output is used to select benchmark items.
+```
+source file → ingestion → canonical document → chunks → ranked retrieval
+            → supplied context → generated answer → evaluation → statistical analysis
+```
 
-## Checks
+by content hashes recorded in build manifests.
 
-Run `python -m pytest -q`, `python -m ruff format --check .`, `python -m ruff check .`, `python -m mypy src/biorag_repro`, and `python scripts/export_schemas.py --check` for the current code and schema checks.
+## Design
 
-Dense inference uses a verified local `BAAI/bge-base-en-v1.5` snapshot and CPU float32 execution. For the CPU dependency build, install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` before installing the project extras. Select the pinned snapshot directory with `BIORAG_BGE_ROOT` when running tests to include actual model checks. Without that setting, the model test is skipped and model behavior remains unverified by that test run. Model files and scientific data are acquired separately and kept outside Git.
+| Stage | What it does |
+| --- | --- |
+| Ingestion | Converts JATS XML and PDF (via Docling) into one canonical document schema, keeping source locations. |
+| Chunking | Splits canonical documents into 192- or 384-token chunks, counted with a pinned construction tokenizer. |
+| Retrieval | BM25 and dense retrieval (`BAAI/bge-base-en-v1.5`) over the chunks. |
+| Context | Assembles whole chunks from the top 20 ranked results into the generator input, stopping before a 2,048-token (Qwen3 tokenizer) evidence budget would be exceeded. |
+| Generation | Runs a Qwen3-8B generator with recorded attempts, seeds and exact supplied context. |
+| Evaluation | Stage A: evidence preserved in the representation. Stage B: evidence delivered in the supplied context. Stage C: answer correctness. |
+| Analysis | An R analysis (whole-paper bootstrap, cluster-robust inference) reads a validated table exported by Python. Python remains authoritative for scoring. |
 
-Evidence contexts use whole chunks from the original top 20 ranked results and
-stop at the first eligible chunk that exceeds 2,048 Qwen evidence tokens.
-Install the `context` extra for tokenizer support; assets must be acquired
-separately at the approved exact revision. No generator weights are required.
+### Repository layout
 
-`python -m biorag_repro.retrieval.cli --help` (or `biorag-context --help` after installation) exposes context assembly and scientific
-read-back. Both operations require explicit selection JSON (the `Selection`
-fields in `retrieval/context.py`), configuration reference/root, local tokenizer
-assets, and output root. BGE read-back additionally requires its verified model
-assets. Selected chunk, index and ranking artifacts pass their existing scientific
-readers; this command does not construct or replace those upstream artifacts.
-Output publication refuses to overwrite existing files. These development
-operations do not establish generator qualification or final-test readiness.
+| Path | Contents |
+| --- | --- |
+| `src/biorag_repro/core` | Hashing, identities, build manifests, immutable file publication. |
+| `src/biorag_repro/corpus`, `benchmark` | Corpus manifest and benchmark construction and validation. |
+| `src/biorag_repro/documents` | JATS and PDF ingestion, canonical documents, chunking. |
+| `src/biorag_repro/retrieval` | BM25, dense retrieval, context assembly. |
+| `src/biorag_repro/generation` | Generator configuration, prompts, run and attempt records, environment checks. |
+| `src/biorag_repro/evaluation` | Stage A, B and C evaluation and the analysis handoff. |
+| `src/biorag_repro/readiness`, `finaltest` | Checks that gate protected evaluation runs. |
+| `analysis/` | R analysis, locked with `renv`. |
+| `schemas/` | JSON Schemas generated from the persistent models. |
+| `configs/` | Ingestion and environment configuration. |
+| `scripts/` | Command-line entry points for corpus, benchmark, ingestion and review work. |
+| `tests/` | Python test suite. |
 
-## R analysis checks
+## Installation
 
-The pre-specified inferential analysis is in `analysis/` and uses a project-local renv library locked in `analysis/renv.lock` (R 4.6.1). From `analysis/`, run `Rscript -e 'renv::restore()'`, then `Rscript -e 'testthat::test_dir("tests/testthat")'`. Several Python tests (Python/R handoff, rehearsal, result verification, supplement chain) call `Rscript` and skip when R or the renv library is absent; set `BIORAG_REQUIRE_R=1` to make that a failure instead. CI sets it. Python remains authoritative for scientific scoring; R only consumes the validated analysis table.
+Python 3.11 is required.
 
-## Project status (checkpoint)
+```bash
+python -m pip install -e '.[dev,benchmark,bm25,dense]'
+```
 
-Implemented and tested on synthetic fixtures only: evidence preservation, delivery and answer scoring (Stages A, B, C); generation run and attempt lifecycle with exact supplied-context records; the validated Python-to-R analysis handoff; the R estimators, whole-paper bootstrap and CR2 inference with verified result publication; secondary tables, a derived report and a records-only release index; the readiness gate and the protected final-test execution architecture with rehearsal start, resume and completion.
+Optional extras: `context` (tokenizer support for context assembly), `generation` (generator
+backend), `chunking`, `pdf` (pinned Docling stack for PDF ingestion). For a CPU-only dense build,
+install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` before the project extras.
 
-`analysis_supplement` (answer-identity and evidence-form labels) is a separate, versioned, hash-linked artifact. The frozen primary analysis table is unchanged by it.
+Model files and source data are not part of the repository. Retrieval and generation read local,
+hash-verified snapshots: set `BIORAG_BGE_ROOT` to the pinned BGE snapshot and `BIORAG_QWEN_ROOT` to
+the pinned Qwen3-8B tokenizer files to include the checks that use them. Without them those tests
+are skipped.
 
-What this checkpoint establishes: the infrastructure behaves as specified on synthetic data, and its Python and R tests run in CI. What it does not establish: any scientific result. No official model qualification, development execution or final-test observation has been run, readiness is not approved (production final-test execution is disabled), and the real Phase 11 analysis gate has not been passed. Benchmark gold, frozen sources and final-test material stay outside Git.
+The R analysis needs R 4.6.1. From `analysis/`:
 
-Next planned work: Phase 7 generator environment and GPU qualification, then Phase 8 official development execution.
+```bash
+Rscript -e 'renv::restore()'
+```
+
+PyMuPDF (`benchmark` extra) is used only to locate evidence in original PDFs for human review. It
+is not an experimental parser.
+
+## Usage
+
+Installed console scripts, each also runnable as `python -m <module> --help`:
+
+| Command | Module | Purpose |
+| --- | --- | --- |
+| `biorag-context` | `biorag_repro.retrieval.cli` | Assemble generator contexts from selected chunks and re-read them with full validation. |
+| `biorag-analysis` | `biorag_repro.evaluation.analysis_cli` | Verify the analysis table and handoff, and check R results against them. |
+| `biorag-checkpoint` | `biorag_repro.generation.checkpoint` | Inventory and verify a local model snapshot. |
+| `biorag-environment` | `biorag_repro.generation.environment_lock` | Compare the intended execution environment with the installed one. |
+| `biorag-readiness` | `biorag_repro.readiness.cli` | Evaluate and verify readiness for protected evaluation runs. |
+
+Scripts in `scripts/`:
+
+- `benchmark.py` — `split`, `discover`, `review-pack`, `pdf-search`, `validate`, `audit-draw`,
+  `derive-development`. Every command takes an external data root and the explicit path and SHA-256
+  of the corpus release record. Candidate evidence found automatically is a lead for a human
+  reviewer; it is never accepted as gold without inspection of the original PDF.
+- `export_schemas.py` — regenerate `schemas/`, or check that they are current with `--check`.
+- `materialize_corpus.py`, `ingest_phase4.py`, `reproduce_phase4.py`, `stage_a_review.py` — corpus
+  materialization, single-paper ingestion, reproduction of a source pair, and masked Stage A review
+  packets. Run each with `--help`.
+
+R analysis (from `analysis/`): `Rscript run_analysis.R run|verify|derive|supplement ...`; see the
+header of `analysis/run_analysis.R` for the arguments.
+
+## Reproducibility
+
+- Inputs are selected by explicit path and SHA-256; files are published without overwriting and
+  re-read against their recorded hashes.
+- Build manifests link every derived artifact to its inputs and to the transformation that made it.
+- Schemas in `schemas/` are generated from the code; `python scripts/export_schemas.py --check`
+  fails if they drift.
+- Continuous integration (`.github/workflows/ci.yml`) runs on Ubuntu 22.04 with Python 3.11.15 and
+  R 4.6.1 and requires the R tests to run. The primary R result is compared byte for byte, so it is
+  tied to that platform's numerics.
+
+### Checks
+
+```bash
+python -m pytest -q
+python -m ruff format --check .
+python -m ruff check .
+python -m mypy src/biorag_repro
+python scripts/export_schemas.py --check
+(cd analysis && Rscript -e 'testthat::test_dir("tests/testthat")')
+```
+
+Several Python tests call `Rscript` and skip when R or the `renv` library is absent; set
+`BIORAG_REQUIRE_R=1` to make that a failure.
+
+## Scope and limitations
+
+The repository contains the pipeline, its contracts and its tests, exercised on synthetic fixtures.
+It does not contain the corpus, benchmark gold, model weights or experimental results; those are
+kept outside version control. Dense retrieval and generation behaviour is verified only for the
+pinned snapshots and the platform noted above.
