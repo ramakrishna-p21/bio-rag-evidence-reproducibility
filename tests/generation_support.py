@@ -4,11 +4,13 @@ Every value is a synthetic test setting; none is the project's scientific config
 """
 
 import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from biorag_repro.generation.config import resolve_generator_config
+from biorag_repro.generation.environment import utc_now
 from biorag_repro.generation.parsing import OUTPUT_SCHEMAS
 from biorag_repro.generation.prompt import PromptArtifact
 
@@ -120,3 +122,19 @@ def artifact(**changes):
         "output_schema": OUTPUT_SCHEMAS[PARSER],
     }
     return PromptArtifact(**{**fields, **changes})
+
+
+class NeverBackwards:
+    """The wall clock, except that a reading is never earlier than the one before it."""
+
+    def __init__(self, source=utc_now):
+        self.source = source
+        self.last = None
+
+    def __call__(self) -> str:
+        value = self.source()
+        if self.last is not None and value <= self.last:
+            previous = datetime.strptime(self.last, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+            value = (previous + timedelta(microseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        self.last = value
+        return value

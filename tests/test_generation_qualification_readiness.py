@@ -47,6 +47,8 @@ from biorag_repro.generation.qualification import (
 )
 from biorag_repro.generation.runner import BackendFailure
 
+pytestmark = pytest.mark.usefixtures("driver_clock")
+
 # ---- the qualification label ------------------------------------------------------------
 
 

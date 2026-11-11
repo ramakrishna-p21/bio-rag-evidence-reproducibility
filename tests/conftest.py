@@ -57,6 +57,31 @@ def pytest_collection_modifyitems(config, items):
                 item.add_marker(pytest.mark.skip(reason=reason))
 
 
+@pytest.fixture
+def driver_clock(monkeypatch):
+    """Stamp events of stores built by the driver with a clock that never steps backwards.
+
+    The driver creates and reopens its run store with the wall clock, and the attempt log refuses
+    an event stamped earlier than its predecessor, so a host clock step fails a driver test at
+    random. Tests that go through the driver opt in with `pytestmark`; an explicit `now` still
+    wins, and the log's own refusal is untouched (see test_generation_attempts.py).
+    """
+    from generation_support import NeverBackwards
+
+    from biorag_repro.generation.attempts import RunStore
+
+    clock = NeverBackwards()
+    for name in ("create", "open"):
+        original = getattr(RunStore, name)
+
+        def with_clock(cls, *args, _original=original, **kwargs):
+            kwargs.setdefault("now", clock)
+            return _original.__func__(cls, *args, **kwargs)
+
+        monkeypatch.setattr(RunStore, name, classmethod(with_clock))
+    return clock
+
+
 @pytest.fixture(autouse=True)
 def _smoke_timeout(request):
     if not ENABLED or "model_smoke" not in request.keywords:

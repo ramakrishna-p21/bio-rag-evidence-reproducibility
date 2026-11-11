@@ -45,6 +45,8 @@ from biorag_repro.generation.official import (
 )
 from biorag_repro.generation.runner import BackendFailure, nonofficial_results, run_roster
 
+pytestmark = pytest.mark.usefixtures("driver_clock")
+
 
 @pytest.fixture
 def world(roster_world):  # noqa: F811

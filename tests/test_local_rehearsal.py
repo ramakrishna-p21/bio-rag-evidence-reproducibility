@@ -27,7 +27,7 @@ from biorag_repro.generation.official import NotVerifiedOfficial
 from biorag_repro.generation.runner import NonOfficialResults
 from biorag_repro.generation.sources import load_context_sources, spec_from_sources
 
-pytestmark = needs_tokenizer
+pytestmark = [needs_tokenizer, pytest.mark.usefixtures("driver_clock")]
 
 
 @pytest.fixture
