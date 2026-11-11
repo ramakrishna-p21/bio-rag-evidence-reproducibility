@@ -101,16 +101,16 @@ tally <- function(df, cols) {
   out
 }
 
-# Denominator of each row: all counted rows in its `by` group, every state included. Each source
-# row is counted once, so the denominator is the size of the group, not of its evaluable part.
+# Denominator of each row: all counted rows in its `by` group (every row when `by` is empty), every
+# state included. Each source row is counted once, so the denominator is the size of the group, not
+# of its evaluable part. Also used by the supplement tables.
 with_denominator <- function(counts, by) {
-  if (nrow(counts) == 0) {
+  if (!nrow(counts)) {
     counts$denominator <- integer(0)
     return(counts)
   }
-  group <- do.call(paste, c(unname(as.list(counts[by])), sep = "\x1f"))
-  totals <- tapply(counts$n, group, sum)
-  counts$denominator <- as.integer(totals[group])
+  key <- if (length(by)) do.call(paste, c(lapply(unname(as.list(counts[by])), as.character), sep = "\x1f")) else rep("all", nrow(counts))
+  counts$denominator <- as.integer(tapply(counts$n, key, sum)[key])
   counts
 }
 

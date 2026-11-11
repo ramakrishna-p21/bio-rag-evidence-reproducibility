@@ -24,14 +24,11 @@ SYNTHETIC_BANNER <- "SYNTHETIC REHEARSAL — NOT SCIENTIFIC FINDINGS"
 # ---- identity of the secondary tables ---------------------------------------------------------
 
 secondary_result_id <- function(handoff_sha256, csv_sha256, file_sha256) {
-  hex <- function(x) is.character(x) && length(x) == 1 && grepl("^[0-9a-f]{64}$", x)
-  if (!hex(handoff_sha256) || !hex(csv_sha256) || !setequal(names(file_sha256), SECONDARY_DATA_FILES) ||
-      !all(vapply(file_sha256, hex, logical(1)))) {
+  if (!is_sha256_hex(handoff_sha256) || !is_sha256_hex(csv_sha256) || !setequal(names(file_sha256), SECONDARY_DATA_FILES) ||
+      !all(vapply(file_sha256, is_sha256_hex, logical(1)))) {
     run_error("identity", "secondary identity inputs must be SHA-256 hex strings for exactly the secondary tables")
   }
-  ordered <- file_sha256[order(names(file_sha256), method = "radix")]
-  files <- paste(sprintf("{\"name\":\"%s\",\"sha256\":\"%s\"}", names(ordered), unlist(ordered, use.names = FALSE)),
-                 collapse = ",")
+  files <- files_json(file_sha256)
   json <- sprintf("{\"csv_sha256\":\"%s\",\"files\":[%s],\"handoff_sha256\":\"%s\",\"kind\":\"secondary_tables\"}",
                   csv_sha256, files, handoff_sha256)
   sha256_raw(charToRaw(json))
@@ -276,45 +273,22 @@ run_derived <- function(handoff_path, handoff_sha256, csv_path, primary_dir, out
 # ---- verification -----------------------------------------------------------------------------
 
 verify_secondary <- function(dir, expected_record_sha256 = NULL, require_read_only = FALSE, primary_dir = NULL) {
-  if (!dir.exists(dir)) verify_error("secondary directory not found")
-  present <- list.files(dir, all.files = TRUE, no.. = TRUE)
-  if (length(setdiff(DERIVED_FILES, present))) verify_error(sprintf("missing file(s): %s", paste(setdiff(DERIVED_FILES, present), collapse = ", ")))
-  if (length(setdiff(present, DERIVED_FILES))) verify_error(sprintf("unexpected file(s): %s", paste(setdiff(present, DERIVED_FILES), collapse = ", ")))
-  paths <- stats::setNames(file.path(dir, DERIVED_FILES), DERIVED_FILES)
-  if (any(nzchar(Sys.readlink(paths))) || any(dir.exists(paths))) verify_error("every secondary file must be a regular file")
-  sealed <- all(bitwAnd(as.integer(file.mode(c(paths, dir))), 146L) == 0L)
-  if (require_read_only && !sealed) verify_error("published files and directory must be read-only")
-  record_bytes <- read_bytes(paths[[SECONDARY_RECORD_FILE]])
-  record_sha256 <- sha256_raw(record_bytes)
-  if (!is.null(expected_record_sha256) && !identical(record_sha256, expected_record_sha256)) {
-    verify_error(sprintf("%s sha256 %s differs from the trusted %s", SECONDARY_RECORD_FILE, record_sha256, expected_record_sha256))
-  }
-  record <- tryCatch(jsonlite::fromJSON(rawToChar(record_bytes), simplifyVector = FALSE),
-                     error = function(e) verify_error("secondary_record.json is not valid JSON"))
-  if (!is.list(record)) verify_error("secondary_record.json is not a JSON object")
+  opened <- open_published(dir, DERIVED_FILES, SECONDARY_RECORD_FILE, "secondary", expected_record_sha256, require_read_only)
+  paths <- opened$paths; sealed <- opened$sealed; record <- opened$record; record_sha256 <- opened$record_sha256
   claims <- list(
     list(c("kind"), SECONDARY_RECORD_KIND), list(c("schema_version"), SECONDARY_SCHEMA_VERSION),
     list(c("purpose"), "synthetic_rehearsal"), list(c("scientific_authority"), "none"),
     list(c("banner"), SYNTHETIC_BANNER), list(c("analysis_label"), SECONDARY_LABEL),
     list(c("inputs", "input_origin"), "synthetic_rehearsal")
   )
-  for (cl in claims) {
-    if (!identical(get_path(record, cl[[1]]), cl[[2]])) {
-      verify_error(sprintf("record field %s must be %s", paste(cl[[1]], collapse = "."), format(cl[[2]])))
-    }
-  }
+  check_claims(record, claims)
   scientific <- get_path(record, "scientific_files")
   presentation <- get_path(record, "presentation")
   if (!is.list(scientific) || !setequal(names(scientific), SECONDARY_DATA_FILES)) verify_error("the record must list exactly the secondary tables")
   if (!is.list(presentation) || !setequal(names(presentation), PRESENTATION_FILES)) verify_error("the record must list exactly the report and the figure")
   bytes <- lapply(stats::setNames(c(SECONDARY_DATA_FILES, PRESENTATION_FILES), c(SECONDARY_DATA_FILES, PRESENTATION_FILES)),
                   function(n) read_bytes(paths[[n]]))
-  listed <- c(scientific, presentation)
-  for (n in names(bytes)) {
-    if (!identical(listed[[n]]$sha256, sha256_raw(bytes[[n]])) || !identical(as.numeric(listed[[n]]$bytes), as.numeric(length(bytes[[n]])))) {
-      verify_error(sprintf("%s differs from the hash and size recorded for it", n))
-    }
-  }
+  check_listed(c(scientific, presentation), bytes)
   id <- tryCatch(secondary_result_id(record$inputs$handoff_sha256, record$inputs$csv_sha256,
                                      vapply(scientific, function(e) e$sha256, "")),
                  error = function(e) verify_error("the identity inputs of the record are malformed"))
@@ -329,14 +303,7 @@ verify_secondary <- function(dir, expected_record_sha256 = NULL, require_read_on
   if (!is_sha256_hex(cited) || !is_sha256_hex(get_path(record, c("primary_result", "scientific_result_sha256")))) {
     verify_error("the cited primary result hashes are malformed")
   }
-  if (!is.null(primary_dir)) {
-    p <- verify_result(primary_dir, expected_record_sha256 = cited)
-    if (!identical(p$scientific_result_sha256, record$primary_result$scientific_result_sha256) ||
-        !identical(p$record$inputs$handoff_sha256, record$inputs$handoff_sha256) ||
-        !identical(p$record$inputs$csv_sha256, record$inputs$csv_sha256)) {
-      verify_error("the cited primary result does not match the record")
-    }
-  }
+  if (!is.null(primary_dir)) check_cited_primary(record, primary_dir, cited)
   list(ok = TRUE, sealed = sealed, record_sha256 = record_sha256, record_authenticated = !is.null(expected_record_sha256),
        secondary_result_sha256 = id, record = record, tables = tables, report = bytes[[REPORT_FILE]])
 }

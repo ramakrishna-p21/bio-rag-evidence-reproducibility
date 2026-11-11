@@ -192,28 +192,66 @@ populated <- function(x) !is.null(x) && length(x) > 0 && !(length(x) == 1 && is.
 
 # ---- the verifier -----------------------------------------------------------------------------
 
+# The opening shared by the verifiers of the three published directories (result, secondary,
+# supplement summary): the directory holds exactly `files`, each a regular file; the record is read
+# from the bytes that are there, compared with the trusted hash when one is given, and parsed.
+# `noun` names the directory in messages. The read-only seal is a local file-permission measure: it
+# is reported, and demanded only on request; content integrity does not depend on it and it proves
+# neither authenticity nor scientific provenance.
+open_published <- function(dir, files, record_file, noun, expected_record_sha256, require_read_only) {
+  if (!dir.exists(dir)) verify_error(sprintf("%s directory not found", noun))
+  present <- list.files(dir, all.files = TRUE, no.. = TRUE)
+  if (length(setdiff(files, present))) verify_error(sprintf("missing file(s): %s", paste(setdiff(files, present), collapse = ", ")))
+  if (length(setdiff(present, files))) verify_error(sprintf("unexpected file(s): %s", paste(setdiff(present, files), collapse = ", ")))
+  paths <- stats::setNames(file.path(dir, files), files)
+  if (any(nzchar(Sys.readlink(paths))) || any(dir.exists(paths))) verify_error(sprintf("every %s file must be a regular file", noun))
+  sealed <- all(bitwAnd(as.integer(file.mode(c(paths, dir))), 146L) == 0L)
+  if (require_read_only && !sealed) verify_error("published files and directory must be read-only")
+  record_bytes <- read_bytes(paths[[record_file]])
+  record_sha256 <- sha256_raw(record_bytes)
+  if (!is.null(expected_record_sha256) && !identical(record_sha256, expected_record_sha256)) {
+    verify_error(sprintf("%s sha256 %s differs from the trusted %s", record_file, record_sha256, expected_record_sha256))
+  }
+  record <- tryCatch(jsonlite::fromJSON(rawToChar(record_bytes), simplifyVector = FALSE),
+                     error = function(e) verify_error(sprintf("%s is not valid JSON", record_file)))
+  if (!is.list(record)) verify_error(sprintf("%s is not a JSON object", record_file))
+  list(paths = paths, sealed = sealed, record = record, record_sha256 = record_sha256)
+}
+
+# Each claim is list(path, required value); a differing field is reported with `suffix`.
+check_claims <- function(record, claims, suffix = "") {
+  for (cl in claims) {
+    if (!identical(get_path(record, cl[[1]]), cl[[2]])) {
+      verify_error(sprintf("record field %s must be %s%s", paste(cl[[1]], collapse = "."), format(cl[[2]]), suffix))
+    }
+  }
+}
+
+# The record lists the SHA-256 and size of each file it names; the bytes read must agree.
+check_listed <- function(listed, bytes) {
+  for (n in names(bytes)) {
+    if (!identical(listed[[n]]$sha256, sha256_raw(bytes[[n]])) || !identical(as.numeric(listed[[n]]$bytes), as.numeric(length(bytes[[n]])))) {
+      verify_error(sprintf("%s differs from the hash and size recorded for it", n))
+    }
+  }
+}
+
+# A derived record cites its primary result; that result is verified and must carry the same inputs.
+check_cited_primary <- function(record, primary_dir, cited) {
+  p <- verify_result(primary_dir, expected_record_sha256 = cited)
+  if (!identical(p$scientific_result_sha256, record$primary_result$scientific_result_sha256) ||
+      !identical(p$record$inputs$handoff_sha256, record$inputs$handoff_sha256) ||
+      !identical(p$record$inputs$csv_sha256, record$inputs$csv_sha256)) {
+    verify_error("the cited primary result does not match the record")
+  }
+}
+
 # Integrity check of a published result directory, reading the bytes that are actually there.
 # `record_authenticated` is TRUE only when the caller supplied an external SHA-256 of the record
 # and it matched. Without one the result is internally consistent, nothing more.
 verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha256 = NULL, require_read_only = FALSE) {
-  if (!dir.exists(dir)) verify_error("result directory not found")
-  present <- list.files(dir, all.files = TRUE, no.. = TRUE)
-  if (length(setdiff(RESULT_FILES, present))) verify_error(sprintf("missing file(s): %s", paste(setdiff(RESULT_FILES, present), collapse = ", ")))
-  if (length(setdiff(present, RESULT_FILES))) verify_error(sprintf("unexpected file(s): %s", paste(setdiff(present, RESULT_FILES), collapse = ", ")))
-  paths <- stats::setNames(file.path(dir, RESULT_FILES), RESULT_FILES)
-  if (any(nzchar(Sys.readlink(paths))) || any(dir.exists(paths))) verify_error("every result file must be a regular file")
-  # The read-only seal is a local file-permission measure. It is reported, and demanded only on request;
-  # content integrity does not depend on it and it proves neither authenticity nor scientific provenance.
-  sealed <- all(bitwAnd(as.integer(file.mode(c(paths, dir))), 146L) == 0L)
-  if (require_read_only && !sealed) verify_error("published files and directory must be read-only")
-  record_bytes <- read_bytes(paths[[RECORD_FILE]])
-  record_sha256 <- sha256_raw(record_bytes)
-  if (!is.null(expected_record_sha256) && !identical(record_sha256, expected_record_sha256)) {
-    verify_error(sprintf("run_record.json sha256 %s differs from the trusted %s", record_sha256, expected_record_sha256))
-  }
-  record <- tryCatch(jsonlite::fromJSON(rawToChar(record_bytes), simplifyVector = FALSE),
-                     error = function(e) verify_error("run_record.json is not valid JSON"))
-  if (!is.list(record)) verify_error("run_record.json is not a JSON object")
+  opened <- open_published(dir, RESULT_FILES, RECORD_FILE, "result", expected_record_sha256, require_read_only)
+  paths <- opened$paths; sealed <- opened$sealed; record <- opened$record; record_sha256 <- opened$record_sha256
 
   claims <- list(
     list(c("kind"), RECORD_KIND), list(c("schema_version"), RECORD_SCHEMA_VERSION),
@@ -229,11 +267,7 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
     list(c("seed", "production_seed"), "awaiting_approval"), list(c("seed", "spec_name"), "primary_bootstrap"),
     list(c("environment_intended", "r_version_required"), REQUIRED_R_VERSION)
   )
-  for (cl in claims) {
-    if (!identical(get_path(record, cl[[1]]), cl[[2]])) {
-      verify_error(sprintf("record field %s must be %s in this pass", paste(cl[[1]], collapse = "."), format(cl[[2]])))
-    }
-  }
+  check_claims(record, claims, " in this pass")
 
   # Either nothing about a preflight, or a citation of its bytes and hash; never a claim that
   # R verified anything Python did.
@@ -255,11 +289,7 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
   listed <- get_path(record, c("outputs", "files"))
   if (!is.list(listed) || !setequal(names(listed), DATA_FILES)) verify_error("the record must list exactly the four data files")
   bytes <- lapply(stats::setNames(DATA_FILES, DATA_FILES), function(n) read_bytes(paths[[n]]))
-  for (n in DATA_FILES) {
-    if (!identical(listed[[n]]$sha256, sha256_raw(bytes[[n]])) || !identical(as.numeric(listed[[n]]$bytes), as.numeric(length(bytes[[n]])))) {
-      verify_error(sprintf("%s differs from the hash and size recorded for it", n))
-    }
-  }
+  check_listed(listed, bytes)
   sci <- vapply(names(SCIENTIFIC_SCHEMAS), function(n) listed[[n]]$sha256, "")
   id <- tryCatch(
     scientific_result_id(record$inputs$handoff_sha256, record$inputs$csv_sha256, record$seed$value, sci),

@@ -87,30 +87,33 @@ csv_bytes <- function(df, schema) {
   charToRaw(enc2utf8(paste0(paste(lines, collapse = "\n"), "\n")))
 }
 
+# The `files` array of an identity: {"name", "sha256"} objects in radix order of the name, as in
+# Python's canonical JSON.
+files_json <- function(file_sha256) {
+  ordered <- file_sha256[order(names(file_sha256), method = "radix")]
+  paste(sprintf("{\"name\":\"%s\",\"sha256\":\"%s\"}", names(ordered), unlist(ordered, use.names = FALSE)),
+        collapse = ",")
+}
+
 # ---- identity of the scientific result --------------------------------------------------------
 
 # SHA-256 of canonical JSON (keys sorted, no whitespace): the inputs, the seed and the hash of each
 # scientific file. Execution facts (time, host, run id) are deliberately not part of it.
 scientific_result_id <- function(handoff_sha256, csv_sha256, seed, file_sha256) {
-  hex <- function(x) is.character(x) && length(x) == 1 && grepl("^[0-9a-f]{64}$", x)
   names_ok <- !is.null(names(file_sha256)) && all(grepl("^[A-Za-z0-9_.]+$", names(file_sha256)))
-  if (!hex(handoff_sha256) || !hex(csv_sha256) || !names_ok || !all(vapply(file_sha256, hex, logical(1)))) {
+  if (!is_sha256_hex(handoff_sha256) || !is_sha256_hex(csv_sha256) || !names_ok || !all(vapply(file_sha256, is_sha256_hex, logical(1)))) {
     run_error("identity", "identity inputs must be SHA-256 hex strings and plain file names")
   }
   if (length(seed) != 1 || !is.numeric(seed) || !is.finite(seed) || seed != round(seed)) {
     run_error("identity", "seed must be one integer")
   }
-  ordered <- file_sha256[order(names(file_sha256), method = "radix")]
-  files <- paste(sprintf("{\"name\":\"%s\",\"sha256\":\"%s\"}", names(ordered), unlist(ordered, use.names = FALSE)),
-                 collapse = ",")
+  files <- files_json(file_sha256)
   json <- sprintf("{\"csv_sha256\":\"%s\",\"files\":[%s],\"handoff_sha256\":\"%s\",\"seed\":%s}",
                   csv_sha256, files, handoff_sha256, sprintf("%d", as.integer(seed)))
   sha256_raw(charToRaw(json))
 }
 
 # ---- tables -----------------------------------------------------------------------------------
-
-na_to <- function(x, type) if (is.null(x)) type else x
 
 coprimary_table <- function(accounting, inference, handoff) {
   rules <- outcome_rules(handoff)
