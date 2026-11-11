@@ -210,9 +210,15 @@ def read_csv(directory: Path, name: str) -> list[dict[str, str]]:
 
 
 @pytest.fixture(scope="module")
-def five_arm_run(tmp_path_factory):
+def built_table():
+    """The table is built once per module; both users only read it."""
+    return five_arm_table()
+
+
+@pytest.fixture(scope="module")
+def five_arm_run(tmp_path_factory, built_table):
     root = tmp_path_factory.mktemp("five_arm_store")
-    table = five_arm_table()
+    table = built_table
     _csv, _inventory, table_build = publish_table(table, root)
     _ref, handoff_build = ah.publish_handoff(
         ah.build_handoff(table_build, root, code=CODE, rehearsal=True), root
@@ -222,8 +228,8 @@ def five_arm_run(tmp_path_factory):
     return table, root, done, secondary, inputs
 
 
-def test_the_table_has_the_planned_five_arm_structure():
-    table = five_arm_table()
+def test_the_table_has_the_planned_five_arm_structure(built_table):
+    table = built_table
     assert len(table.rows) == 15 * N_ITEMS  # 360
     assert Counter(r.matrix_arm for r in table.rows) == {
         "confirmatory": 6 * N_ITEMS,
