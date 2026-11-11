@@ -29,8 +29,8 @@ from biorag_repro.finaltest import layout
 from biorag_repro.finaltest.execution import run_batch
 from biorag_repro.finaltest.resume import ResumeRefused
 from biorag_repro.finaltest.session import SessionLost, _process_start, open_session
+from biorag_repro.finaltest.store import GateRefused
 from biorag_repro.generation.attempts import InvalidTransition
-from biorag_repro.generation.finaltest_store import GateRefused
 
 
 def states(started, key):

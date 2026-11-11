@@ -15,10 +15,11 @@ from typing import Annotated, Self
 from pydantic import StringConstraints, model_validator
 
 from biorag_repro.benchmark.development_view import read_development_view
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.identity import observation_key
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.evaluation.analysis_models import PlannedRoster
 from biorag_repro.evaluation.analysis_table import ARM_RETRIEVAL

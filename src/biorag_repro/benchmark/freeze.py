@@ -11,7 +11,7 @@ from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperMeta, PaperSplit, RelatednessRecord, make_split
 from biorag_repro.benchmark.storage import read_jsonl
 from biorag_repro.benchmark.validation import ValidationReport, validate_items
-from biorag_repro.core.hashing import sha256_bytes, verify_file_sha256
+from biorag_repro.core.hashing import read_verified_bytes, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
 from biorag_repro.corpus.manifest import (
@@ -52,8 +52,7 @@ def verify_release_inputs(record: BenchmarkRelease, data_root: Path) -> None:
     ):
         raise ValueError("benchmark release differs from frozen corpus release")
     manifest_path = _path(data_root, corpus_release.manifest_artifact)
-    verify_file_sha256(manifest_path, corpus_release.csv_sha256)
-    manifest = parse_csv(manifest_path.read_bytes())
+    manifest = parse_csv(read_verified_bytes(manifest_path, corpus_release.csv_sha256))
     if (
         corpus_content_hash(manifest) != corpus_release.corpus_content_sha256
         or manifest_semantic_hash(manifest) != corpus_release.manifest_semantic_sha256

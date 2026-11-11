@@ -36,13 +36,14 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import StringConstraints, ValidationError, model_validator
 
 from biorag_repro.benchmark.freeze import verify_release_inputs
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.release import BenchmarkRelease
 from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import decode_jsonl
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.corpus.manifest import (
     ReleaseRecord,
     corpus_content_hash,

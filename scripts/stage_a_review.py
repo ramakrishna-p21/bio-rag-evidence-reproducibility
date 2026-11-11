@@ -26,8 +26,8 @@ from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import read_project_json
+from biorag_repro.documents.ingestion import Phase4Validation
 from biorag_repro.documents.models import CanonicalDocument
-from biorag_repro.documents.phase4 import Phase4Validation
 from biorag_repro.evaluation.models import (
     ComponentLocus,
     Label,

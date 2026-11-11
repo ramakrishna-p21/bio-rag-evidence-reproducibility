@@ -12,9 +12,9 @@ from biorag_repro.documents.authorization import (
     QUALIFIED_ENVIRONMENT,
     ScientificAuthority,
 )
+from biorag_repro.documents.ingestion import Phase4GateIndex
 from biorag_repro.documents.models import JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration, verify_assets, verify_qualified_lock
-from biorag_repro.documents.phase4 import Phase4GateIndex
 from biorag_repro.documents.reproduction import reproduce_pair
 
 

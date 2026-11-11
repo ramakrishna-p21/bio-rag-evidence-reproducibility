@@ -10,7 +10,7 @@ from typing import TypeVar
 from pydantic import BaseModel
 
 from biorag_repro.core.hashing import (
-    HashMismatchError,
+    read_verified_bytes,
     sha256_bytes,
     validate_sha256,
     verify_file_sha256,
@@ -48,13 +48,7 @@ def _reject_nonfinite(value: str) -> None:
 
 def read_project_json(path: Path, expected_sha256: str, model_type: type[ModelT]) -> ModelT:
     """Check exact stored bytes and validate a persisted project model."""
-    validate_sha256(expected_sha256)
-    content = path.read_bytes()
-    actual_sha256 = sha256_bytes(content)
-    if actual_sha256 != expected_sha256:
-        raise HashMismatchError(
-            f"SHA-256 mismatch for {path}: expected {expected_sha256}, got {actual_sha256}"
-        )
+    content = read_verified_bytes(path, expected_sha256)
     data = json.loads(content.decode("utf-8"), parse_constant=_reject_nonfinite)
     return model_type.model_validate(data, strict=True)
 

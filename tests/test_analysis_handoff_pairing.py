@@ -16,7 +16,6 @@ from test_stage_b import deliver, finish, prose_xml
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.documents.chunking import chunk_document
 from biorag_repro.evaluation import analysis_handoff as ah
 from biorag_repro.evaluation.analysis_storage import publish_table
 from biorag_repro.evaluation.analysis_table import (
@@ -27,6 +26,7 @@ from biorag_repro.evaluation.analysis_table import (
 )
 from biorag_repro.evaluation.models import ComponentLocus, Placement, SetLocus
 from biorag_repro.generation.environment import GitState
+from biorag_repro.retrieval.chunking import chunk_document
 from biorag_repro.retrieval.models import ConfigurationRef
 
 CODE = GitState(status="ok", commit="a" * 40, dirty=False, dirty_paths=0)

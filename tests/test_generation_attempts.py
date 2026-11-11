@@ -6,8 +6,8 @@ import shutil
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from generation_support import QWEN_REVISION, resolve, synthetic_settings
 from pydantic import ValidationError
-from test_generation_config import QWEN_REVISION, resolve, synthetic_settings
 from test_generation_environment import cpu_probes
 
 from biorag_repro.core.hashing import sha256_bytes

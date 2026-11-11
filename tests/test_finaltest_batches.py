@@ -109,8 +109,10 @@ def test_no_finaltest_module_creates_a_run_store_or_calls_the_guard():
                 for alias in node.names:
                     names.update(alias.name.split("."))
                 names.update((getattr(node, "module", None) or "").split("."))
-        # start.py is the one module that calls the guard; it still never names a RunStore
-        allowed = (
-            {"authorize_final_test", "FinalTestAuthorization"} if path.name == "start.py" else set()
-        )
+        # start.py is the one module that calls the guard; it still never names a RunStore.
+        # store.py subclasses RunStore only to refuse its create, open and recover operations.
+        allowed = {
+            "start.py": {"authorize_final_test", "FinalTestAuthorization"},
+            "store.py": {"RunStore"},
+        }.get(path.name, set())
         assert not names & (forbidden - allowed), (path.name, names & (forbidden - allowed))

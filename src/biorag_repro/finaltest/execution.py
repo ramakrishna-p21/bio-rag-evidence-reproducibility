@@ -22,15 +22,15 @@ from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.finaltest.inputs import RosterIdentityRow
 from biorag_repro.finaltest.registry import registry_head
 from biorag_repro.finaltest.session import Session, SessionLost
+from biorag_repro.finaltest.store import FinalTestStore, GateRefused
 from biorag_repro.generation.environment import EnvironmentRecord
-from biorag_repro.generation.finaltest_store import FinalTestStore, GateRefused
 from biorag_repro.generation.runner import GeneratorBackend, RosterEntry, RunSummary, run_roster
 from biorag_repro.generation.seeds import GenerationSeedRegistry
 from biorag_repro.readiness.files import FileProblem, read_regular
 
 
 class SessionGate:
-    """Callable with the `Gate` signature of `generation.finaltest_store`."""
+    """Callable with the `Gate` signature of `finaltest.store`."""
 
     def __init__(
         self,

@@ -18,18 +18,16 @@ from typing import Any, Final, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id, new_run_id
-from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.identity import new_run_id
+from biorag_repro.core.manifest import ArtifactRef, BuildInput
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
-    publish_bytes,
-    publish_manifest,
     read_manifest,
     read_project_json,
-    serialize_project_json,
 )
 from biorag_repro.evaluation.analysis_handoff import VerifiedHandoff, read_handoff
+from biorag_repro.evaluation.analysis_storage import publish_derived_record
 from biorag_repro.generation.environment import GitState, check_utc, utc_now
 
 SCHEMA_VERSION = "1"
@@ -198,49 +196,14 @@ def _inputs(preflight: AnalysisPreflight) -> list[BuildInput]:
 
 def _store(preflight: AnalysisPreflight, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
     """Write a preflight and its build manifest without replacing anything."""
-    data = serialize_project_json(preflight, AnalysisPreflight)
-    digest = sha256_bytes(data)
-    inputs = _inputs(preflight)
-    artifact_id = derived_artifact_id(
-        artifact_kind="analysis_preflight",
-        inputs=[ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in inputs],
-        transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=settings_sha256(),
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    ref = ArtifactRef(
-        artifact_id=artifact_id, logical_ref=f"analysis/preflight/{artifact_id}.json", sha256=digest
-    )
-    manifest = BuildManifest(
-        schema_version="1",
-        inputs=inputs,
-        transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=settings_sha256(),
-        outputs=[
-            DerivedOutput(
-                artifact=ref,
-                artifact_kind="analysis_preflight",
-                output_format="json",
-                serialization_version="1",
-                identity_version="1",
-            )
-        ],
-        status="complete",
-    )
-    target = root / ref.logical_ref
-    target.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(
-        target,
-        data,
-        digest,
-        validate_temp=lambda p: read_project_json(p, digest, AnalysisPreflight),
-    )
-    build_ref = f"analysis/preflight/{sha256_bytes(canonical_json_bytes([artifact_id]))}.build.json"
-    manifest_digest = publish_manifest(manifest, root / build_ref, {ref.logical_ref: target})
-    return ref, ArtifactRef(
-        artifact_id="build_" + manifest_digest, logical_ref=build_ref, sha256=manifest_digest
+    return publish_derived_record(
+        preflight,
+        "analysis_preflight",
+        "preflight",
+        _inputs(preflight),
+        TRANSFORMATION,
+        settings_sha256(),
+        root,
     )
 
 

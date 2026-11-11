@@ -10,6 +10,7 @@ import json
 from typing import get_args
 
 import pytest
+from generation_support import needs_tokenizer
 from test_analysis_export import (
     CFG,
     P_A,
@@ -30,7 +31,6 @@ from test_generation_official import (  # noqa: F401  (fixtures)
     verify,
     view,
 )
-from test_generation_prompt import needs_tokenizer
 from test_generation_roster import make_scope
 from test_stage_b import altered_world
 

@@ -1,12 +1,12 @@
 """What the completion code may and may not do, checked on the source and the routes."""
 
-import ast
 import inspect
 from pathlib import Path
 
 import pytest
 from finaltest_completion_support import finished
 from finaltest_resume_support import renew
+from finaltest_support import FS_WRITERS, calls
 from test_finaltest_resume import _mk
 
 import biorag_repro
@@ -23,22 +23,10 @@ FINISH = SRC / "finaltest" / "finish.py"
 COMPLETION = SRC / "finaltest" / "completion.py"
 
 
-def calls(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return {
-        n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call)
-    }
-
-
-WRITERS = {"write_bytes", "write_text", "mkdir", "unlink", "rename", "replace", "chmod", "touch"}
-
-
 def test_the_completion_code_writes_only_through_the_registry_publishers():
-    assert not calls(FINISH) & WRITERS
+    assert not calls(FINISH) & FS_WRITERS
     assert not calls(FINISH) & {"publish_bytes", "publish_manifest", "open", "rmtree", "copy"}
-    assert not calls(COMPLETION) & (WRITERS | {"publish_bytes", "open", "read_bytes"})
+    assert not calls(COMPLETION) & (FS_WRITERS | {"publish_bytes", "open", "read_bytes"})
 
 
 def test_completion_never_touches_a_run_store_or_vouches_for_a_worker():

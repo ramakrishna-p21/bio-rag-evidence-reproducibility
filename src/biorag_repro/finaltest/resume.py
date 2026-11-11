@@ -99,9 +99,9 @@ from biorag_repro.finaltest.start import (
     _checked,
     _production_assessed,
 )
+from biorag_repro.finaltest.store import hardware_identity, reopen_final_test_store
 from biorag_repro.generation.attempts import ObservationState
 from biorag_repro.generation.environment import EnvironmentRecord, utc_now
-from biorag_repro.generation.finaltest_store import hardware_identity, reopen_final_test_store
 from biorag_repro.readiness.models import ReadinessReport
 
 PRODUCTION_RESUME: Final = False

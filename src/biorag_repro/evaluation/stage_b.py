@@ -9,10 +9,7 @@ Nothing here reads generator output or benchmark gold.
 from dataclasses import dataclass
 
 from biorag_repro.benchmark.models import BenchmarkItem
-from biorag_repro.core.hashing import sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation.models import Placement, StageAJudgment
 from biorag_repro.evaluation.stage_a import _blocking, _spans, item_digest, stage_a_ref
@@ -29,6 +26,7 @@ from biorag_repro.evaluation.stage_b_models import (
     Status,
     composition_of,
 )
+from biorag_repro.evaluation.stage_records import stage_record_ref
 from biorag_repro.retrieval.context import POLICY, _same_evidence
 from biorag_repro.retrieval.models import Chunk, ChunkSet, ContextRecord, RankedRetrieval
 from biorag_repro.retrieval.storage import record_ref
@@ -362,23 +360,7 @@ def dependencies(value: StageBCandidate | StageBJudgment) -> list[tuple[str, Art
 def stage_b_ref(value: StageBCandidate | StageBJudgment) -> ArtifactRef:
     """Identify a record by its bytes and the exact Stage A, context and chunk lineage."""
     kind = "stage_b_candidate" if isinstance(value, StageBCandidate) else "stage_b_judgment"
-    digest = sha256_bytes(serialize_project_json(value, type(value)))
-    artifact_id = derived_artifact_id(
-        artifact_kind=kind,
-        inputs=[
-            ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies(value)
-        ],
-        transformation_id=f"{kind}_v1",
-        transformation_settings_sha256=None,
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    return ArtifactRef(
-        artifact_id=artifact_id,
-        logical_ref=f"evaluation/stage_b/{kind}/{artifact_id}.json",
-        sha256=digest,
-    )
+    return stage_record_ref(value, kind, "stage_b", dependencies(value), f"{kind}_v1")
 
 
 _STATUS: dict[str, Status] = {

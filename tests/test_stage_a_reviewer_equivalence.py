@@ -21,7 +21,7 @@ from biorag_repro.evaluation.models import (
     StageACandidate,
 )
 from biorag_repro.evaluation.stage_a import _index, automatic_judgment, locate, validate_judgment
-from biorag_repro.evaluation.storage import publish_judgment, read_judgment
+from biorag_repro.evaluation.stage_a_storage import publish_judgment, read_judgment
 
 MEAN_TABLE = (
     "<article><body><p>Unrelated sentence about Collins and 307.8 in prose.</p>"

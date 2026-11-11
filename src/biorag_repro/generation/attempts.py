@@ -22,7 +22,6 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import sha256_bytes, validate_sha256
 from biorag_repro.core.identity import (
@@ -33,6 +32,7 @@ from biorag_repro.core.identity import (
     observation_key,
 )
 from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
     publish_bytes,
     publish_manifest,

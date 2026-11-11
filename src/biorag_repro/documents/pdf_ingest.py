@@ -10,7 +10,12 @@ from typing import Any, Literal, Self
 
 from pydantic import Field, model_validator
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, verify_file_sha256
+from biorag_repro.core.hashing import (
+    canonical_json_bytes,
+    read_verified_bytes,
+    sha256_bytes,
+    verify_file_sha256,
+)
 from biorag_repro.core.identity import (
     ArtifactInput,
     derived_artifact_id,
@@ -24,6 +29,8 @@ from biorag_repro.core.storage import (
     read_project_json,
     serialize_project_json,
 )
+from biorag_repro.documents.coverage import validate_pdf_coverage
+from biorag_repro.documents.lineage import check_manifest
 from biorag_repro.documents.models import CanonicalDocument, Record
 from biorag_repro.documents.pdf import (
     TRANSFORMATION_ID,
@@ -307,8 +314,6 @@ def publish_pdf_result(
                 document = canonicalize_native(
                     reloaded, paper_id, source, native_ref, configuration_sha256, header
                 )
-                from biorag_repro.documents.phase4 import validate_pdf_coverage
-
                 validate_pdf_coverage(document, header)
                 canonical_bytes = serialize_project_json(document, CanonicalDocument)
                 inputs = [
@@ -387,8 +392,6 @@ def canonicalize_saved_native(
     original_data_root: Path | None = None,
 ) -> PdfCanonicalBuild:
     """Build a new canonical artifact from a verified, previously saved native document."""
-    from biorag_repro.documents.phase4 import _check_manifest, validate_pdf_coverage
-
     verify_file_sha256(source_path, source.sha256)
     if source.artifact_id != raw_source_artifact_id(
         paper_id=paper_id, representation="PDF", sha256=source.sha256
@@ -417,18 +420,17 @@ def canonicalize_saved_native(
         sha256=sha256_bytes(attempt_bytes),
     )
     native = original_attempt.native_artifact
-    native_manifest = _check_manifest(
+    native_manifest = check_manifest(
         original_attempt.native_build_manifest, retained_root, native, [source]
     )
-    _check_manifest(
+    check_manifest(
         original_attempt.build_manifest,
         retained_root,
         original_attempt.canonical_artifact,
         [source, native],
     )
     native_path = data_root / native.logical_ref
-    verify_file_sha256(native_path, native.sha256)
-    native_data = json.loads(native_path.read_bytes())
+    native_data = json.loads(read_verified_bytes(native_path, native.sha256))
     if native_data.get("schema_name") != "DoclingDocument" or not native_data.get("version"):
         raise ValueError("invalid saved native document")
     if load_native is None:
@@ -521,8 +523,6 @@ def convert_pdf(
     data_root: Path,
 ) -> ConversionAttempt:
     """Run the fixed offline single-thread CPU Docling conversion."""
-    import os
-
     import torch
     from docling.datamodel.accelerator_options import AcceleratorDevice, AcceleratorOptions
     from docling.datamodel.backend_options import ThreadedDoclingParseBackendOptions
@@ -534,8 +534,6 @@ def convert_pdf(
         TableStructureOptions,
     )
     from docling.document_converter import DocumentConverter, PdfFormatOption
-
-    from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 
     config = PdfConfiguration()
     actual_config = sha256_bytes(canonical_json_bytes(config.model_dump(mode="python")))

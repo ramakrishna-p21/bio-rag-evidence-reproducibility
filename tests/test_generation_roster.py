@@ -8,10 +8,9 @@ import json
 from dataclasses import replace
 
 import pytest
+from generation_support import ROOT, artifact, needs_tokenizer, resolve, synthetic_settings
 from test_bm25_publication import inputs
 from test_context_publication import prepared
-from test_generation_config import resolve, synthetic_settings
-from test_generation_prompt import ROOT, artifact, needs_tokenizer
 from test_stage_c import SET_GOLD, entity, make_item, quantity
 
 from biorag_repro.benchmark.development_view import publish_development_view, read_development_view

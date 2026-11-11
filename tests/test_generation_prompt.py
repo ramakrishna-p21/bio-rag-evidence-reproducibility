@@ -5,49 +5,29 @@ project's scientific configuration. The pinned Qwen tokenizer is used when it is
 """
 
 import json
-import os
-from pathlib import Path
 
 import pytest
+from generation_support import (
+    CLOSED_BOOK,
+    PARSER,
+    ROOT,
+    WITH_CONTEXT,
+    artifact,
+    needs_tokenizer,
+    resolve,
+    synthetic_settings,
+)
 from pydantic import ValidationError
-from test_generation_config import resolve, synthetic_settings
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.storage import read_project_json, serialize_project_json
 from biorag_repro.generation.parsing import OUTPUT_SCHEMAS
 from biorag_repro.generation.prompt import (
     InputRenderer,
-    PromptArtifact,
     RenderedInput,
     output_schema_sha256,
     prompt_sha256,
 )
-
-REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
-ROOT = Path(
-    os.environ.get(
-        "BIORAG_QWEN_ROOT", Path(__file__).parents[1] / "models" / "qwen3-8b-tokenizer" / REVISION
-    )
-)
-needs_tokenizer = pytest.mark.skipif(not ROOT.is_dir(), reason="pinned Qwen tokenizer not present")
-
-PARSER = "short_answer_json_v1"
-WITH_CONTEXT = (
-    "Answer the question using only the evidence below. If it is insufficient, abstain.\n\n"
-    "{context}\n\nQuestion: {question}"
-)
-CLOSED_BOOK = "Answer the question from your own knowledge, or abstain.\n\nQuestion: {question}"
-
-
-def artifact(**changes):
-    fields = {
-        "prompt_version": "synthetic-prompt-0",
-        "with_context": WITH_CONTEXT,
-        "closed_book": CLOSED_BOOK,
-        "parser_version": PARSER,
-        "output_schema": OUTPUT_SCHEMAS[PARSER],
-    }
-    return PromptArtifact(**{**fields, **changes})
 
 
 def config_for(prompt, arm="confirmatory", **budget):

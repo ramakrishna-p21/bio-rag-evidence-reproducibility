@@ -7,7 +7,6 @@ from test_retrieval_models import ref
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import HashMismatchError
-from biorag_repro.documents.chunking import discover_occurrences
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation.models import (
     ComponentLocus,
@@ -23,13 +22,14 @@ from biorag_repro.evaluation.stage_a import (
     locate,
     validate_judgment,
 )
-from biorag_repro.evaluation.storage import (
+from biorag_repro.evaluation.stage_a_storage import (
     publish_candidate,
     publish_judgment,
     read_candidate,
     read_judgment,
     stage_a_ref,
 )
+from biorag_repro.retrieval.chunking import discover_occurrences
 
 PROSE = (
     "<article><body><sec><title>Results</title>"
@@ -691,7 +691,7 @@ def test_docling_arm_uses_pdf_source_references_and_native_header_roles():
 
 
 def test_rehashed_counterfeit_judgment_is_rejected_by_scientific_read_back(prose, tmp_path):
-    from biorag_repro.evaluation.storage import _publish
+    from biorag_repro.evaluation.stage_a_storage import _publish
 
     document, item = prose
     real = locus(document, PROSE_COMPONENTS)

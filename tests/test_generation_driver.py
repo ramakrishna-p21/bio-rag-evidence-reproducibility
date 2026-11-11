@@ -10,10 +10,10 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from generation_support import to_toml
 from synthetic_environment import approved_locks
 from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import environment
-from test_generation_config import to_toml
 from test_generation_hf_backend import REV
 from test_generation_official import SCRIPT, Scripted
 from test_generation_roster import make_scope
@@ -82,7 +82,7 @@ def make_plan(tmp_path, world, *, settings=None, seeds=None, anchor_dir=None, sc
 
 
 def _tokenizer_root():
-    from test_generation_prompt import ROOT
+    from generation_support import ROOT
 
     return ROOT
 

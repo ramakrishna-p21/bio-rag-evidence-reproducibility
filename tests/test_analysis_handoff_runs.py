@@ -10,6 +10,7 @@ verify_official_run before it can back a row).
 import dataclasses
 
 import pytest
+from generation_support import needs_tokenizer
 from test_analysis_handoff import CODE
 from test_generation_official import (  # noqa: F401  (fixtures)
     anchored,
@@ -18,7 +19,6 @@ from test_generation_official import (  # noqa: F401  (fixtures)
     verify,
     view,
 )
-from test_generation_prompt import needs_tokenizer
 from test_generation_roster import make_scope
 
 from biorag_repro.benchmark.development_view import read_development_view

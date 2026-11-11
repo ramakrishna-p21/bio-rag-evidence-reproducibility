@@ -9,7 +9,15 @@ from pathlib import Path
 
 import pytest
 from finaltest_campaign_support import CONFIGS, SEEDS, population, sha
-from finaltest_support import authorization, made, oracle_chain_ok
+from finaltest_support import (
+    CONFLICT,
+    INCOMPLETE,
+    NOTE,
+    UNAUTH,
+    authorization,
+    made,
+    oracle_chain_ok,
+)
 
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.finaltest import inventory, layout, registry
@@ -30,11 +38,7 @@ from biorag_repro.finaltest.registry import (
 )
 
 NO_PRIOR = "no_prior_final_test_execution"
-INCOMPLETE = "history_inventory_incomplete"
-UNAUTH = "unauthorized_final_test_artifact"
-CONFLICT = "conflicting_final_test_artifact"
 UNVERIFIED = "unverified_final_test_artifact"
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
 
 
 class Env:

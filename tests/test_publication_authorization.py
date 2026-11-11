@@ -4,13 +4,22 @@ import json
 from types import SimpleNamespace as Item
 
 import pytest
-from test_documents_phase4 import _paper
+from test_documents_ingestion import _paper
 from test_documents_table_fidelity import _native_data, _typed_native
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import ArtifactInput
 from biorag_repro.core.manifest import BuildInput
 from biorag_repro.core.storage import serialize_project_json
+from biorag_repro.documents.ingestion import (
+    JatsBuild,
+    Phase4GateIndex,
+    Phase4Validation,
+    build_arm,
+    publish_gate_index,
+    publish_validation,
+    validate_build,
+)
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.documents.pdf_ingest import (
@@ -18,14 +27,6 @@ from biorag_repro.documents.pdf_ingest import (
     _manifest,
     _ref,
     publish_pdf_result,
-)
-from biorag_repro.documents.phase4 import (
-    JatsBuild,
-    Phase4GateIndex,
-    build_arm,
-    publish_gate_index,
-    publish_validation,
-    validate_build,
 )
 
 
@@ -90,7 +91,7 @@ def attack(pair, case):
             pair.pr.model_copy(update={"corpus_version": "corpus_v2"}), pair.output
         )
     elif case == "source":
-        from test_documents_phase4 import _source
+        from test_documents_ingestion import _source
 
         src = _source(
             "P001",
@@ -389,7 +390,7 @@ def test_reproduction_requires_observed_clean_revision(tmp_path):
         observed_clean_revision(tmp_path)
 
 
-@pytest.mark.parametrize("script", ["ingest_phase4.py", "reproduce_phase4.py"])
+@pytest.mark.parametrize("script", ["ingest_paper.py", "reproduce_pair.py"])
 def test_cli_cannot_request_complete_gate(tmp_path, script):
     import subprocess
     import sys
@@ -454,7 +455,7 @@ def test_fresh_reproduction_preserves_content_ids_and_supports_delay(
     pr = read_project_json(
         output / value.pdf_validation.logical_ref,
         value.pdf_validation.sha256,
-        __import__("biorag_repro.documents.phase4", fromlist=["Phase4Validation"]).Phase4Validation,
+        Phase4Validation,
     )
     assert pr.canonical_artifact == pair.pr.canonical_artifact
     assert pr.warnings == pair.pr.warnings
@@ -569,7 +570,7 @@ def test_candidate_fidelity_check_rejects_rehashed_native_table_corruption(pair,
 
 
 def test_low_level_evidence_writer_cannot_publish_a_gate(pair):
-    from biorag_repro.documents.phase4 import _publish_evidence
+    from biorag_repro.documents.ingestion import _publish_evidence
 
     with pytest.raises(ValueError, match="authorization"):
         _publish_evidence(
@@ -630,7 +631,7 @@ def test_cli_candidate_uses_scientific_reproduction_without_final_publication(
     from biorag_repro.documents.reproduction import reproduce_pair
 
     spec = importlib.util.spec_from_file_location(
-        "ingest_phase4_cli", Path("scripts/reproduce_phase4.py")
+        "reproduce_pair_cli", Path("scripts/reproduce_pair.py")
     )
     cli = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(cli)
@@ -687,7 +688,7 @@ def test_cli_candidate_uses_scientific_reproduction_without_final_publication(
         sys,
         "argv",
         [
-            "ingest_phase4.py",
+            "ingest_paper.py",
             "--corpus-root",
             str(pair.corpus),
             "--release-record",

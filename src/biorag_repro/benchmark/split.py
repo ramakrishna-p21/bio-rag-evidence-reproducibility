@@ -4,19 +4,17 @@ import random
 import sys
 from typing import Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
+
+from biorag_repro.core.records import Record
 
 
-class _Record(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
-
-
-class PaperMeta(_Record):
+class PaperMeta(Record):
     paper_id: str
     primary_domain: str
 
 
-class PaperGroup(_Record):
+class PaperGroup(Record):
     paper_ids: list[str]
     basis: str
 
@@ -29,7 +27,7 @@ class PaperGroup(_Record):
         return self
 
 
-class RelatednessRecord(_Record):
+class RelatednessRecord(Record):
     schema_version: str = "1"
     corpus_content_sha256: str
     screening_basis: str
@@ -37,7 +35,7 @@ class RelatednessRecord(_Record):
     reviewer: str | None = None
 
 
-class PaperSplit(_Record):
+class PaperSplit(Record):
     schema_version: str = "1"
     corpus_version: str
     corpus_content_sha256: str | None = None

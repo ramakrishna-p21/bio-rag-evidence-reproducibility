@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 from test_corpus import paper as paper_metadata
-from test_documents_phase4 import _source
+from test_documents_ingestion import _source
 from test_documents_table_fidelity import _native_data, _typed_native
 from test_retrieval_models import settings
 
@@ -23,15 +23,15 @@ from biorag_repro.corpus.manifest import (
     serialize_csv,
 )
 from biorag_repro.documents.authorization import ScientificAuthority
-from biorag_repro.documents.chunking import chunk_document, publish_chunking
-from biorag_repro.documents.pdf_ingest import publish_pdf_result
-from biorag_repro.documents.phase4 import (
+from biorag_repro.documents.ingestion import (
     Phase4GateIndex,
     build_arm,
     publish_validation,
     validate_build,
 )
+from biorag_repro.documents.pdf_ingest import publish_pdf_result
 from biorag_repro.retrieval import bm25
+from biorag_repro.retrieval.chunking import chunk_document, publish_chunking
 from biorag_repro.retrieval.models import CanonicalInput, ConfigurationRef, Phase5Configuration
 from biorag_repro.retrieval.storage import record_ref
 from biorag_repro.retrieval.validation import CanonicalAuthority, load_canonical_input
@@ -457,7 +457,7 @@ def test_interrupted_retrieval_requires_its_manifest(inputs, tmp_path, monkeypat
 
 
 def test_existing_index_links_accept_sorted_verified_membership(inputs):
-    from biorag_repro.documents.chunking import read_chunking
+    from biorag_repro.retrieval.chunking import read_chunking
     from biorag_repro.retrieval.validation import validate_index_links
 
     sources, _ = inputs

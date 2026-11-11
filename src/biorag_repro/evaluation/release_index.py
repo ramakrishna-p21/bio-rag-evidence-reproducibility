@@ -16,8 +16,8 @@ from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.evaluation.analysis_result import (
     SCIENTIFIC_FILES,

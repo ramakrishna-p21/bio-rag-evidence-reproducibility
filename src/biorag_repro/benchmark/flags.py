@@ -7,8 +7,9 @@ from difflib import SequenceMatcher
 from pydantic import Field
 
 from biorag_repro.benchmark.discovery import CandidateLead
-from biorag_repro.benchmark.models import BenchmarkItem, EntityGold, QuantityGold, Record, SetGold
+from biorag_repro.benchmark.models import BenchmarkItem, EntityGold, QuantityGold, SetGold
 from biorag_repro.benchmark.split import PaperGroup
+from biorag_repro.core.records import Record
 
 
 class ReviewFlag(Record):

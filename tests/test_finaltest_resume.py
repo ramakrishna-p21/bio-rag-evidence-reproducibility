@@ -252,7 +252,7 @@ def test_an_arm_that_was_never_started_has_no_batch_to_resume(crashed):
     w, _ = crashed
     from finaltest_audit_support import settings_for
     from finaltest_start_support import FakeRenderer
-    from test_generation_config import to_toml
+    from generation_support import to_toml
 
     renew(w)
     request = {
@@ -290,6 +290,7 @@ def test_the_public_resume_ends_in_a_production_refusal_even_if_the_guard_accept
     renew(w)
     monkeypatch.setattr(module, "_production_assessed", lambda *_: w.assess())
     before = w.tree()
+    reads = w.request.inputs.calls  # the crashed batch already read its inputs
     with pytest.raises(ProductionResumeRefused) as caught:
         resume_batch(tmp_path, w.fixture.sha, repo=tmp_path, batch_id=started.batch_id)
     assert caught.value.code == "production_disabled"
@@ -297,7 +298,8 @@ def test_the_public_resume_ends_in_a_production_refusal_even_if_the_guard_accept
     with pytest.raises(ProductionResumeRefused) as caught:
         resume_batch(tmp_path, w.fixture.sha, repo=tmp_path, batch_id=started.batch_id)
     assert caught.value.code == "no_production_request"
-    assert w.tree() == before and w.request.inputs.calls == 0 or True
+    assert w.tree() == before
+    assert w.request.inputs.calls == reads
 
 
 def test_the_public_resume_refuses_a_fixture_ready_report_with_the_real_reason(

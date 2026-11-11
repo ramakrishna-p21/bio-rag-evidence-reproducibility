@@ -10,8 +10,8 @@ run is labelled as a mock run throughout.
 import json
 
 import pytest
+from generation_support import ROOT
 from test_generation_attempts import Clock, environment
-from test_generation_prompt import ROOT
 from test_generation_roster import (
     build,
     make_renderer,
@@ -458,7 +458,7 @@ def test_a_damaged_stored_input_stops_read_back_and_resume(world, tmp_path, dama
 @pytest.mark.model_smoke
 def test_hugging_face_smoke_run_over_the_authoritative_roster(world, tmp_path):
     """Tiny random weights on CPU. The outputs are noise and are never scientific."""
-    from test_generation_config import QWEN_REVISION
+    from generation_support import QWEN_REVISION
     from test_generation_environment import cpu_probes
     from tiny_model import build_tiny, load_once
 

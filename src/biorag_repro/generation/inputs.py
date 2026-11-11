@@ -12,10 +12,10 @@ from typing import Annotated, Any, Self
 
 from pydantic import StringConstraints, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
 from biorag_repro.generation.config import TokenizerPin
 from biorag_repro.generation.prompt import InputRenderer, RenderedInput

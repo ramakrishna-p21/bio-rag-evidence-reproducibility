@@ -4,7 +4,7 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from biorag_repro.benchmark.models import Record
+from biorag_repro.core.records import Record
 
 
 class SeedEntry(Record):

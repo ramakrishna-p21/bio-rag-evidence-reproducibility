@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Literal, Self
 from xml.etree import ElementTree
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from biorag_repro.core.hashing import (
     canonical_json_bytes,
@@ -20,6 +20,7 @@ from biorag_repro.core.hashing import (
 )
 from biorag_repro.core.identity import raw_source_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 
 Status = Literal["known", "unknown", "unavailable", "not_applicable", "not_checked"]
 Domain = Literal[
@@ -46,10 +47,6 @@ Representation = Literal["JATS", "PDF"]
 CORPUS_V1_PAPER_IDS = frozenset(f"P{i:03d}" for i in range(1, 51))
 
 
-class StrictRecord(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
-
-
 def _nonblank(value: str) -> str:
     if not value.strip():
         raise ValueError("required text must be nonblank")
@@ -72,7 +69,7 @@ def _utc_timestamp(value: str | None) -> str | None:
     return value
 
 
-class SourceRecord(StrictRecord):
+class SourceRecord(Record):
     artifact_id: str
     sha256: str
     provider: str
@@ -123,7 +120,7 @@ class SourceRecord(StrictRecord):
         return self
 
 
-class PairVerification(StrictRecord):
+class PairVerification(Record):
     pair_status: Literal["verified_exact_pair"]
     pair_verification_basis: list[Basis] = Field(min_length=1)
     pair_verified_at_utc: str | None
@@ -151,7 +148,7 @@ class PairVerification(StrictRecord):
         return self
 
 
-class PaperRecord(StrictRecord):
+class PaperRecord(Record):
     schema_version: str
     corpus_version: str
     manifest_revision: str
@@ -221,11 +218,11 @@ class PaperRecord(StrictRecord):
         return self
 
 
-class CorpusManifest(StrictRecord):
+class CorpusManifest(Record):
     papers: list[PaperRecord]
 
 
-class Finding(StrictRecord):
+class Finding(Record):
     rule: str
     severity: Literal["pass", "hard_error", "review_warning"]
     paper_id: str | None = None
@@ -235,12 +232,12 @@ class Finding(StrictRecord):
     disposition: str | None = None
 
 
-class ValidationReport(StrictRecord):
+class ValidationReport(Record):
     schema_version: str
     findings: list[Finding]
 
 
-class ReleaseRecord(StrictRecord):
+class ReleaseRecord(Record):
     record_schema_version: str
     corpus_version: str
     manifest_revision: str

@@ -19,10 +19,10 @@ from biorag_repro.benchmark.validation import ValidationReport as BenchmarkValid
 from biorag_repro.core.manifest import BuildManifest
 from biorag_repro.corpus.manifest import ReleaseRecord, ValidationReport
 from biorag_repro.documents.authorization import ReproductionCandidate
+from biorag_repro.documents.ingestion import JatsBuild, Phase4GateIndex, Phase4Validation
 from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration
 from biorag_repro.documents.pdf import PdfConfiguration
 from biorag_repro.documents.pdf_ingest import ConversionAttempt, PdfCanonicalBuild
-from biorag_repro.documents.phase4 import JatsBuild, Phase4GateIndex, Phase4Validation
 from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff
 from biorag_repro.evaluation.analysis_models import AnalysisInventory, AnalysisRow, GeneratorInput
 from biorag_repro.evaluation.analysis_preflight import AnalysisPreflight

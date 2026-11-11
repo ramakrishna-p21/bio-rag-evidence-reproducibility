@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+from generation_support import needs_tokenizer
 from test_analysis_export import roster_of, world
 from test_analysis_handoff import official_table, pair
 from test_analysis_result import (
@@ -23,7 +24,6 @@ from test_analysis_result import (
     writable_copy,
 )
 from test_generation_official import recognised, view  # noqa: F401  (fixtures)
-from test_generation_prompt import needs_tokenizer
 from test_r_input_fixture import CODE, build_table_with_papers
 
 from biorag_repro.core.hashing import sha256_file

@@ -8,7 +8,7 @@ from test_stage_a_reviewer_equivalence import component
 from biorag_repro.core.hashing import HashMismatchError
 from biorag_repro.evaluation.models import Placement, SetLocus
 from biorag_repro.evaluation.stage_a import _index, locate, validate_judgment
-from biorag_repro.evaluation.storage import publish_judgment, read_judgment
+from biorag_repro.evaluation.stage_a_storage import publish_judgment, read_judgment
 
 SCOPED = (
     "<article><body><sec><title>Results</title><sec><title>Performance on the original networks</title>"

@@ -13,7 +13,7 @@ from test_documents_jats import parse
 from test_retrieval_models import ref, selection, settings
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.documents.chunking import (
+from biorag_repro.retrieval.chunking import (
     chunk_document,
     chunks_ref,
     discover_occurrences,

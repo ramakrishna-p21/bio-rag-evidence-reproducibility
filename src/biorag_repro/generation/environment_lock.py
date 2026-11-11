@@ -21,8 +21,8 @@ from typing import Literal, Self
 
 from pydantic import Field, ValidationError, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
 from biorag_repro.generation.environment import (
     EnvironmentProbes,

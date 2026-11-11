@@ -21,21 +21,18 @@ from typing import Final, Literal, Self, get_args, get_origin
 
 from pydantic import Field, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
-from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.manifest import ArtifactRef, BuildInput
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
-    publish_bytes,
-    publish_manifest,
     read_manifest,
     read_project_json,
-    serialize_project_json,
 )
 from biorag_repro.evaluation.analysis_models import (
     COLUMNS,
     MISSING,
     PRIMARY_SELECTION,
+    REPRESENTATIONS,
     AnalysisInventory,
     AnalysisRow,
     ColumnSpec,
@@ -43,7 +40,7 @@ from biorag_repro.evaluation.analysis_models import (
     RosterItem,
     Scope,
 )
-from biorag_repro.evaluation.analysis_storage import read_table
+from biorag_repro.evaluation.analysis_storage import publish_derived_record, read_table
 from biorag_repro.evaluation.analysis_table import primary_pairs
 from biorag_repro.evaluation.attribution import Correct, Delivered, Execution
 from biorag_repro.evaluation.stage_c import generation_digest
@@ -53,7 +50,6 @@ from biorag_repro.generation.official import VerifiedOfficialRun
 
 SCHEMA_VERSION = "1"
 TRANSFORMATION = "analysis_handoff_v1"
-REPRESENTATIONS: Final = ("JATS", "PDF_DOCLING")
 OutcomeName = Literal["evidence_delivered", "answer_correct"]
 Origin = Literal["verified_official_run", "synthetic_rehearsal"]
 
@@ -466,6 +462,17 @@ def build_handoff(
 
     Give verified official runs, or set `rehearsal` for an explicit synthetic rehearsal.
     """
+    return _describe(table_build, root, code, official_runs, rehearsal)[0]
+
+
+def _describe(
+    table_build: ArtifactRef,
+    root: Path,
+    code: GitState,
+    official_runs: Sequence[VerifiedOfficialRun],
+    rehearsal: bool,
+) -> tuple[AnalysisHandoff, list[AnalysisRow]]:
+    """The handoff and the table rows it was built from (verified once, by `read_table`)."""
     if bool(official_runs) == rehearsal:
         raise HandoffError("give exactly one of verified official runs or rehearsal=True")
     rows = read_table(table_build, root)
@@ -489,7 +496,7 @@ def build_handoff(
     if any(len(configs) != 1 for configs in arms.values()):
         raise HandoffError("one matrix arm must run under one configuration")
     source_runs = [] if rehearsal else _check_official(rows, official_runs)
-    return AnalysisHandoff(
+    handoff = AnalysisHandoff(
         input_origin="synthetic_rehearsal" if rehearsal else "verified_official_run",
         phase="development",
         benchmark_version=roster.benchmark_version,
@@ -515,6 +522,7 @@ def build_handoff(
         execution_provenance_required=list(EXECUTION_PROVENANCE_REQUIRED),
         code=code,
     )
+    return handoff, rows
 
 
 # ---- verification, publication and read-back ---------------------------------------------------
@@ -531,9 +539,7 @@ def _verify(
         )
     if not official and runs:
         raise HandoffError("a rehearsal handoff is not checked against official runs")
-    expected = build_handoff(
-        handoff.table_build, root, code=handoff.code, official_runs=runs, rehearsal=not official
-    )
+    expected, rows = _describe(handoff.table_build, root, handoff.code, runs, not official)
     if expected != handoff:
         fields = sorted(
             name
@@ -541,7 +547,7 @@ def _verify(
             if getattr(expected, name) != getattr(handoff, name)
         )
         raise HandoffError(f"handoff differs from the table and runs it describes: {fields}")
-    return read_table(handoff.table_build, root)
+    return rows
 
 
 def _settings_sha256() -> str:
@@ -561,50 +567,14 @@ def _inputs(handoff: AnalysisHandoff) -> list[BuildInput]:
 
 def _store(handoff: AnalysisHandoff, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
     """Write a handoff and its build manifest without replacing anything or checking it."""
-    data = serialize_project_json(handoff, AnalysisHandoff)
-    digest = sha256_bytes(data)
-    inputs = _inputs(handoff)
-    artifact_id = derived_artifact_id(
-        artifact_kind="analysis_handoff",
-        inputs=[ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in inputs],
-        transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(),
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    ref = ArtifactRef(
-        artifact_id=artifact_id, logical_ref=f"analysis/handoff/{artifact_id}.json", sha256=digest
-    )
-    manifest = BuildManifest(
-        schema_version="1",
-        inputs=inputs,
-        transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(),
-        outputs=[
-            DerivedOutput(
-                artifact=ref,
-                artifact_kind="analysis_handoff",
-                output_format="json",
-                serialization_version="1",
-                identity_version="1",
-            )
-        ],
-        status="complete",
-    )
-    target = root / ref.logical_ref
-    target.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(
-        target,
-        data,
-        digest,
-        validate_temp=lambda p: read_project_json(p, digest, AnalysisHandoff),
-    )
-    build_id = sha256_bytes(canonical_json_bytes([artifact_id]))
-    build_ref = f"analysis/handoff/{build_id}.build.json"
-    manifest_digest = publish_manifest(manifest, root / build_ref, {ref.logical_ref: target})
-    return ref, ArtifactRef(
-        artifact_id="build_" + manifest_digest, logical_ref=build_ref, sha256=manifest_digest
+    return publish_derived_record(
+        handoff,
+        "analysis_handoff",
+        "handoff",
+        _inputs(handoff),
+        TRANSFORMATION,
+        _settings_sha256(),
+        root,
     )
 
 

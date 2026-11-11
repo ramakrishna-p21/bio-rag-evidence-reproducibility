@@ -17,16 +17,16 @@ from biorag_repro.documents.authorization import (
     publish_candidate,
     validate_scientific_pair,
 )
-from biorag_repro.documents.pdf_ingest import ConversionAttempt, canonicalize_saved_native
-from biorag_repro.documents.phase4 import (
+from biorag_repro.documents.ingestion import (
     Phase4GateIndex,
     Phase4Validation,
-    _source,
     build_arm,
+    frozen_source,
     load_frozen_paper,
     publish_validation,
     validate_build,
 )
+from biorag_repro.documents.pdf_ingest import ConversionAttempt, canonicalize_saved_native
 
 
 def reproduce_pair(
@@ -93,7 +93,7 @@ def reproduce_pair(
     jats = build_arm(
         paper, paper.paper_id, "JATS", corpus, output, authority.jats_configuration_sha256
     )
-    source_path, source = _source(paper, "PDF_DOCLING", corpus)
+    source_path, source = frozen_source(paper, "PDF_DOCLING", corpus)
     pdf = canonicalize_saved_native(
         source_path,
         source,

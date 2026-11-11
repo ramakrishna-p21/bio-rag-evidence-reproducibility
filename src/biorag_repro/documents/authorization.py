@@ -8,11 +8,26 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, verify_file_sha256
+from biorag_repro.core.hashing import (
+    read_verified_bytes,
+    sha256_bytes,
+    verify_file_sha256,
+)
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
-from biorag_repro.core.manifest import ArtifactRef, BuildManifest
+from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import publish_bytes, read_project_json, serialize_project_json
+from biorag_repro.documents.ingestion import (
+    Arm,
+    JatsBuild,
+    Phase4GateIndex,
+    Phase4Validation,
+    evidence_ref,
+    frozen_source,
+    load_frozen_paper,
+    validate_build,
+)
 from biorag_repro.documents.jats import TRANSFORMATION_ID as JATS_TRANSFORMATION
+from biorag_repro.documents.lineage import check_manifest_contract, runtime_settings
 from biorag_repro.documents.models import CanonicalDocument, Record
 from biorag_repro.documents.pdf import TRANSFORMATION_ID as PDF_TRANSFORMATION
 from biorag_repro.documents.pdf_ingest import (
@@ -20,17 +35,6 @@ from biorag_repro.documents.pdf_ingest import (
     ConversionAttempt,
     PdfCanonicalBuild,
     canonical_build_ref,
-)
-from biorag_repro.documents.phase4 import (
-    Arm,
-    JatsBuild,
-    Phase4GateIndex,
-    Phase4Validation,
-    _check_manifest,
-    _source,
-    evidence_ref,
-    load_frozen_paper,
-    validate_build,
 )
 
 # Frozen scientific selection; neither value is human publication approval.
@@ -115,47 +119,6 @@ def validation_ref(value: Phase4Validation) -> ArtifactRef:
     )
 
 
-def runtime_settings(configuration: str, environment: str, assets: str) -> str:
-    return sha256_bytes(
-        canonical_json_bytes(
-            {
-                "configuration_sha256": configuration,
-                "environment_sha256": environment,
-                "asset_inventory_sha256": assets,
-            }
-        )
-    )
-
-
-def check_manifest_contract(
-    ref: ArtifactRef,
-    root: Path,
-    output: ArtifactRef,
-    inputs: list[ArtifactRef],
-    roles: list[str],
-    kind: str,
-    transform: str,
-    settings: str,
-    version: str,
-) -> BuildManifest:
-    manifest = _check_manifest(ref, root, output, inputs)
-    item = manifest.outputs[0]
-    if (
-        [x.role for x in manifest.inputs] != roles
-        or manifest.transformation_id != transform
-        or manifest.transformation_settings_sha256 != settings
-        or (
-            item.artifact_kind,
-            item.output_format,
-            item.serialization_version,
-            item.identity_version,
-        )
-        != (kind, "json", version, "1")
-    ):
-        raise ValueError("manifest transformation contract mismatch (roles, metadata, settings)")
-    return manifest
-
-
 def validate_scientific_pair(
     value: Phase4GateIndex,
     root: Path,
@@ -182,7 +145,7 @@ def validate_scientific_pair(
     if value.corpus_version != release.corpus_version:
         raise ValueError("authorized corpus version mismatch")
     arms: tuple[Arm, Arm] = ("JATS", "PDF_DOCLING")
-    sources = {arm: _source(paper, arm, corpus)[1] for arm in arms}
+    sources = {arm: frozen_source(paper, arm, corpus)[1] for arm in arms}
     attempt = read_project_json(
         root / authority.native_attempt.logical_ref,
         authority.native_attempt.sha256,
@@ -209,8 +172,7 @@ def validate_scientific_pair(
         authority.asset_inventory_sha256,
     )
     native = attempt.native_artifact
-    verify_file_sha256(root / native.logical_ref, native.sha256)
-    native_data = json.loads((root / native.logical_ref).read_bytes())
+    native_data = json.loads(read_verified_bytes(root / native.logical_ref, native.sha256))
     if native_data.get("schema_name") != "DoclingDocument" or not native_data.get("version"):
         raise ValueError("invalid qualified native schema")
     check_manifest_contract(

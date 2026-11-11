@@ -13,7 +13,7 @@ import json
 from itertools import pairwise
 
 import pytest
-from finaltest_audit_support import CONFIGS, ITEMS, PLAN
+from finaltest_audit_support import CONFIGS, ITEMS, PLAN, settings_for
 from finaltest_completion_support import FailsOn, assess_it, complete_fresh, in_session, verify_it
 from finaltest_resume_support import DiesAfter, Stop, assess, renew, resume
 from finaltest_start_support import (
@@ -23,12 +23,13 @@ from finaltest_start_support import (
     make_world,
     mock_environment,
 )
+from finaltest_support import NOTE
+from generation_support import to_toml
 from test_finaltest_resume_recovery import attempt
 from test_finaltest_start import audit
-from test_generation_config import to_toml
 
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
-from biorag_repro.finaltest import inventory, layout, registry
+from biorag_repro.finaltest import layout, registry
 from biorag_repro.finaltest.batches import batch_id_for
 from biorag_repro.finaltest.campaign import ARMS, expected_keys, plan_sha256
 from biorag_repro.finaltest.completeness import (
@@ -42,9 +43,6 @@ from biorag_repro.finaltest.finish import CompletionRefused
 from biorag_repro.finaltest.inventory import verify_root
 from biorag_repro.finaltest.session import open_session
 from biorag_repro.finaltest.start import _start_with
-
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
-from finaltest_audit_support import settings_for
 
 
 def planned_count(arm):

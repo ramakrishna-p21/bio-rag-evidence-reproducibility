@@ -5,7 +5,7 @@ from test_documents_jats import parse
 from test_retrieval_models import ref, selection, settings
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.documents.chunking import (
+from biorag_repro.retrieval.chunking import (
     chunk_document,
     discover_occurrences,
     render_units,
@@ -267,7 +267,7 @@ def test_rehashed_scientific_counterfeits_reject_at_the_same_boundary(attack):
     else:
         bad.chunk_set.accounting[0].reason = "invented"
     # Renew downstream chunk IDs and JSONL identity before scientific validation.
-    from biorag_repro.documents.chunking import chunks_ref
+    from biorag_repro.retrieval.chunking import chunks_ref
 
     bad.chunk_set.chunk_ids = [record_ref(c).artifact_id for c in bad.chunks]
     bad.chunk_set.chunks = chunks_ref(bad.chunks, selected, cfgref, "canonical_whole_units_v1")
@@ -453,7 +453,7 @@ def test_rehashed_table_relationship_counterfeits_reject(old, new):
     validate_chunking(good, doc, selected, cfgref, cfg, counter)
     from copy import deepcopy
 
-    from biorag_repro.documents.chunking import chunks_ref
+    from biorag_repro.retrieval.chunking import chunks_ref
 
     bad = deepcopy(good)
     target = next(chunk for chunk in bad.chunks if old in chunk.rendered_text)

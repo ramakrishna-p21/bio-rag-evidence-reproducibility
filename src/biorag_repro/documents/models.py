@@ -2,10 +2,11 @@
 
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 
 from biorag_repro.core.hashing import validate_sha256
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record as CoreRecord
 
 MappingState = Literal[
     "exact_native", "derived", "approximate", "unavailable", "ambiguous", "parser_damaged", "failed"
@@ -39,10 +40,10 @@ NodeKind = Literal[
 ]
 
 
-class Record(BaseModel):
-    model_config = ConfigDict(
-        strict=True, extra="forbid", validate_default=True, allow_inf_nan=False
-    )
+class Record(CoreRecord):
+    """The shared strict base, and no NaN or infinity anywhere in a canonical document."""
+
+    model_config = ConfigDict(allow_inf_nan=False)
 
 
 class JatsConfiguration(Record):

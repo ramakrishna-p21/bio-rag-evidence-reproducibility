@@ -35,10 +35,10 @@ from typing import Annotated, Any, Final, Literal, Self
 
 from pydantic import Field, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, sha256_file
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
     publish_bytes,
     publish_manifest,

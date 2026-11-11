@@ -13,7 +13,7 @@ unavailable), and that refusal is what callers see.
 `_start_with` is the orchestration itself, written once. It takes an `assess` callable and an
 open `Session`, accepts rehearsal roots only (`allowed_root_kinds`), and is used by tests with
 a fixture assessor built on the existing readiness test seam. The same refusal of root kinds is
-made again by every publisher it calls (`registry`, `finaltest_store`) and by the verifier, so
+made again by every publisher it calls (`registry`, `store`) and by the verifier, so
 removing the check here does not open a final-test root. None of this is a security boundary
 against code that can edit this package: it makes the intended route the only convenient
 one, and the evidence it leaves (root kind, mock backend, fixture policy hash) tells a
@@ -74,10 +74,10 @@ from biorag_repro.finaltest.protected import (
 )
 from biorag_repro.finaltest.runrecord import FinalTestRunRecord, run_record_sha256
 from biorag_repro.finaltest.session import Session
+from biorag_repro.finaltest.store import create_final_test_store
 from biorag_repro.generation.attempts import RetryPolicy, retry_policy_of
 from biorag_repro.generation.config import GeneratorConfiguration, resolve_generator_config
 from biorag_repro.generation.environment import BackendKind, utc_now
-from biorag_repro.generation.finaltest_store import create_final_test_store
 from biorag_repro.generation.prompt import InputRenderer
 from biorag_repro.generation.seeds import GenerationSeedRegistry, check_seeds_for_configuration
 from biorag_repro.readiness import guard, publish

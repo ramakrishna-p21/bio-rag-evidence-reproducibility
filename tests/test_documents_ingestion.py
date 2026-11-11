@@ -9,8 +9,8 @@ import pytest
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import raw_source_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.documents.pdf_ingest import publish_pdf_result
-from biorag_repro.documents.phase4 import (
+from biorag_repro.documents.coverage import validate_jats_coverage, validate_pdf_coverage
+from biorag_repro.documents.ingestion import (
     Phase4GateIndex,
     Phase4Validation,
     build_arm,
@@ -18,9 +18,8 @@ from biorag_repro.documents.phase4 import (
     publish_gate_index,
     publish_validation,
     validate_build,
-    validate_jats_coverage,
-    validate_pdf_coverage,
 )
+from biorag_repro.documents.pdf_ingest import publish_pdf_result
 
 
 def _source(paper_id: str, kind: str, content: bytes, root: Path) -> ArtifactRef:
@@ -167,7 +166,7 @@ def test_pdf_coverage_rejects_missing_native_object_and_orig():
 
 
 def test_pdf_boundary_refuses_partial_or_failed_complete_build(tmp_path, monkeypatch):
-    from biorag_repro.documents import phase4
+    from biorag_repro.documents import ingestion
 
     paper = _paper(tmp_path / "corpus")
     incomplete = SimpleNamespace(
@@ -176,7 +175,7 @@ def test_pdf_boundary_refuses_partial_or_failed_complete_build(tmp_path, monkeyp
         canonical_artifact=None,
         build_manifest=None,
     )
-    monkeypatch.setattr(phase4, "convert_pdf", lambda *args: incomplete)
+    monkeypatch.setattr(ingestion, "convert_pdf", lambda *args: incomplete)
     built = build_arm(
         paper,
         "P001",
@@ -193,7 +192,7 @@ def test_pdf_boundary_refuses_partial_or_failed_complete_build(tmp_path, monkeyp
 
 
 def test_release_lookup_rejects_wrong_version_and_missing_pair(tmp_path, monkeypatch):
-    from biorag_repro.documents import phase4
+    from biorag_repro.documents import ingestion
 
     paper = _paper(tmp_path / "corpus")
     release = SimpleNamespace(
@@ -203,11 +202,11 @@ def test_release_lookup_rejects_wrong_version_and_missing_pair(tmp_path, monkeyp
         manifest_semantic_sha256="d" * 64,
         manifest_artifact=SimpleNamespace(logical_ref="manifest.csv"),
     )
-    monkeypatch.setattr(phase4, "read_project_json", lambda *args: release)
-    monkeypatch.setattr(phase4, "parse_csv", lambda *args: SimpleNamespace(papers=[paper]))
-    monkeypatch.setattr(phase4, "sha256_bytes", lambda *args: "b" * 64)
-    monkeypatch.setattr(phase4, "corpus_content_hash", lambda *args: "c" * 64)
-    monkeypatch.setattr(phase4, "manifest_semantic_hash", lambda *args: "d" * 64)
+    monkeypatch.setattr(ingestion, "read_project_json", lambda *args: release)
+    monkeypatch.setattr(ingestion, "parse_csv", lambda *args: SimpleNamespace(papers=[paper]))
+    monkeypatch.setattr(ingestion, "sha256_bytes", lambda *args: "b" * 64)
+    monkeypatch.setattr(ingestion, "corpus_content_hash", lambda *args: "c" * 64)
+    monkeypatch.setattr(ingestion, "manifest_semantic_hash", lambda *args: "d" * 64)
     (tmp_path / "corpus" / "manifest.csv").write_bytes(b"synthetic")
     with pytest.raises(ValueError, match="corpus version"):
         load_frozen_paper(tmp_path / "corpus", tmp_path / "release.json", "a" * 64, "wrong", "P001")
@@ -249,7 +248,7 @@ def test_validation_and_gate_index_are_immutable_and_pair_bound(tmp_path):
 
 
 def test_original_synthetic_pdf_pair_has_saved_native_lineage(tmp_path, monkeypatch):
-    from biorag_repro.documents import phase4
+    from biorag_repro.documents import ingestion
 
     corpus = tmp_path / "corpus"
     output = tmp_path / "output"
@@ -314,7 +313,7 @@ def test_original_synthetic_pdf_pair_has_saved_native_lineage(tmp_path, monkeypa
             load_native=load_native,
         )
 
-    monkeypatch.setattr(phase4, "convert_pdf", fake_convert)
+    monkeypatch.setattr(ingestion, "convert_pdf", fake_convert)
     jats = build_arm(paper, "P001", "JATS", corpus, output, "a" * 64)
     pdf = build_arm(
         paper,

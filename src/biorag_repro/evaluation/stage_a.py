@@ -11,10 +11,7 @@ from itertools import pairwise
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.core.storage import serialize_project_json
-from biorag_repro.documents.chunking import discover_occurrences
 from biorag_repro.documents.models import (
     CanonicalDocument,
     CanonicalNode,
@@ -29,7 +26,9 @@ from biorag_repro.evaluation.models import (
     StageAJudgment,
     Suggestion,
 )
+from biorag_repro.evaluation.stage_records import stage_record_ref
 from biorag_repro.evaluation.surface import surface_problem
+from biorag_repro.retrieval.chunking import discover_occurrences
 from biorag_repro.retrieval.models import SourceOccurrence
 
 BLOCKS = {"paragraph", "list_item", "caption", "title", "formula", "figure", "reference"}
@@ -483,22 +482,7 @@ def stage_a_dependencies(value: StageACandidate | StageAJudgment) -> list[tuple[
 def stage_a_ref(value: StageACandidate | StageAJudgment) -> ArtifactRef:
     """Identify a record by its exact bytes and its canonical, item and candidate lineage."""
     kind = "stage_a_candidate" if isinstance(value, StageACandidate) else "stage_a_judgment"
-    dependencies = stage_a_dependencies(value)
-    digest = sha256_bytes(serialize_project_json(value, type(value)))
-    artifact_id = derived_artifact_id(
-        artifact_kind=kind,
-        inputs=[ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies],
-        transformation_id=f"{kind}_v1",
-        transformation_settings_sha256=None,
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    return ArtifactRef(
-        artifact_id=artifact_id,
-        logical_ref=f"evaluation/stage_a/{kind}/{artifact_id}.json",
-        sha256=digest,
-    )
+    return stage_record_ref(value, kind, "stage_a", stage_a_dependencies(value), f"{kind}_v1")
 
 
 def automatic_judgment(candidate: StageACandidate, candidate_ref: ArtifactRef) -> StageAJudgment:

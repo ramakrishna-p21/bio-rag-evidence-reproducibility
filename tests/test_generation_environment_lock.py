@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from biorag_repro.core.hashing import sha256_bytes
-from biorag_repro.core.storage import HashMismatchError
+from biorag_repro.core.hashing import HashMismatchError, sha256_bytes
 from biorag_repro.generation.environment import EnvironmentProbes, GitState, GpuDevice, GpuReading
 from biorag_repro.generation.environment_lock import (
     EnvironmentInventory,

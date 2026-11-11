@@ -16,8 +16,8 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.generation.environment import check_utc
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]

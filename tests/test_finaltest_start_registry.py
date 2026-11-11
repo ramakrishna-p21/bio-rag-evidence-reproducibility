@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from finaltest_campaign_support import sha
 from finaltest_start_support import ARM, make_world
-from finaltest_support import authorization
+from finaltest_support import CONFLICT, INCOMPLETE, NOTE, UNAUTH, authorization
 
 from biorag_repro.finaltest import inventory, layout, registry
 from biorag_repro.finaltest.inventory import verify_root
@@ -19,11 +19,6 @@ from biorag_repro.finaltest.layout import EvidenceCitation
 from biorag_repro.finaltest.registry import ProtocolRefused
 from biorag_repro.finaltest.session import open_session
 from biorag_repro.finaltest.start import _start_with
-
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
-UNAUTH = "unauthorized_final_test_artifact"
-CONFLICT = "conflicting_final_test_artifact"
-INCOMPLETE = "history_inventory_incomplete"
 
 
 def started_world(tmp_path):

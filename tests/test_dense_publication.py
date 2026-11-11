@@ -248,7 +248,7 @@ def test_interrupted_final_index_manifest(built, tmp_path, monkeypatch):
 
 
 def test_existing_index_link_boundary_accepts_dense_sorted_membership(built):
-    from biorag_repro.documents.chunking import read_chunking
+    from biorag_repro.retrieval.chunking import read_chunking
     from biorag_repro.retrieval.validation import validate_index_links
 
     b = built

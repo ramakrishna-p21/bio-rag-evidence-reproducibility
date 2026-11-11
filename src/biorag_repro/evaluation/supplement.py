@@ -33,8 +33,9 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
-from biorag_repro.benchmark.models import BenchmarkItem, JatsRef, PdfRef, Record
+from biorag_repro.benchmark.models import BenchmarkItem, JatsRef, PdfRef
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes, serialize_project_json
 from biorag_repro.documents.models import CanonicalDocument, CanonicalNode
 from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff, VerifiedHandoff

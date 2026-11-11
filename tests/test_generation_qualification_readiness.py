@@ -8,12 +8,12 @@ reported honestly.
 # ruff: noqa: F811  (fixtures imported from other test modules)
 
 import pytest
+from generation_support import needs_tokenizer, resolve
 from pydantic import ValidationError
 from synthetic_environment import LOCK, approved_locks
 from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import Clock, coordinates
 from test_generation_completion import record_for
-from test_generation_config import resolve
 from test_generation_driver import (
     Killed,
     make_plan,
@@ -29,7 +29,6 @@ from test_generation_hf_backend import (
     rendered_for,
 )
 from test_generation_official import Scripted
-from test_generation_prompt import needs_tokenizer
 from test_generation_qualification import measured_memory, measuring
 from test_generation_roster import make_scope
 from test_generation_roster import shared as roster_world  # noqa: F401  (fixture)

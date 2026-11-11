@@ -10,7 +10,7 @@ from typing import Any
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id, observation_key
+from biorag_repro.core.identity import observation_key
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.evaluation.answer_scoring import Verdict, score_answer
@@ -22,6 +22,7 @@ from biorag_repro.evaluation.stage_c_models import (
     Status,
     utc_stamp,
 )
+from biorag_repro.evaluation.stage_records import stage_record_ref
 
 
 def check_result(item: BenchmarkItem, result: GenerationResult) -> None:
@@ -187,20 +188,6 @@ def transformation_id(value: StageCScore) -> str:
 
 def score_ref(value: StageCScore) -> ArtifactRef:
     """Identify a score by its bytes and the exact item, generation and output it came from."""
-    digest = sha256_bytes(serialize_project_json(value, StageCScore))
-    artifact_id = derived_artifact_id(
-        artifact_kind="stage_c_score",
-        inputs=[
-            ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies(value)
-        ],
-        transformation_id=transformation_id(value),
-        transformation_settings_sha256=None,
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    return ArtifactRef(
-        artifact_id=artifact_id,
-        logical_ref=f"evaluation/stage_c/stage_c_score/{artifact_id}.json",
-        sha256=digest,
+    return stage_record_ref(
+        value, "stage_c_score", "stage_c", dependencies(value), transformation_id(value)
     )

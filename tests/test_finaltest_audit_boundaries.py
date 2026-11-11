@@ -37,7 +37,7 @@ def test_run_record_type_is_known_only_to_its_schema_and_the_audit():
         "audit.py",
         "inventory.py",
         "start.py",
-        "finaltest_store.py",
+        "store.py",
         "resume.py",
         "completion.py",
     }
@@ -156,4 +156,4 @@ def test_the_only_run_store_subclasses_are_the_read_only_view_and_the_guarded_st
                 getattr(b, "id", "") == "RunStore" for b in node.bases
             ):
                 found[node.name] = path.name
-    assert found == {"ReadOnlyRunView": "readonly.py", "FinalTestStore": "finaltest_store.py"}
+    assert found == {"ReadOnlyRunView": "readonly.py", "FinalTestStore": "store.py"}

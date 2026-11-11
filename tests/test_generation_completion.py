@@ -90,6 +90,7 @@ def test_complete_run_publishes_and_reads_back_exactly(tmp_path):
     done = read_back(store, config, anchor)
     assert done.run_id == store.run_id and done.roster == record
     assert len(done.states) == len(roster) == 6
+    assert done.states == store.verify()  # the states that were verified, in the store's order
     assert {s.status for s in done.states} == {"complete"}
     completion = done.completion
     assert completion.roster_sha256 == roster_sha256(record)

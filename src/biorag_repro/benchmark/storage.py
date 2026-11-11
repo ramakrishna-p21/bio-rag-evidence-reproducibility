@@ -7,7 +7,7 @@ from typing import TypeVar
 
 from pydantic import BaseModel
 
-from biorag_repro.core.hashing import sha256_bytes, verify_file_sha256
+from biorag_repro.core.hashing import read_verified_bytes, sha256_bytes
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -42,8 +42,7 @@ def decode_jsonl(content: bytes, model: type[ModelT]) -> list[ModelT]:
 
 
 def read_jsonl(path: Path, expected_sha256: str, model: type[ModelT]) -> list[ModelT]:
-    verify_file_sha256(path, expected_sha256)
-    return decode_jsonl(path.read_bytes(), model)
+    return decode_jsonl(read_verified_bytes(path, expected_sha256), model)
 
 
 def jsonl_sha256(records: Sequence[BaseModel]) -> str:

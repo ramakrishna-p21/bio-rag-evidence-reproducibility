@@ -122,7 +122,7 @@ def test_incomplete_manifest_is_not_accepted_even_with_renewed_hash(pair, author
         }
     )
     (pair.output / altered.logical_ref).write_bytes(content)
-    from biorag_repro.documents.phase4 import publish_validation
+    from biorag_repro.documents.ingestion import publish_validation
 
     report = pair.jr.model_copy(update={"build_manifest": altered})
     index = pair.index.model_copy(

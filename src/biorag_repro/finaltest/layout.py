@@ -1,16 +1,15 @@
 """Versioned layout and typed records of the final-test storage root.
 
-A root holds `ROOT.json`, an append-only registry of hash-chained events and a lock
-directory. Later passes add batches below it; none exist here.
+A root holds `ROOT.json`, an append-only registry of hash-chained events, a lock directory
+and the batch records the registry cites.
 
     final_test_v1/
         ROOT.json            genesis record of the root
         registry/NNNNNN.json registry events, one file each
         locks/registry.lock  empty file used only for flock
 
-    batches/<id>/manifest.json   structural batch record (one per matrix arm), added with the batch layout
-
-Reserved for later passes and neither created nor permitted yet: `anchors/`, `runs/`.
+    batches/<id>/manifest.json   structural batch record (one per matrix arm)
+    runs/<run_id>/run.json       run record; the run's observation store lives beside it
 
 What is trusted. `StorageAuthorization` is the evidence artifact that policy slot G11
 (`storage_authorization`) is meant to approve: its canonical-JSON SHA-256 is the slot value.
@@ -27,8 +26,8 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.generation.environment import check_utc
 
@@ -138,7 +137,7 @@ EVENT_NAME: Final = re.compile(r"^(\d{6})\.json$")
 class FrozenRecord(Record):
     """A record whose published value cannot be changed in memory either."""
 
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True, frozen=True)
+    model_config = ConfigDict(frozen=True)
 
 
 class StorageAuthorization(Record):

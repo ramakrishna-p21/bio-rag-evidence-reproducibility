@@ -7,9 +7,9 @@ official handoff.
 """
 
 import pytest
+from generation_support import needs_tokenizer
 from test_analysis_handoff import CODE, official_table, pair, publish, rehearsal, world
 from test_generation_official import recognised, view  # noqa: F401  (fixtures)
-from test_generation_prompt import needs_tokenizer
 
 from biorag_repro.evaluation import analysis_handoff as ah
 from biorag_repro.evaluation.analysis_cli import main

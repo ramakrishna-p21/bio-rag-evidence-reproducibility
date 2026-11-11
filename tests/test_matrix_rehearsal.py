@@ -16,10 +16,10 @@ retrieval-scope checks are real, the 192-token chunking and BGE ranking are not.
 from collections import Counter
 
 import pytest
+from generation_support import ROOT, needs_tokenizer
 from test_analysis_export import P_A, _roster, deliver, observation, result_for
 from test_analysis_export import world as table_world
 from test_generation_driver import Killed, make_plan, run_mock
-from test_generation_prompt import ROOT, needs_tokenizer
 from test_generation_roster import QUESTIONS as QUESTIONS_TEXT
 from test_generation_roster import (
     make_renderer,

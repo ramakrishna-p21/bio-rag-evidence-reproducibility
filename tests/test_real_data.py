@@ -16,8 +16,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from test_generation_config import synthetic_settings, to_toml
-from test_generation_prompt import artifact
+from generation_support import artifact, synthetic_settings, to_toml
 
 from biorag_repro.generation import driver
 from biorag_repro.generation.prompt import output_schema_sha256, prompt_sha256

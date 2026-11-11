@@ -19,8 +19,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import serialize_project_json
 
 BackendKind = Literal["official", "smoke", "mock"]

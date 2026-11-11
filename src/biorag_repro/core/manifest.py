@@ -3,17 +3,14 @@
 import ntpath
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from biorag_repro.core.hashing import validate_sha256
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
+from biorag_repro.core.records import Record
 
 
-class _StrictValue(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
-
-
-class ArtifactRef(_StrictValue):
+class ArtifactRef(Record):
     artifact_id: str = Field(min_length=1)
     logical_ref: str = Field(min_length=1)
     sha256: str
@@ -39,7 +36,7 @@ class ArtifactRef(_StrictValue):
         return value
 
 
-class BuildInput(_StrictValue):
+class BuildInput(Record):
     role: str = Field(min_length=1)
     artifact: ArtifactRef
 
@@ -51,7 +48,7 @@ class BuildInput(_StrictValue):
         return value
 
 
-class DerivedOutput(_StrictValue):
+class DerivedOutput(Record):
     artifact: ArtifactRef
     artifact_kind: str = Field(min_length=1)
     output_format: str = Field(min_length=1)
@@ -66,7 +63,7 @@ class DerivedOutput(_StrictValue):
         return value
 
 
-class BuildManifest(_StrictValue):
+class BuildManifest(Record):
     schema_version: Literal["1"]
     inputs: list[BuildInput] = Field(min_length=1)
     transformation_id: str = Field(min_length=1)

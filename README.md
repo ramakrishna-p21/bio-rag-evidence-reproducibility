@@ -41,8 +41,8 @@ by content hashes recorded in build manifests.
 | --- | --- |
 | `src/biorag_repro/core` | Hashing, identities, build manifests, immutable file publication. |
 | `src/biorag_repro/corpus`, `benchmark` | Corpus manifest and benchmark construction and validation. |
-| `src/biorag_repro/documents` | JATS and PDF ingestion, canonical documents, chunking. |
-| `src/biorag_repro/retrieval` | BM25, dense retrieval, context assembly. |
+| `src/biorag_repro/documents` | JATS and PDF ingestion, canonical documents, coverage and lineage validation. |
+| `src/biorag_repro/retrieval` | Chunking, BM25, dense retrieval, context assembly. |
 | `src/biorag_repro/generation` | Generator configuration, prompts, run and attempt records, environment checks. |
 | `src/biorag_repro/evaluation` | Stage A, B and C evaluation and the analysis handoff. |
 | `src/biorag_repro/readiness`, `finaltest` | Checks that gate protected evaluation runs. |
@@ -97,7 +97,7 @@ Scripts in `scripts/`:
   of the corpus release record. Candidate evidence found automatically is a lead for a human
   reviewer; it is never accepted as gold without inspection of the original PDF.
 - `export_schemas.py` — regenerate `schemas/`, or check that they are current with `--check`.
-- `materialize_corpus.py`, `ingest_phase4.py`, `reproduce_phase4.py`, `stage_a_review.py` — corpus
+- `materialize_corpus.py`, `ingest_paper.py`, `reproduce_pair.py`, `stage_a_review.py` — corpus
   materialization, single-paper ingestion, reproduction of a source pair, and masked Stage A review
   packets. Run each with `--help`.
 

@@ -9,10 +9,10 @@ be placed in it by editing JSON, whether or not the bytes are re-hashed.
 import json
 
 import pytest
+from generation_support import needs_tokenizer
 from test_analysis_cli_handoff import published_rehearsal
 from test_analysis_handoff import CODE, official_table
 from test_generation_official import recognised, view  # noqa: F401  (fixtures)
-from test_generation_prompt import needs_tokenizer
 
 from biorag_repro.core.hashing import HashMismatchError, canonical_json_bytes, sha256_bytes
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id

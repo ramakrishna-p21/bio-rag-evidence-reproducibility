@@ -7,7 +7,7 @@ import pytest
 from test_stage_a import CANONICAL
 from test_stage_b import P_A, P_B, P_C, altered_world, deliver, prose_world
 
-from biorag_repro.evaluation import stage_b, stage_b_storage, storage
+from biorag_repro.evaluation import stage_a_storage, stage_b, stage_b_storage
 from biorag_repro.evaluation.analysis_table import Observation, build_row
 from biorag_repro.evaluation.judgment_evidence import EvidenceError, read_evidence
 
@@ -17,7 +17,7 @@ class Published:
 
     def __init__(self, tmp_path, w, case=None, *, with_b=True):
         self.root, self.w, self.case = tmp_path, w, case
-        a, am = storage.publish_judgment(w.stage_a, w.item, w.document, CANONICAL, tmp_path)
+        a, am = stage_a_storage.publish_judgment(w.stage_a, w.item, w.document, CANONICAL, tmp_path)
         self.a_row = {
             "item_id": w.item.item_id,
             "representation": w.document.representation,

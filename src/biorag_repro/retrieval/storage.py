@@ -71,13 +71,11 @@ def record_ref(
                 dependencies.append(("chunks_build_manifest", value.chunks_build_manifest))
     elif isinstance(value, (Bm25Index, DenseIndex)):
         kind = "bm25_index" if isinstance(value, Bm25Index) else "dense_index"
-        dependencies = [("chunk_set", item) for item in value.chunk_sets]
-        if isinstance(value, (Bm25Index, DenseIndex)):
-            dependencies = [
-                (role, ref)
-                for pair in zip(value.chunk_sets, value.chunk_set_manifests, strict=True)
-                for role, ref in zip(("chunk_set", "chunk_set_build_manifest"), pair, strict=True)
-            ]
+        dependencies = [
+            (role, ref)
+            for pair in zip(value.chunk_sets, value.chunk_set_manifests, strict=True)
+            for role, ref in zip(("chunk_set", "chunk_set_build_manifest"), pair, strict=True)
+        ]
         if isinstance(value, DenseIndex):
             dependencies.append(("vectors", value.vectors))
             dependencies.append(("vectors_build_manifest", value.vectors_build_manifest))

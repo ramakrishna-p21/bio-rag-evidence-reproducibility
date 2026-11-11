@@ -6,6 +6,7 @@ synthetic answers, no model. Nothing here is a result.
 """
 
 import pytest
+from generation_support import needs_tokenizer
 from test_generation_official import (  # noqa: F401  (fixtures)
     CONTEXTS,
     anchored,
@@ -14,7 +15,6 @@ from test_generation_official import (  # noqa: F401  (fixtures)
     verify,
     view,
 )
-from test_generation_prompt import needs_tokenizer
 from test_generation_roster import make_scope
 
 from biorag_repro.benchmark.development_view import read_development_view

@@ -26,8 +26,6 @@ from biorag_repro.documents.models import (
 )
 
 TRANSFORMATION_ID = "docling_pdf_adapter_v3"
-HERON_REVISION = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
-TABLE_REVISION = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
 ASSETS = (
     (
         "docling-project--docling-layout-heron/config.json",
@@ -64,8 +62,6 @@ QUALIFIED_INVENTORY_CANONICAL_SHA256 = (
     "a39c21bbc5e24830963f54757e65f54e5ee17c5e7d5b4d0e096c4c6a1eef754a"
 )
 QUALIFIED_LOCK_SHA256 = "8298439ddc230726d65c959e61e0aa0f847cdad65bd2cb44da7003857bcf97de"
-QUALIFIED_OPTIONS_SHA256 = "ea907fead9260281b219bca5f42ce49f384be5cb967f5ed8030623d0c997ca98"
-QUALIFIED_BACKEND_SHA256 = "2cbd70bd43815d3f42e1f555612394005ed5b8cfddc19dc562236aa97a398ce4"
 
 
 class PdfConfiguration(Record):

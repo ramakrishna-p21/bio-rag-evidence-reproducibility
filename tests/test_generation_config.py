@@ -4,6 +4,7 @@ import copy
 import tomllib
 
 import pytest
+from generation_support import QWEN_REVISION, SHA_A, SHA_B, resolve, synthetic_settings, to_toml
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.generation.config import (
@@ -11,73 +12,6 @@ from biorag_repro.generation.config import (
     check_retrieval_reference,
     resolve_generator_config,
 )
-
-SHA_A = "a" * 64
-SHA_B = "b" * 64
-QWEN_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"
-TOKENIZER_FILES = {
-    "config.json": "f7c4eadfbbf522470667b797a3c89be2524832d2d599797248dc304fff447c30",
-    "merges.txt": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
-    "tokenizer.json": "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4",
-    "tokenizer_config.json": "d5d09f07b48c3086c508b30d1c9114bd1189145b74e982a265350c923acd8101",
-    "vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
-}
-
-
-def synthetic_settings() -> dict:
-    return {
-        "schema_version": "1",
-        "purpose": "synthetic_test",
-        "experiment_plan_version": "synthetic-plan-0",
-        "matrix_arm": "confirmatory",
-        "retrieval_config_sha256": SHA_A,
-        "model": {"repository": "Qwen/Qwen3-8B", "revision": QWEN_REVISION, "dtype": "bfloat16"},
-        "tokenizer": {
-            "repository": "Qwen/Qwen3-8B",
-            "revision": QWEN_REVISION,
-            "file_sha256": dict(TOKENIZER_FILES),
-        },
-        "serving_path": "transformers",
-        "thinking_mode": "non_thinking",
-        "budgets": {
-            "evidence_tokens": 2048,
-            "max_input_tokens": 4096,
-            "max_new_tokens": 128,
-            "context_window_tokens": 8192,
-        },
-        "decoding": {"do_sample": False},
-        "prompt_sha256": SHA_A,
-        "output_schema_sha256": SHA_B,
-        "parser_version": "short_answer_json_v1",
-        "seed_registry_version": "synthetic-seeds-0",
-        "seed_registry_sha256": SHA_B,
-        "retry_max_attempts": 2,
-        "retryable_failures": ["out_of_memory", "transport_error"],
-        "scoring_version": "synthetic-scoring-0",
-    }
-
-
-def to_toml(settings: dict, prefix: str = "") -> str:
-    scalars, tables = [], []
-    for key, value in settings.items():
-        name = f'"{key}"'
-        if isinstance(value, dict):
-            tables.append((name, value))
-        elif isinstance(value, bool):
-            scalars.append(f"{name} = {str(value).lower()}")
-        elif isinstance(value, str):
-            scalars.append(f'{name} = "{value}"')
-        else:
-            scalars.append(f"{name} = {value!r}")
-    text = "\n".join(scalars) + "\n"
-    for name, value in tables:
-        path = f"{prefix}{name}"
-        text += f"\n[{path}]\n" + to_toml(value, prefix=path + ".")
-    return text
-
-
-def resolve(settings: dict):
-    return resolve_generator_config(to_toml(settings).encode())
 
 
 def test_toml_helper_round_trips():

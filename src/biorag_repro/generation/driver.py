@@ -31,9 +31,9 @@ from typing import Annotated, Literal, get_args
 
 from pydantic import StringConstraints
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes, serialize_project_json
 from biorag_repro.evaluation.analysis_models import PlannedRoster
 from biorag_repro.generation import config as generator_config

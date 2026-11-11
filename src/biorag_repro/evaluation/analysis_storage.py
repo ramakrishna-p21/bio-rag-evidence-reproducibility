@@ -2,9 +2,15 @@
 
 from pathlib import Path
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, verify_file_sha256
+from pydantic import BaseModel
+
+from biorag_repro.core.hashing import (
+    canonical_json_bytes,
+    read_verified_bytes,
+    sha256_bytes,
+)
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
-from biorag_repro.core.manifest import ArtifactRef, BuildManifest, DerivedOutput
+from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
 from biorag_repro.core.storage import (
     publish_bytes,
     publish_manifest,
@@ -161,6 +167,64 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     )
 
 
+def publish_derived_record(
+    value: BaseModel,
+    kind: str,
+    directory: str,
+    inputs: list[BuildInput],
+    transformation_id: str,
+    settings_sha256: str,
+    root: Path,
+) -> tuple[ArtifactRef, ArtifactRef]:
+    """Write a handoff-like record and its build manifest under `analysis/<directory>/`.
+
+    Nothing is replaced and nothing is checked beyond the bytes written.
+    """
+    model = type(value)
+    data = serialize_project_json(value, model)
+    digest = sha256_bytes(data)
+    artifact_id = derived_artifact_id(
+        artifact_kind=kind,
+        inputs=[ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in inputs],
+        transformation_id=transformation_id,
+        transformation_settings_sha256=settings_sha256,
+        output_sha256=digest,
+        output_format="json",
+        serialization_version="1",
+    )
+    ref = ArtifactRef(
+        artifact_id=artifact_id,
+        logical_ref=f"analysis/{directory}/{artifact_id}.json",
+        sha256=digest,
+    )
+    manifest = BuildManifest(
+        schema_version="1",
+        inputs=inputs,
+        transformation_id=transformation_id,
+        transformation_settings_sha256=settings_sha256,
+        outputs=[
+            DerivedOutput(
+                artifact=ref,
+                artifact_kind=kind,
+                output_format="json",
+                serialization_version="1",
+                identity_version="1",
+            )
+        ],
+        status="complete",
+    )
+    target = root / ref.logical_ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(target, data, digest, validate_temp=lambda p: read_project_json(p, digest, model))
+    build_ref = (
+        f"analysis/{directory}/{sha256_bytes(canonical_json_bytes([artifact_id]))}.build.json"
+    )
+    manifest_digest = publish_manifest(manifest, root / build_ref, {ref.logical_ref: target})
+    return ref, ArtifactRef(
+        artifact_id="build_" + manifest_digest, logical_ref=build_ref, sha256=manifest_digest
+    )
+
+
 def read_table(build: ArtifactRef, root: Path) -> list[AnalysisRow]:
     """Verify manifest, bytes, rows, inventory and source citations; return the rows."""
     manifest = read_manifest(root / build.logical_ref, build.sha256)
@@ -178,8 +242,7 @@ def read_table(build: ArtifactRef, root: Path) -> list[AnalysisRow]:
         manifest.transformation_settings_sha256 != _settings_sha256(rules)
     ):
         raise ValueError("analysis table was built under other settings")
-    verify_file_sha256(root / csv_ref.logical_ref, csv_ref.sha256)
-    rows = parse_csv((root / csv_ref.logical_ref).read_bytes())
+    rows = parse_csv(read_verified_bytes(root / csv_ref.logical_ref, csv_ref.sha256))
     check_references(rows, manifest.inputs)
     roster = read_project_json(root / roster_ref.logical_ref, roster_ref.sha256, PlannedRoster)
     check_roster(rows, roster)

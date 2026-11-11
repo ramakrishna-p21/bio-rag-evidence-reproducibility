@@ -10,9 +10,10 @@ from typing import Annotated, Final, Literal, Self, get_args, get_origin
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import AnswerClass, Record
+from biorag_repro.benchmark.models import AnswerClass
 from biorag_repro.core.hashing import validate_sha256
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.evaluation.attribution import (
     A_FAILED,
     Correct,
@@ -42,12 +43,6 @@ Completion = Literal["answer", "abstained", "unparseable"]
 BStatus = Literal["delivered", "not_delivered", "not_reachable_stage_a", "non_evaluable"]
 Token = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:@+\-]*$")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-
-def _not_missing_token(value: str | None) -> str | None:
-    if value == MISSING:
-        raise ValueError("NA is reserved for missing values")
-    return value
 
 
 class GeneratorInput(Record):
@@ -124,7 +119,9 @@ class AnalysisRow(Record):
     @field_validator("run_id", "attempt_id", "stage_c_reason", mode="after")
     @classmethod
     def not_the_missing_token(cls, value: str | None) -> str | None:
-        return _not_missing_token(value)
+        if value == MISSING:
+            raise ValueError("NA is reserved for missing values")
+        return value
 
     @model_validator(mode="after")
     def valid_row(self) -> Self:

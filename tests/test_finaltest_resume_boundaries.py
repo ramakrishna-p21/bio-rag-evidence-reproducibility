@@ -4,9 +4,10 @@ import ast
 from pathlib import Path
 
 import pytest
+from finaltest_support import FS_WRITERS, calls
 
 import biorag_repro
-from biorag_repro.generation.finaltest_store import (
+from biorag_repro.finaltest.store import (
     FinalTestStore,
     StoreOperationRefused,
     reopen_final_test_store,
@@ -16,27 +17,8 @@ SRC = Path(biorag_repro.__file__).parent
 RESUME = SRC / "finaltest" / "resume.py"
 
 
-def calls(path: Path) -> set[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"))
-    return {
-        n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Call)
-    }
-
-
 def test_the_resume_module_writes_only_through_the_registry_publishers_and_the_store():
-    written = {
-        "write_bytes",
-        "write_text",
-        "mkdir",
-        "unlink",
-        "rename",
-        "replace",
-        "chmod",
-        "touch",
-    }
-    assert not calls(RESUME) & written
+    assert not calls(RESUME) & FS_WRITERS
     assert not calls(RESUME) & {"publish_bytes", "publish_manifest", "open"}
 
 
@@ -44,8 +26,8 @@ def test_no_final_test_module_opens_a_run_store_or_vouches_for_a_stopped_worker(
     for path in SRC.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         if "previous_worker_stopped=True" in text:
-            assert path.name in ("finaltest_store.py", "attempts.py", "driver.py"), path
-        if "finaltest" in path.parts:
+            assert path.name in ("store.py", "attempts.py", "driver.py"), path
+        if "finaltest" in path.parts and path.name != "store.py":  # the store only refuses these
             tree = ast.parse(text)
             opened = [
                 n
@@ -65,7 +47,7 @@ def test_reopening_is_used_only_by_the_resume_module():
         for p in SRC.rglob("*.py")
         if "reopen_final_test_store" in p.read_text(encoding="utf-8")
     }
-    assert users == {"finaltest_store.py", "resume.py"}
+    assert users == {"store.py", "resume.py"}
 
 
 def test_a_stored_run_still_cannot_be_opened_or_recovered_generically(tmp_path):

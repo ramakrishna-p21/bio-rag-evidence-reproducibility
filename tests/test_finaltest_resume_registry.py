@@ -296,10 +296,6 @@ def test_two_resumes_make_a_chain_of_three_citations(tmp_path):
     assert len({c.readiness_report_sha256 for c in found.citations}) == 3
 
 
-def test_make_world_is_not_needed_here():
-    assert make_world  # imported for symmetry with the other C3 modules
-
-
 # ---- states other than "authorized" ---------------------------------------------------------
 
 

@@ -10,10 +10,9 @@ from importlib import metadata
 
 import pytest
 import torch
+from generation_support import ROOT, artifact, needs_tokenizer, resolve, synthetic_settings
 from test_generation_attempts import Clock
-from test_generation_config import resolve, synthetic_settings
 from test_generation_environment import cpu_probes
-from test_generation_prompt import ROOT, artifact, needs_tokenizer
 from test_generation_receipts import CONTEXT, CONTEXT_REF
 from tiny_model import EOS, PAD, load_once
 

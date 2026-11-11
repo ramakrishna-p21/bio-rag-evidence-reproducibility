@@ -10,9 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from finaltest_campaign_support import CANARY, FINAL_ITEMS, oracle_key, population, sha
+from generation_support import resolve, synthetic_settings
 from test_finaltest_citation import initial_citation
 from test_generation_attempts import GOOD_OUTPUT, Clock, environment
-from test_generation_config import resolve, synthetic_settings
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import publish_manifest, serialize_project_json

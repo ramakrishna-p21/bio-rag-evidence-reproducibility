@@ -6,15 +6,15 @@ from pathlib import Path
 
 from biorag_repro.core.config import resolve_config
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.documents.models import JatsConfiguration
-from biorag_repro.documents.pdf import PdfConfiguration
-from biorag_repro.documents.phase4 import (
+from biorag_repro.documents.ingestion import (
     Arm,
     build_arm,
     load_frozen_paper,
     publish_validation,
     validate_build,
 )
+from biorag_repro.documents.models import JatsConfiguration
+from biorag_repro.documents.pdf import PdfConfiguration
 
 
 def main() -> int:
@@ -38,7 +38,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.arm == "pair":
         parser.error(
-            "paired gate publication is unavailable; use scripts/reproduce_phase4.py for a candidate"
+            "paired gate publication is unavailable; use scripts/reproduce_pair.py for a candidate"
         )
     from biorag_repro.documents.authorization import PHASE2H_SHA256
 

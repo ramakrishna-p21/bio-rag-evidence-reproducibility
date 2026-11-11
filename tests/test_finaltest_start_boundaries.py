@@ -17,14 +17,15 @@ from pydantic import ValidationError
 from test_generation_attempts import config_for
 
 import biorag_repro
+from biorag_repro.finaltest import store as finaltest_store
 from biorag_repro.finaltest.runrecord import (
     FinalTestRunRecord,
     run_record_projection,
     run_record_sha256,
 )
-from biorag_repro.generation import attempts, finaltest_store, readonly
+from biorag_repro.finaltest.store import FinalTestStore
+from biorag_repro.generation import attempts, readonly
 from biorag_repro.generation.attempts import RunPhase, RunRecord, RunStore
-from biorag_repro.generation.finaltest_store import FinalTestStore
 
 SRC = Path(biorag_repro.__file__).parent
 

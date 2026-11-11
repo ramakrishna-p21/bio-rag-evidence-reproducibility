@@ -14,8 +14,8 @@ from pathlib import Path
 from finaltest_audit_support import ARM, CONFIGS, PLAN, settings_for
 from finaltest_campaign_support import CANARY, FINAL_ITEMS, population, sha
 from finaltest_support import made
+from generation_support import to_toml
 from test_generation_attempts import Clock, environment
-from test_generation_config import to_toml
 from test_readiness_guard import Fixture
 
 from biorag_repro.core.hashing import sha256_bytes

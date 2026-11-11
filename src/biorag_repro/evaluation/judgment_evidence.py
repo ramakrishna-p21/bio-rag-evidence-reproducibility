@@ -22,20 +22,21 @@ from typing import Annotated, Literal, TypeVar
 
 from pydantic import StringConstraints
 
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import read_manifest, read_project_json
-from biorag_repro.documents.chunking import read_chunking
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation import stage_b_storage
 from biorag_repro.evaluation.analysis_table import Evidence
 from biorag_repro.evaluation.models import StageAJudgment
+from biorag_repro.evaluation.stage_a_storage import read_judgment as read_stage_a
 from biorag_repro.evaluation.stage_b import Inputs
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
-from biorag_repro.evaluation.storage import read_judgment as read_stage_a
 from biorag_repro.generation.roster import ContextSource
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval import context as phase5
+from biorag_repro.retrieval.chunking import read_chunking
 from biorag_repro.retrieval.models import ChunkSet
 from biorag_repro.retrieval.storage import record_ref
 from biorag_repro.retrieval.validation import load_canonical_input

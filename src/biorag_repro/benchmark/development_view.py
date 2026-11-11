@@ -14,10 +14,10 @@ from typing import Literal
 
 from pydantic import ValidationError
 
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import decode_jsonl, encode_jsonl
-from biorag_repro.core.hashing import sha256_bytes, verify_file_sha256
+from biorag_repro.core.hashing import read_verified_bytes, sha256_bytes
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import (
     ArtifactRef,
@@ -25,6 +25,7 @@ from biorag_repro.core.manifest import (
     BuildManifest,
     DerivedOutput,
 )
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
     publish_bytes,
     read_manifest,
@@ -145,10 +146,10 @@ def publish_development_view(
     """Verify sources, derive, check, and publish immutable development-only files."""
     items_path = data_root / items_ref.logical_ref
     split_path = data_root / split_ref.logical_ref
-    verify_file_sha256(items_path, items_ref.sha256)
+    items_bytes = read_verified_bytes(items_path, items_ref.sha256)
     split = read_project_json(split_path, split_ref.sha256, PaperSplit)
     content, selected = derive_development_items(
-        items_path.read_bytes(),
+        items_bytes,
         split,
         benchmark_version=benchmark_version,
         corpus_version=corpus_version,
@@ -230,8 +231,9 @@ def read_development_view(
 ) -> tuple[DevelopmentView, list[BenchmarkItem]]:
     """Read a published view using only its own files; the mixed release is not opened."""
     view = read_project_json(directory / RECORD_FILE, record_sha256, DevelopmentView)
-    verify_file_sha256(directory / ITEMS_FILE, view.output_items.sha256)
-    items = decode_jsonl((directory / ITEMS_FILE).read_bytes(), BenchmarkItem)
+    items = decode_jsonl(
+        read_verified_bytes(directory / ITEMS_FILE, view.output_items.sha256), BenchmarkItem
+    )
     manifest = read_manifest(directory / MANIFEST_FILE, view.build_manifest.sha256)
     inputs = {entry.role: entry.artifact for entry in manifest.inputs}
     if (

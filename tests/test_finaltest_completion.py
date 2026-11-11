@@ -23,6 +23,7 @@ from finaltest_completion_support import (
 )
 from finaltest_resume_support import DiesAfter, Stop, assess, loader, plan_only, renew, resume
 from finaltest_start_support import MockBackend, make_world, mock_environment
+from finaltest_support import NOTE
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.finaltest import inventory, layout, registry
@@ -34,10 +35,8 @@ from biorag_repro.finaltest.finish import CompletionRefused, complete_in_new_ses
 from biorag_repro.finaltest.resume import ResumeRefused
 from biorag_repro.finaltest.session import SessionBusy, SessionLost, open_session
 from biorag_repro.finaltest.start import StartRefused, _start_with
-from biorag_repro.generation.finaltest_store import GateRefused
+from biorag_repro.finaltest.store import GateRefused
 from biorag_repro.readiness.guard import AuthorizationRefused
-
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
 
 
 def problems(w):

@@ -11,6 +11,7 @@ from biorag_repro.core.storage import (
     read_project_json,
     serialize_project_json,
 )
+from biorag_repro.documents.coverage import validate_jats_coverage
 from biorag_repro.documents.models import CanonicalDocument
 
 
@@ -20,8 +21,6 @@ def publish_canonical_jats(
     """Publish validated canonical bytes, then their verified complete build manifest."""
     if doc.representation != "JATS" or doc.status != "complete" or doc.native_artifact is not None:
         raise ValueError("expected complete JATS canonical document")
-    from biorag_repro.documents.phase4 import validate_jats_coverage
-
     if sha256_bytes(source_content) != doc.source.sha256:
         raise ValueError("JATS source hash mismatch")
     validate_jats_coverage(doc, source_content)

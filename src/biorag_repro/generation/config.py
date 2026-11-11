@@ -8,8 +8,8 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration, resolve_config
+from biorag_repro.core.records import Record
 from biorag_repro.evaluation.analysis_models import MatrixArm
 
 Nonblank = Annotated[str, StringConstraints(strip_whitespace=False, pattern=r"\S")]

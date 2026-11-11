@@ -17,8 +17,8 @@ from finaltest_start_support import (
     make_world,
     mock_environment,
 )
+from generation_support import to_toml
 from test_finaltest_start import NOTE, audit, read_records, start
-from test_generation_config import to_toml
 
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
 from biorag_repro.finaltest.campaign import ARMS, expected_keys
@@ -225,12 +225,12 @@ def test_completed_observations_are_not_regenerated_after_later_batches(tmp_path
 
 
 def test_a_crash_after_some_observations_cannot_be_resumed_or_repaired(tmp_path):
-    from biorag_repro.generation.attempts import CorruptRecord, RunStore
-    from biorag_repro.generation.finaltest_store import (
+    from biorag_repro.finaltest.store import (
         FinalTestStore,
         GateRefused,
         StoreOperationRefused,
     )
+    from biorag_repro.generation.attempts import CorruptRecord, RunStore
 
     class Stop(BaseException):
         pass

@@ -19,8 +19,8 @@ from finaltest_audit_support import (
     settings_for,
 )
 from finaltest_campaign_support import CANARY, oracle_key, population, sha
+from generation_support import resolve
 from pydantic import ValidationError
-from test_generation_config import resolve
 
 from biorag_repro.finaltest.batches import make_manifest
 from biorag_repro.finaltest.campaign import build_plan

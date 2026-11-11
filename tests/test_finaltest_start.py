@@ -21,6 +21,7 @@ from finaltest_start_support import (
     make_world,
     mock_environment,
 )
+from finaltest_support import NOTE
 from pydantic import ValidationError
 
 from biorag_repro.finaltest import inventory, layout, registry
@@ -39,11 +40,9 @@ from biorag_repro.finaltest.session import (
     open_session,
 )
 from biorag_repro.finaltest.start import StartRefused, _start_with
+from biorag_repro.finaltest.store import GateRefused, StoreOperationRefused
 from biorag_repro.generation.attempts import Coordinates, CorruptRecord, InvalidTransition
-from biorag_repro.generation.finaltest_store import GateRefused, StoreOperationRefused
 from biorag_repro.readiness.guard import AuthorizationRefused
-
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
 
 
 @pytest.fixture
@@ -430,7 +429,6 @@ def test_the_fixture_route_refuses_a_final_test_root_before_calling_the_guard(tm
 
 def test_publishers_refuse_a_final_test_root_on_their_own(tmp_path):
     from finaltest_support import authorization
-    from test_finaltest_g13 import world as _unused  # noqa: F401
 
     base = tmp_path / "final"
     base.mkdir()
@@ -606,7 +604,7 @@ def test_another_benchmark_or_unknown_arm_is_refused(world):
 
 def test_a_sampling_configuration_needs_its_exact_seed_registry(tmp_path):
     from finaltest_audit_support import settings_for
-    from test_generation_config import resolve, to_toml
+    from generation_support import resolve, to_toml
 
     from biorag_repro.finaltest.campaign import build_plan
     from biorag_repro.generation.seeds import (
@@ -897,8 +895,8 @@ def test_direct_append_and_seal_paths_are_gated(world):
 
 
 def test_a_final_test_store_cannot_be_created_or_reopened_generically(world):
+    from biorag_repro.finaltest.store import FinalTestStore
     from biorag_repro.generation.attempts import RunStore
-    from biorag_repro.generation.finaltest_store import FinalTestStore
 
     w = world
     with open_session(w.root) as session:
@@ -987,7 +985,7 @@ def count_publications(tmp_path_factory) -> list[str]:
 
         return wrapper
 
-    from biorag_repro.generation import finaltest_store
+    from biorag_repro.finaltest import store as finaltest_store
 
     patch = pytest.MonkeyPatch()
     patch.setattr(registry, "publish_bytes", watch(registry, registry.publish_bytes))
@@ -1032,7 +1030,7 @@ def test_the_publication_sequence_is_the_documented_one(publications):
 
 @pytest.mark.parametrize("index", range(17))
 def test_interruption_at_every_publication(tmp_path, publications, index):
-    from biorag_repro.generation import finaltest_store
+    from biorag_repro.finaltest import store as finaltest_store
 
     assert len(publications) == 17
     w = make_world(tmp_path)
@@ -1157,7 +1155,7 @@ def test_two_workers_starting_the_same_arm_leave_exactly_one_batch(tmp_path):
 
 
 def test_the_store_cannot_be_created_for_a_final_test_root(world):
-    from biorag_repro.generation.finaltest_store import create_final_test_store
+    from biorag_repro.finaltest.store import create_final_test_store
 
     w = world
     with open_session(w.root) as session:

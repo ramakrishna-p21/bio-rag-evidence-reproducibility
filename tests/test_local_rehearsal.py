@@ -6,8 +6,8 @@ manifest and anchor -> verification -> Stage C -> analysis table -> CSV.
 """
 
 import pytest
+from generation_support import needs_tokenizer
 from test_generation_driver import make_plan, run_mock
-from test_generation_prompt import needs_tokenizer
 from test_generation_roster import make_scope
 from test_generation_roster import shared as roster_world  # noqa: F401  (fixture)
 from test_generation_sources import describable, with_fixture_counter

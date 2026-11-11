@@ -10,12 +10,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from generation_support import ROOT, needs_tokenizer
 from synthetic_environment import approved_locks, run_probes
 from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import Clock
 from test_generation_environment import cpu_probes
 from test_generation_hf_backend import REV, fake_loader, make_renderer
-from test_generation_prompt import ROOT, needs_tokenizer
 from test_generation_receipts import facts_for
 from test_generation_roster import publish_view
 

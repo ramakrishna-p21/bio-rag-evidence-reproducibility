@@ -17,12 +17,12 @@ from typing import Annotated, Literal
 from pydantic import StringConstraints
 
 from biorag_repro.benchmark.development_view import read_development_view
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import read_project_json
 from biorag_repro.documents.authorization import ScientificAuthority
-from biorag_repro.documents.phase4 import Phase4GateIndex
+from biorag_repro.documents.ingestion import Phase4GateIndex
 from biorag_repro.generation.roster import ContextSource
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval import context as phase5

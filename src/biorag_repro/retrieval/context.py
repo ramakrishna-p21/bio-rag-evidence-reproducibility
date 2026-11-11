@@ -16,8 +16,8 @@ from biorag_repro.core.storage import (
     serialize_project_json,
     verify_manifest_outputs,
 )
-from biorag_repro.documents.chunking import read_chunking, verified_once
 from biorag_repro.retrieval import bm25
+from biorag_repro.retrieval.chunking import read_chunking, verified_once
 from biorag_repro.retrieval.models import (
     Chunk,
     ConfigurationRef,

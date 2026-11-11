@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 from finaltest_completion_support import complete_fresh, finished
-from finaltest_support import authorization
+from finaltest_support import NOTE, UNAUTH, authorization
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.finaltest import inventory, layout, registry
@@ -18,9 +18,6 @@ from biorag_repro.finaltest.completion import BatchCompletion, PublicationAuthor
 from biorag_repro.finaltest.continuity import ContinuityAssessment
 from biorag_repro.finaltest.inventory import _Artifacts, _check_completion, verify_root
 from biorag_repro.finaltest.layout import EvidenceCitation
-
-NOTE = inventory.HEAD_NOT_ESTABLISHED_TEXT
-UNAUTH = "unauthorized_final_test_artifact"
 
 
 def problems(w):

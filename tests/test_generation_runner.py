@@ -4,8 +4,8 @@ import json
 import random
 
 import pytest
+from generation_support import resolve, synthetic_settings
 from test_generation_attempts import POLICY, Clock, environment
-from test_generation_config import resolve, synthetic_settings
 from test_generation_seeds import registry
 from test_stage_c import SET_GOLD, entity, make_item, quantity
 

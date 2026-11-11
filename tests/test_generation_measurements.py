@@ -7,6 +7,7 @@ not taken stays explicitly unavailable.
 from types import SimpleNamespace
 
 import pytest
+from generation_support import needs_tokenizer
 from pydantic import ValidationError
 from test_generation_hf_backend import (  # noqa: F401  (fixture)
     NEW_TOKENS,
@@ -14,7 +15,6 @@ from test_generation_hf_backend import (  # noqa: F401  (fixture)
     rendered_for,
     renderer,
 )
-from test_generation_prompt import needs_tokenizer
 
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.generation import hf_backend

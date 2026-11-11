@@ -5,9 +5,9 @@ from typing import Literal, Self
 
 from pydantic import Field, field_validator, model_serializer, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import validate_sha256
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.retrieval.models import Representation
 
 Label = Literal[
