@@ -40,7 +40,9 @@ ContextProvenance = Literal[
     "not_applicable", "assembled_only", "generator_input_simulated", "generator_input_recorded"
 ]
 Completion = Literal["answer", "abstained", "unparseable"]
-BStatus = Literal["delivered", "not_delivered", "not_reachable_stage_a", "non_evaluable"]
+BStatus = Literal[
+    "delivered", "not_delivered", "not_reachable_stage_a", "non_evaluable", "unresolved"
+]
 Token = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:@+\-]*$")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 

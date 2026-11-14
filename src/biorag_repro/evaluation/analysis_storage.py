@@ -43,7 +43,7 @@ from biorag_repro.evaluation.analysis_table import (
 TRANSFORMATION = "analysis_table_v1"
 
 
-def _settings_sha256(stage_c_rules: str = "v1") -> str:
+def _settings_sha256(stage_c_rules: str = "v1", stage_b_rules: str = "v1") -> str:
     return sha256_bytes(
         canonical_json_bytes(
             {
@@ -52,7 +52,7 @@ def _settings_sha256(stage_c_rules: str = "v1") -> str:
                 "primary_repeat_index": PRIMARY_REPEAT_INDEX,
                 "primary_selection": PRIMARY_SELECTION,
                 "matrix": MATRIX_ID,
-                "scoring_reference": scoring_reference(stage_c_rules),
+                "scoring_reference": scoring_reference(stage_c_rules, stage_b_rules),
             }
         )
     )
@@ -65,7 +65,7 @@ def _ref(kind: str, suffix: str, digest: str, table: Table) -> ArtifactRef:
             ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in table.inputs
         ],
         transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(table.stage_c_rules),
+        transformation_settings_sha256=_settings_sha256(table.stage_c_rules, table.stage_b_rules),
         output_sha256=digest,
         output_format=suffix,
         serialization_version="1",
@@ -89,19 +89,21 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     check_rows(rows)
     check_references(rows, table.inputs)
     check_roster(rows, table.roster)
-    canonical = Table(rows, table.roster, table.inputs, table.stage_c_rules)
+    canonical = Table(rows, table.roster, table.inputs, table.stage_c_rules, table.stage_b_rules)
     data = serialize_csv(rows)
     csv_ref = _ref("analysis_table", "csv", sha256_bytes(data), canonical)
     roster_bytes = serialize_project_json(table.roster, PlannedRoster)
     roster_ref = _ref("planned_roster", "json", sha256_bytes(roster_bytes), canonical)
-    inventory = make_inventory(rows, csv_ref, table.roster, roster_ref, table.stage_c_rules)
+    inventory = make_inventory(
+        rows, csv_ref, table.roster, roster_ref, table.stage_c_rules, table.stage_b_rules
+    )
     inventory_bytes = serialize_project_json(inventory, AnalysisInventory)
     inventory_ref = _ref("analysis_inventory", "json", sha256_bytes(inventory_bytes), canonical)
     manifest = BuildManifest(
         schema_version="1",
         inputs=table.inputs,
         transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(table.stage_c_rules),
+        transformation_settings_sha256=_settings_sha256(table.stage_c_rules, table.stage_b_rules),
         outputs=[
             DerivedOutput(
                 artifact=csv_ref,
@@ -237,15 +239,15 @@ def read_table(build: ArtifactRef, root: Path) -> list[AnalysisRow]:
         root / inventory_ref.logical_ref, inventory_ref.sha256, AnalysisInventory
     )
     # The inventory names the scoring rules; the build's settings hash must agree with it.
-    rules = rules_of(inventory.scoring_reference)
+    rules = rules_of(inventory.scoring_reference)  # (Stage C, Stage B)
     if manifest.transformation_id != TRANSFORMATION or (
-        manifest.transformation_settings_sha256 != _settings_sha256(rules)
+        manifest.transformation_settings_sha256 != _settings_sha256(*rules)
     ):
         raise ValueError("analysis table was built under other settings")
     rows = parse_csv(read_verified_bytes(root / csv_ref.logical_ref, csv_ref.sha256))
     check_references(rows, manifest.inputs)
     roster = read_project_json(root / roster_ref.logical_ref, roster_ref.sha256, PlannedRoster)
     check_roster(rows, roster)
-    if inventory != make_inventory(rows, csv_ref, roster, roster_ref, rules):
+    if inventory != make_inventory(rows, csv_ref, roster, roster_ref, *rules):
         raise ValueError("inventory differs from the table it describes")
     return rows

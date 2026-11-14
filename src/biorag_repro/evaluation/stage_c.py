@@ -120,6 +120,21 @@ def adjudicate(
     )
 
 
+def check_consistent(scores: list[StageCScore]) -> None:
+    """Refuse different reviewer decisions on the same categorical answer to the same item.
+
+    One reviewed proposition gets one decision across arms, conditions and repeats.
+    The key is the scorer's normalized answer text, so this adds no equivalence of its own.
+    """
+    decisions: dict[tuple[str, ...], str] = {}
+    for s in scores:
+        if s.basis != "reviewer" or s.answer_class != "categorical_conclusion":
+            continue
+        key = (s.item_id, s.item_sha256, s.scoring_rules, *s.interpreted)
+        if decisions.setdefault(key, s.status) != s.status:
+            raise ValueError(f"different reviewer decisions for one answer to {s.item_id}")
+
+
 def _identity_fields() -> list[str]:
     return [
         "scoring_rules",

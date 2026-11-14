@@ -48,7 +48,12 @@ from biorag_repro.evaluation.stage_a import validate_judgment as validate_stage_
 from biorag_repro.evaluation.stage_b import Inputs, stage_b_ref
 from biorag_repro.evaluation.stage_b import validate_judgment as validate_stage_b
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
-from biorag_repro.evaluation.stage_c import check_result, score_ref, validate_score
+from biorag_repro.evaluation.stage_c import (
+    check_consistent,
+    check_result,
+    score_ref,
+    validate_score,
+)
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 
 # Retrieval scope and retriever that each retrieval arm of the frozen matrix uses.
@@ -66,16 +71,20 @@ SCORING_REFERENCE = {
 }
 
 
-def scoring_reference(rules: str = "v1") -> dict[str, str]:
+def scoring_reference(rules: str = "v1", stage_b_rules: str = "v1") -> dict[str, str]:
     """The scoring identities a table was built under; v1 equals SCORING_REFERENCE."""
-    return SCORING_REFERENCE | {"stage_c": f"stage_c_score_{rules}"}
+    return SCORING_REFERENCE | {
+        "stage_b": f"stage_b_judgment_{stage_b_rules}",
+        "stage_c": f"stage_c_score_{rules}",
+    }
 
 
-def rules_of(reference: dict[str, str]) -> str:
-    """Scoring rules named by a table's reference; anything but v1 or v2 is refused."""
+def rules_of(reference: dict[str, str]) -> tuple[str, str]:
+    """(Stage C, Stage B) rules named by a table's reference; unknown identities are refused."""
     for rules in ("v1", "v2"):
-        if reference == scoring_reference(rules):
-            return rules
+        for stage_b_rules in ("v1", "v2"):
+            if reference == scoring_reference(rules, stage_b_rules):
+                return rules, stage_b_rules
     raise ValueError("table names unknown scoring identities")
 
 
@@ -122,6 +131,7 @@ class Table:
     roster: PlannedRoster
     inputs: list[BuildInput] = field(default_factory=list)
     stage_c_rules: str = "v1"
+    stage_b_rules: str = "v1"
 
 
 def _check_evidence(obs: Observation, evidence: Evidence) -> None:
@@ -346,6 +356,12 @@ def build_table(observations: list[Observation], roster: PlannedRoster) -> Table
     versions = {o.score.scoring_rules for o in observations if o.score is not None}
     if len(versions) > 1:
         raise ValueError(f"mixed Stage C scoring rules in one analysis table: {sorted(versions)}")
+    b_versions = {
+        o.evidence.stage_b.rules for o in observations if o.evidence and o.evidence.stage_b
+    }
+    if len(b_versions) > 1:
+        raise ValueError(f"mixed Stage B rules in one analysis table: {sorted(b_versions)}")
+    check_consistent([o.score for o in observations if o.score is not None])
     built = [build_row(o) for o in observations]
     rows = sorted((r for r, _ in built), key=_order)
     unique: dict[tuple[str, str], BuildInput] = {}
@@ -356,7 +372,13 @@ def build_table(observations: list[Observation], roster: PlannedRoster) -> Table
                 raise ValueError("one artifact id names two different references")
     check_rows(rows)
     check_roster(rows, roster)
-    return Table(rows, roster, [unique[k] for k in sorted(unique)], next(iter(versions), "v1"))
+    return Table(
+        rows,
+        roster,
+        [unique[k] for k in sorted(unique)],
+        next(iter(versions), "v1"),
+        next(iter(b_versions), "v1"),
+    )
 
 
 def roster_items_from_development_view(
@@ -574,6 +596,7 @@ def make_inventory(
     roster: PlannedRoster,
     roster_ref: ArtifactRef,
     stage_c_rules: str = "v1",
+    stage_b_rules: str = "v1",
 ) -> AnalysisInventory:
     counts: dict[str, int] = defaultdict(int)
     open_rows = []
@@ -612,7 +635,7 @@ def make_inventory(
         items=roster.items,
         planned_observations=len(roster.coordinates()),
         executed_observations=sum(r.execution_status != "planned_not_executed" for r in rows),
-        scoring_reference=scoring_reference(stage_c_rules),
+        scoring_reference=scoring_reference(stage_c_rules, stage_b_rules),
         columns=[
             ColumnSpec(name=n, type=_TYPES[n], nullable=n in _NULLABLE)  # type: ignore[arg-type]
             for n in COLUMNS

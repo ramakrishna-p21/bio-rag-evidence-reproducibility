@@ -7,7 +7,9 @@ from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.evaluation.stage_b import (
     Inputs,
     dependencies,
+    kind_of,
     stage_b_ref,
+    transformation_id,
     validate_candidate,
     validate_judgment,
 )
@@ -18,9 +20,14 @@ RecordT = TypeVar("RecordT", StageBCandidate, StageBJudgment)
 
 
 def _publish(value: RecordT, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
-    kind = "stage_b_candidate" if isinstance(value, StageBCandidate) else "stage_b_judgment"
     return publish_record(
-        value, stage_b_ref(value), kind, "stage_b", dependencies(value), f"{kind}_v1", root
+        value,
+        stage_b_ref(value),
+        kind_of(value),
+        "stage_b",
+        dependencies(value),
+        transformation_id(value),
+        root,
     )
 
 

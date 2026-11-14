@@ -540,8 +540,11 @@ def evidence_observation_row(obs: Observation, row: AnalysisRow) -> Cells:
     for form, n in counts.items():
         out[f"stage_a_sets_{form}"] = str(n)
     out["stage_a_form"] = "no_located_evidence" if not set_forms else _combine_sets(set_forms)
-    if evidence.stage_b is not None:
-        delivered = [_container(document, d.container_node_id) for d in evidence.stage_b.delivered]
+    b = evidence.stage_b
+    if b is not None and b.rules == "v2" and b.basis == "reviewer":
+        out["stage_b_form"] = "not_attributed"  # whole-context review: form is not inferred
+    elif b is not None:
+        delivered = [_container(document, d.container_node_id) for d in b.delivered]
         out["stage_b_form"] = "none_delivered" if not delivered else _combine_sets(delivered)
     return out
 

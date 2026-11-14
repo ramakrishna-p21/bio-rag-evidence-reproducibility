@@ -26,6 +26,73 @@
       "title": "ArtifactRef",
       "type": "object"
     },
+    "Citation": {
+      "additionalProperties": false,
+      "description": "Reviewer evidence for one benchmark component (0-based set and component).",
+      "properties": {
+        "chunk_id": {
+          "minLength": 1,
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "component_index": {
+          "minimum": 0,
+          "title": "Component Index",
+          "type": "integer"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "set_index": {
+          "minimum": 0,
+          "title": "Set Index",
+          "type": "integer"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "start",
+        "end",
+        "text",
+        "set_index",
+        "component_index"
+      ],
+      "title": "Citation",
+      "type": "object"
+    },
+    "ComponentRef": {
+      "additionalProperties": false,
+      "properties": {
+        "component_index": {
+          "minimum": 0,
+          "title": "Component Index",
+          "type": "integer"
+        },
+        "set_index": {
+          "minimum": 0,
+          "title": "Set Index",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "set_index",
+        "component_index"
+      ],
+      "title": "ComponentRef",
+      "type": "object"
+    },
     "ComponentSpan": {
       "additionalProperties": false,
       "description": "Where a component's text sits in the exact supplied context.",
@@ -116,9 +183,44 @@
       ],
       "title": "Delivered",
       "type": "object"
+    },
+    "Span": {
+      "additionalProperties": false,
+      "description": "An exact stretch of one supplied chunk, in offsets of the exact context.",
+      "properties": {
+        "chunk_id": {
+          "minLength": 1,
+          "title": "Chunk Id",
+          "type": "string"
+        },
+        "end": {
+          "exclusiveMinimum": 0,
+          "title": "End",
+          "type": "integer"
+        },
+        "start": {
+          "minimum": 0,
+          "title": "Start",
+          "type": "integer"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "chunk_id",
+        "start",
+        "end",
+        "text"
+      ],
+      "title": "Span",
+      "type": "object"
     }
   },
   "additionalProperties": false,
+  "description": "Rules v1: placement-based. Rules v2: narrow automatic decisions or whole-context review.\n\nThe v2 fields are omitted from the stored bytes while unset, so v1 records and their\nidentities are unchanged.",
   "properties": {
     "at_utc": {
       "anyOf": [
@@ -150,6 +252,13 @@
     "chunk_set": {
       "$ref": "#/$defs/ArtifactRef"
     },
+    "citations": {
+      "items": {
+        "$ref": "#/$defs/Citation"
+      },
+      "title": "Citations",
+      "type": "array"
+    },
     "composition": {
       "enum": [
         "designated_only",
@@ -162,6 +271,13 @@
     },
     "configuration": {
       "$ref": "#/$defs/ConfigurationRef"
+    },
+    "conflict_citations": {
+      "items": {
+        "$ref": "#/$defs/Span"
+      },
+      "title": "Conflict Citations",
+      "type": "array"
     },
     "context": {
       "$ref": "#/$defs/ArtifactRef"
@@ -182,6 +298,14 @@
       "title": "Designated Chunks Included",
       "type": "integer"
     },
+    "flags": {
+      "items": {
+        "const": "conflicting_context",
+        "type": "string"
+      },
+      "title": "Flags",
+      "type": "array"
+    },
     "item_id": {
       "title": "Item Id",
       "type": "string"
@@ -189,6 +313,13 @@
     "item_sha256": {
       "title": "Item Sha256",
       "type": "string"
+    },
+    "missing_components": {
+      "items": {
+        "$ref": "#/$defs/ComponentRef"
+      },
+      "title": "Missing Components",
+      "type": "array"
     },
     "other_chunks_included": {
       "minimum": 0,
@@ -220,7 +351,10 @@
             "lost_in_packing",
             "partial_components",
             "other_paper_only",
-            "empty_context"
+            "empty_context",
+            "absent_in_context",
+            "unfaithful_in_context",
+            "ambiguous_referent"
           ],
           "type": "string"
         },
@@ -254,6 +388,15 @@
       "default": null,
       "title": "Reviewer"
     },
+    "rules": {
+      "default": "v1",
+      "enum": [
+        "v1",
+        "v2"
+      ],
+      "title": "Rules",
+      "type": "string"
+    },
     "schema_version": {
       "const": "1",
       "default": "1",
@@ -268,10 +411,23 @@
         "delivered",
         "not_delivered",
         "not_reachable_stage_a",
-        "non_evaluable"
+        "non_evaluable",
+        "unresolved"
       ],
       "title": "Status",
       "type": "string"
+    },
+    "unresolved_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Unresolved Reason"
     }
   },
   "required": [

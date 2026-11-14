@@ -155,7 +155,10 @@
                 "lost_in_packing",
                 "partial_components",
                 "other_paper_only",
-                "empty_context"
+                "empty_context",
+                "absent_in_context",
+                "unfaithful_in_context",
+                "ambiguous_referent"
               ],
               "type": "string"
             },
@@ -267,7 +270,10 @@
             "lost_in_packing",
             "partial_components",
             "other_paper_only",
-            "empty_context"
+            "empty_context",
+            "absent_in_context",
+            "unfaithful_in_context",
+            "ambiguous_referent"
           ],
           "type": "string"
         },

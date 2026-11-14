@@ -14,7 +14,9 @@ Correct = Literal["yes", "no", "non_evaluable", "missing", "not_executed"]
 Earliest = Literal[
     "none", "stage_a", "stage_b", "stage_c", "unresolved", "not_applicable", "incomplete"
 ]
-EvidenceReason = Literal["stage_a_not_assessed", "stage_a_unresolved", "stage_b_not_assessed"]
+EvidenceReason = Literal[
+    "stage_a_not_assessed", "stage_a_unresolved", "stage_b_not_assessed", "stage_b_unresolved"
+]
 Tri = Literal["TRUE", "FALSE", "NA"]
 
 A_FAILED = {"scientifically_corrupted", "absent"}
@@ -60,6 +62,8 @@ def _delivery(
         return "yes", None, None
     if stage_b == "not_delivered":
         return "no", None, "stage_b"
+    if stage_b == "unresolved":  # a reviewed context that could not be decided
+        return "non_evaluable", "stage_b_unresolved", "unresolved"
     raise ValueError(f"Stage B status {stage_b!r} contradicts a usable Stage A label")
 
 
