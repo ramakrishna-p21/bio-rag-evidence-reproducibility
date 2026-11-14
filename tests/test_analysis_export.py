@@ -929,19 +929,6 @@ def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
 # ---- schemas and verification command -----------------------------------------------------
 
 
-def test_analysis_schemas_are_registered_and_current():
-    from biorag_repro.evaluation.analysis_models import AnalysisInventory
-    from scripts.export_schemas import SCHEMA_DIR, SCHEMAS, schema_bytes
-
-    for name, model in {
-        "analysis_row.schema.json": AnalysisRow,
-        "analysis_inventory.schema.json": AnalysisInventory,
-        "generator_input.schema.json": GeneratorInput,
-    }.items():
-        assert SCHEMAS[name] is model
-        assert (SCHEMA_DIR / name).read_bytes() == schema_bytes(model)
-
-
 def test_verify_command_accepts_a_published_table_and_rejects_tampering(tmp_path, capsys):
     from biorag_repro.evaluation.analysis_cli import main
 

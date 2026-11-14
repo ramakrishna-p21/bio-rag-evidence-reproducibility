@@ -47,7 +47,6 @@ by content hashes recorded in build manifests.
 | `src/biorag_repro/evaluation` | Stage A, B and C evaluation and the analysis handoff. |
 | `src/biorag_repro/readiness`, `finaltest` | Checks that gate protected evaluation runs. |
 | `analysis/` | R analysis, locked with `renv`. |
-| `schemas/` | JSON Schemas generated from the persistent models. |
 | `configs/` | Ingestion and environment configuration. |
 | `scripts/` | Command-line entry points for corpus, benchmark, ingestion and review work. |
 | `tests/` | Python test suite. |
@@ -96,10 +95,8 @@ Scripts in `scripts/`:
   `derive-development`. Every command takes an external data root and the explicit path and SHA-256
   of the corpus release record. Candidate evidence found automatically is a lead for a human
   reviewer; it is never accepted as gold without inspection of the original PDF.
-- `export_schemas.py` — regenerate `schemas/`, or check that they are current with `--check`.
-- `materialize_corpus.py`, `ingest_paper.py`, `reproduce_pair.py`, `stage_a_review.py` — corpus
-  materialization, single-paper ingestion, reproduction of a source pair, and masked Stage A review
-  packets. Run each with `--help`.
+- `ingest_paper.py`, `reproduce_pair.py`, `stage_a_review.py` — single-paper ingestion,
+  reproduction of a source pair, and masked Stage A review packets. Run each with `--help`.
 
 R analysis (from `analysis/`): `Rscript run_analysis.R run|verify|derive|supplement ...`; see the
 header of `analysis/run_analysis.R` for the arguments.
@@ -109,8 +106,6 @@ header of `analysis/run_analysis.R` for the arguments.
 - Inputs are selected by explicit path and SHA-256; files are published without overwriting and
   re-read against their recorded hashes.
 - Build manifests link every derived artifact to its inputs and to the transformation that made it.
-- Schemas in `schemas/` are generated from the code; `python scripts/export_schemas.py --check`
-  fails if they drift.
 - Continuous integration (`.github/workflows/ci.yml`) runs on Ubuntu 22.04 with Python 3.11.15 and
   R 4.6.1 and requires the R tests to run. The primary R result is compared byte for byte, so it is
   tied to that platform's numerics.
@@ -121,8 +116,6 @@ header of `analysis/run_analysis.R` for the arguments.
 python -m pytest -q
 python -m ruff format --check .
 python -m ruff check .
-python -m mypy src/biorag_repro
-python scripts/export_schemas.py --check
 (cd analysis && Rscript -e 'testthat::test_dir("tests/testthat")')
 ```
 

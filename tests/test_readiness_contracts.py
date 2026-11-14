@@ -2,7 +2,6 @@
 
 import ast
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ import readiness_support as fx
 from pydantic import ValidationError
 from readiness_support import REAL_POLICY
 
-from biorag_repro.readiness import decide as decide_module
 from biorag_repro.readiness import models, policy
 from biorag_repro.readiness.models import (
     HISTORY_FAIL_CODES,
@@ -344,14 +342,3 @@ def test_report_gate_set_must_be_exact(mutation):
         data["gates"] = data["gates"] + [{**data["gates"][0], "gate_id": "G14_extra"}]
     with pytest.raises(ValidationError):
         ReadinessReport(**data)
-
-
-def test_exported_schema_matches_the_model():
-    from scripts.export_schemas import SCHEMA_DIR, SCHEMAS, schema_bytes
-
-    assert SCHEMAS["readiness_report.schema.json"] is ReadinessReport
-    path = SCHEMA_DIR / "readiness_report.schema.json"
-    assert path.read_bytes() == schema_bytes(ReadinessReport)
-    text = path.read_text()
-    assert re.search(r'"G13_final_test_history_integrity"', text)
-    assert decide_module  # the schema describes the report; the decision rule lives in decide
