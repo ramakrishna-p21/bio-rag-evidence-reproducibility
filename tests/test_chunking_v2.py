@@ -314,10 +314,13 @@ def test_v2_chunks_cannot_be_relabelled_or_validated_as_v1():
         validate_chunking(type(v2)(v2.chunks, forged), doc, selected, v1_ref, v1_cfg, len)
 
 
-def test_configuration_accepts_only_the_two_named_algorithms():
+def test_configuration_accepts_only_the_named_algorithms():
     base = settings().model_dump()
     assert Phase5Configuration.model_validate({**base, "chunking_algorithm": V2})
+    assert Phase5Configuration.model_validate(
+        {**base, "chunking_algorithm": "canonical_whole_units_v3"}
+    )
     with pytest.raises(ValueError):
         Phase5Configuration.model_validate(
-            {**base, "chunking_algorithm": "canonical_whole_units_v3"}
+            {**base, "chunking_algorithm": "canonical_whole_units_v4"}
         )

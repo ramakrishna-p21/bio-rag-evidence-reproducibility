@@ -116,6 +116,7 @@
         "usage": {
           "enum": [
             "content",
+            "content_continuation",
             "repeated_context",
             "containing_reference"
           ],

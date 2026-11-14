@@ -82,7 +82,8 @@
       "default": "canonical_whole_units_v1",
       "enum": [
         "canonical_whole_units_v1",
-        "canonical_whole_units_v2"
+        "canonical_whole_units_v2",
+        "canonical_whole_units_v3"
       ],
       "title": "Chunking Algorithm",
       "type": "string"
@@ -203,8 +204,11 @@
       "type": "string"
     },
     "unit_policy": {
-      "const": "complete_units",
       "default": "complete_units",
+      "enum": [
+        "complete_units",
+        "complete_units_or_sentence_segments"
+      ],
       "title": "Unit Policy",
       "type": "string"
     }

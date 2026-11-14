@@ -1,5 +1,6 @@
 """Canonical-only occurrence discovery, whole-unit rendering, and chunk construction."""
 
+import re
 from collections import Counter as Tally
 from collections import defaultdict
 from collections.abc import Callable, Iterator
@@ -48,6 +49,10 @@ from biorag_repro.retrieval.validation import (
 
 Counter = Callable[[str], int]
 V2_LEGEND = "Omitted cell attributes inherit cell_defaults."
+V3_LEGEND = (
+    "Omitted cell attributes inherit the [headers] tag for header cells, then cell_defaults. "
+    "A cell written cC is in the row given by [row N]."
+)
 _BLOCKS = {"paragraph", "caption", "title", "formula", "reference", "list_item"}
 _INLINE = {
     "italic",
@@ -429,24 +434,33 @@ def render_units(
         ("row_section", "native_row_section"),
         ("fillable", "native_fillable"),
     )
-    defaults: dict[str, bool | None] = {}
+    compact = algorithm in {"canonical_whole_units_v2", "canonical_whole_units_v3"}
 
-    def table_defaults(cells: list[TableCell]) -> None:
+    def majority(cells: list[TableCell]) -> dict[str, bool | None]:
         # Ties resolve false, then true, then unknown, so the declaration is deterministic.
         rank = {False: 0, True: 1, None: 2}
+        values = {}
         for name, attribute in cell_attributes:
             counts = Tally(getattr(cell, attribute) for cell in cells)
-            defaults[name] = min(counts, key=lambda value: (-counts[value], rank[value]))
+            values[name] = min(counts, key=lambda value: (-counts[value], rank[value]))
+        return values
 
-    def cell_line(cell: TableCell) -> str:
-        if algorithm == "canonical_whole_units_v2":
-            parts = [f"r{cell.row}c{cell.column}"]
+    defaults: dict[str, bool | None] = {}
+
+    def cell_line(
+        cell: TableCell, base: dict[str, bool | None] | None = None, row: int = -1
+    ) -> str:
+        if compact:
+            # v3 only: a cell that starts in the unit's own row drops the row index, and header
+            # cells print deviations from the [headers] tag rather than from cell_defaults.
+            same_row = algorithm == "canonical_whole_units_v3" and cell.row == row
+            parts = [f"c{cell.column}" if same_row else f"r{cell.row}c{cell.column}"]
             if (cell.row_span, cell.column_span) != (1, 1):
                 parts.append(f"span={cell.row_span}x{cell.column_span}")
             parts += [
                 f"{name}={bool_text(getattr(cell, attribute))}"
                 for name, attribute in cell_attributes
-                if getattr(cell, attribute) != defaults[name]
+                if getattr(cell, attribute) != (base or defaults)[name]
             ]
             return f"[{' '.join(parts)}] {cell_text(cell)}"
         return (
@@ -479,10 +493,11 @@ def render_units(
                         "repeated_context",
                     )
                 )
-        if algorithm == "canonical_whole_units_v2" and table.cells:
-            table_defaults(table.cells)
+        if compact and table.cells:
+            defaults = majority(table.cells)
             declared = " ".join(f"{name}={bool_text(value)}" for name, value in defaults.items())
-            relations += f"[cell_defaults span=1x1 {declared}]\n{V2_LEGEND}\n"
+            legend = V3_LEGEND if algorithm == "canonical_whole_units_v3" else V2_LEGEND
+            relations += f"[cell_defaults span=1x1 {declared}]\n{legend}\n"
         for row in range(table.row_count):
             cells = sorted(
                 [cell for cell in table.cells if cell.row <= row < cell.row + cell.row_span],
@@ -499,12 +514,20 @@ def render_units(
                 ):
                     headers.append(cell)
             headers.sort(key=lambda cell: (cell.row, cell.column))
-            header_text = (
-                "[headers]\n" + "\n".join(cell_line(c) for c in headers) + "\n[/headers]\n"
-                if headers
-                else ""
-            )
-            body = f"[row {row}]\n" + "\n".join(cell_line(c) for c in cells)
+            header_text = ""
+            if headers:
+                tag, base = "[headers]", None
+                if algorithm == "canonical_whole_units_v3":
+                    base = majority(headers)
+                    differing = [
+                        f"{name}={bool_text(value)}"
+                        for name, value in base.items()
+                        if value != defaults[name]
+                    ]
+                    tag = f"[headers {' '.join(differing)}]" if differing else tag
+                lines = "\n".join(cell_line(c, base) for c in headers)
+                header_text = f"{tag}\n{lines}\n[/headers]\n"
+            body = f"[row {row}]\n" + "\n".join(cell_line(c, row=row) for c in cells)
             links = section_links + relation_links
             for cell in headers + cells:
                 usage: ContributorUsage = (
@@ -600,6 +623,141 @@ def _chunks_manifest_ref(
     )
 
 
+SENTENCE_SEGMENTS = "complete_units_or_sentence_segments"
+OVERSIZED_REASON = "Complete source unit and required context exceed the construction limit."
+# A sentence ends at . ! or ? (optionally closed by a bracket or quote), then whitespace, then a
+# capital, digit, opening bracket or quote. Decimals such as 0.001 have no whitespace and never match.
+_SENTENCE_END = re.compile(r"[.!?][)\]\"”’]*(\s+)(?=[A-Z0-9(\[\"“‘])")
+_ABBREVIATION = re.compile(
+    r"(?:\b(?:e\.g|i\.e|et al|Fig|Figs|Eq|Eqs|Ref|Refs|Suppl|Tab|Vol|No|vs|cf|ca|approx|resp|Dr|St)"
+    r"|\b[A-Z])\.[)\]\"”’]*$"
+)
+# Derived markup between occurrence texts: inline JATS tags and PDF field wrappers.
+_MARKUP = re.compile(r"<(/?)[^<>\s]+>|\[(/?)[a-z_]+\]")
+
+
+def _occurrence_spans(
+    unit: RenderedUnit, occurrences: dict[str, SourceOccurrence], body: str
+) -> list[tuple[SourceContributor, int, int]] | None:
+    """Locate each content occurrence in rendering order; None if any cannot be found."""
+    spans, cursor = [], 0
+    for link in unit.contributors:
+        if link.usage != "content":
+            continue
+        text = occurrences[link.occurrence_id].text
+        if not text or not text.strip():
+            spans.append((link, cursor, cursor))
+            continue
+        start = body.find(text, cursor)
+        if start < 0:
+            return None
+        cursor = start + len(text)
+        spans.append((link, start, cursor))
+    return spans
+
+
+def _sentence_cuts(body: str, covered: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Whitespace runs that end a sentence outside markup, brackets and abbreviations."""
+    source = bytearray(len(body))
+    for start, end in covered:
+        source[start:end] = b"\x01" * (end - start)
+    depth = [0] * (len(body) + 1)  # markup plus bracket depth before each position
+    level = markup = 0
+    for i, char in enumerate(body):
+        if not source[i] and (tag := _MARKUP.match(body, i)):
+            markup += -1 if (tag.group(1) or tag.group(2)) else 1
+        elif source[i] and char in "([":
+            level += 1
+        elif source[i] and char in ")]":
+            level = max(level - 1, 0)
+        depth[i + 1] = markup + level
+    cuts = []
+    for match in _SENTENCE_END.finditer(body):
+        start, end = match.span(1)
+        if depth[start] == 0 and not _ABBREVIATION.search(body[max(start - 16, 0) : start]):
+            cuts.append((start, end))
+    return cuts
+
+
+def segment_oversized_prose(
+    unit: RenderedUnit,
+    occurrences: dict[str, SourceOccurrence],
+    count_tokens: Counter,
+    limit: int,
+) -> tuple[list[RenderedUnit], str | None]:
+    """Split an oversized prose unit between sentences without changing any character.
+
+    Uses only the unit, its occurrence texts, the construction counter and the limit. Returns
+    the segments in source order, or no segments and the reason the unit stays whole. A unit
+    level qualification line is repeated on every segment.
+    """
+    if unit.kind in {"table_row", "formula"}:
+        return [], f"{unit.kind} units are not segmented"
+    prefix = ""
+    if unit.text.startswith("[qualification "):
+        prefix = unit.text[: unit.text.index("\n") + 1]
+    body = unit.text[len(prefix) :]
+    spans = _occurrence_spans(unit, occurrences, body)
+    if spans is None:
+        return [], "occurrence text could not be located in order"
+    cuts = _sentence_cuts(body, [(s, e) for _, s, e in spans])
+    if not cuts:
+        return [], "no permitted sentence boundary"
+    edges = [0] + [p for cut in cuts for p in cut] + [len(body)]
+    sentences = list(zip(edges[::2], edges[1::2], strict=True))
+
+    def fits(start: int, end: int) -> bool:
+        return count_tokens(unit.context + prefix + body[start:end]) <= limit
+
+    if not all(fits(start, end) for start, end in sentences):
+        return [], "a single sentence exceeds the limit"
+    groups = [sentences[0]]
+    for start, end in sentences[1:]:
+        if fits(groups[-1][0], end):
+            groups[-1] = (groups[-1][0], end)
+        else:
+            groups.append((start, end))
+    rebuilt = "".join(
+        body[start:end] + body[end : nxt[0]]
+        for (start, end), nxt in zip(groups, groups[1:] + [(len(body), len(body))], strict=True)
+    )
+    if rebuilt != body:
+        raise ValueError("sentence segments do not reconstruct the unit")
+
+    # The segments each occurrence reaches; a zero-length one stays where its position falls.
+    reach: dict[int, list[tuple[int, int]]] = {}
+    for link, s, e in spans:
+        if e > s:
+            reach[id(link)] = [g for g in groups if s < g[1] and e > g[0]]
+        else:
+            reach[id(link)] = [next(g for g in groups if s < g[1] or g == groups[-1])]
+    pieces = []
+    for group in groups:
+        start, end = group
+        links = []
+        for link in unit.contributors:
+            if link.usage != "content":
+                links.append(link)
+            elif group in reach[id(link)]:
+                usage: ContributorUsage = (
+                    "content" if group == reach[id(link)][0] else "content_continuation"
+                )
+                links.append(link.model_copy(update={"usage": usage}))
+        pieces.append(
+            RenderedUnit(
+                f"{unit.unit_id}:s{len(prefix) + start}-{len(prefix) + end}",
+                unit.kind,
+                prefix + body[start:end],
+                unit.context,
+                unit.scope,
+                links,
+                unit.source_node_ids,
+                unit.uncertainty,
+            )
+        )
+    return pieces, None
+
+
 def chunk_document(
     document: CanonicalDocument,
     selected: CanonicalInput,
@@ -626,6 +784,21 @@ def chunk_document(
         if type(value) is not int or value < 0:
             raise ValueError("invalid construction token count")
         return value
+
+    # Opt-in development candidate: oversized prose is split between sentences, losslessly.
+    not_segmented: dict[str, str] = {}
+    if settings.unit_policy == SENTENCE_SEGMENTS:
+        by_id = {item.occurrence_id: item for item in occurrences}
+        expanded = []
+        for unit in units:
+            if unit.unsupported_reason is None and count(rendered([unit])) > settings.chunk_tokens:
+                pieces, why = segment_oversized_prose(unit, by_id, count, settings.chunk_tokens)
+                if pieces:
+                    expanded.extend(pieces)
+                    continue
+                not_segmented[unit.unit_id] = f" Not segmented: {why}."
+            expanded.append(unit)
+        units = expanded
 
     def flush() -> None:
         if not pending:
@@ -666,7 +839,7 @@ def chunk_document(
                     token_limit=settings.chunk_tokens,
                     rendered_text=content,
                     reason=unit.unsupported_reason
-                    or "Complete source unit and required context exceed the construction limit.",
+                    or OVERSIZED_REASON + not_segmented.get(unit.unit_id, ""),
                     uncertainty=unit.uncertainty,
                 )
             )
