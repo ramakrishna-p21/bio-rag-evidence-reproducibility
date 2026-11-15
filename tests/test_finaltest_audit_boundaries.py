@@ -36,9 +36,6 @@ def test_run_record_type_is_known_only_to_its_schema_and_the_audit():
         "runrecord.py",
         "audit.py",
         "inventory.py",
-        "start.py",
-        "store.py",
-        "resume.py",
         "completion.py",
     }
 
@@ -103,8 +100,8 @@ def test_registry_events_are_not_activated():
         "batch_materialized",
         "batch_closed_incomplete",
     }
-    # Rehearsal start publishes two events, resume a third and completion the last; only the
-    # rehearsal-gated modules mention them
+    # The rehearsal start, resume and completion that published these events were removed in
+    # Phase 2.5; only the record and verifier modules still mention them
     assert layout.REHEARSAL_EVENTS == (
         "batch_inputs_bound",
         "batch_authorized",
@@ -113,22 +110,9 @@ def test_registry_events_are_not_activated():
     )
     for text in ("batch_inputs_bound", "batch_authorized"):
         users = {p.name for p in SRC.rglob("*.py") if text in p.read_text(encoding="utf-8")}
-        assert (
-            {"layout.py", "start.py"}
-            <= users
-            <= {"layout.py", "inventory.py", "registry.py", "start.py", "resume.py", "finish.py"}
-        ), (text, users)
+        assert {"layout.py"} <= users <= {"layout.py", "inventory.py", "registry.py"}, (text, users)
     users = {p.name for p in SRC.rglob("*.py") if "batch_resumed" in p.read_text(encoding="utf-8")}
-    assert (
-        {"layout.py", "resume.py"}
-        <= users
-        <= {
-            "layout.py",
-            "inventory.py",
-            "registry.py",
-            "resume.py",
-        }
-    ), users
+    assert {"layout.py"} <= users <= {"layout.py", "inventory.py", "registry.py"}, users
 
 
 def test_existing_final_test_refusals_stand(monkeypatch, tmp_path):
@@ -148,7 +132,7 @@ def test_existing_final_test_refusals_stand(monkeypatch, tmp_path):
         RunRecord.model_validate({"phase": "final_test"})
 
 
-def test_the_only_run_store_subclasses_are_the_read_only_view_and_the_guarded_store():
+def test_the_only_run_store_subclass_is_the_read_only_view():
     found = {}
     for path in SRC.rglob("*.py"):
         for node in ast.walk(tree(path)):
@@ -156,4 +140,4 @@ def test_the_only_run_store_subclasses_are_the_read_only_view_and_the_guarded_st
                 getattr(b, "id", "") == "RunStore" for b in node.bases
             ):
                 found[node.name] = path.name
-    assert found == {"ReadOnlyRunView": "readonly.py", "FinalTestStore": "store.py"}
+    assert found == {"ReadOnlyRunView": "readonly.py"}

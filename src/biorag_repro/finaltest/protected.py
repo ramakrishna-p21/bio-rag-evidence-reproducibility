@@ -1,4 +1,6 @@
-"""The only way final-test question text and retrieval contexts enter the start procedure.
+"""The only way final-test question text and retrieval contexts may enter a final-test start.
+
+Retained without a caller: the rehearsal start that used it was removed in Phase 2.5.
 
 `ProtectedInputs` is a narrow interface. In this version nothing in `src/` implements it for
 real final-test content: the only implementations are synthetic and live in the tests, and

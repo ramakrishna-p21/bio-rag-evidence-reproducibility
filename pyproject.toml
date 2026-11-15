@@ -13,7 +13,6 @@ dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 [project.scripts]
 biorag-context = "biorag_repro.retrieval.cli:main"
 biorag-analysis = "biorag_repro.evaluation.analysis_cli:main"
-biorag-checkpoint = "biorag_repro.generation.checkpoint:main"
 biorag-environment = "biorag_repro.generation.environment_lock:main"
 biorag-readiness = "biorag_repro.readiness.cli:main"
 

@@ -1,6 +1,6 @@
 """Completion record of one rehearsal batch: the immutable end of its observation history.
 
-Records only; publishing is in `finish.py`. A completion states that every observation the
+Records only; the rehearsal publisher was removed in Phase 2.5. A completion states that every observation the
 batch planned has been decided and sealed, and says how each one ended. It is not a statement
 that the batch succeeded: an observation that failed terminally or ran out of retries stays a
 recorded failure with its attempts, and the outcome says so (`complete_with_recorded_missing`).
