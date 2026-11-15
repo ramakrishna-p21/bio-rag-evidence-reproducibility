@@ -1,16 +1,13 @@
-# ruff: noqa: F811
 """Analysis handoff: the Python-authored record that precedes any R execution.
 
-Synthetic rows prove the contract only; nothing here is a result. Official-origin tests use
-the scripted official run of test_generation_official (simulated approvals, no model).
+Synthetic rows prove the contract only; nothing here is a result. An official origin cannot be
+built or read back: its verification is an outstanding Phase 8 requirement.
 """
 
-import dataclasses
 import json
 from typing import get_args
 
 import pytest
-from generation_support import needs_tokenizer
 from test_analysis_export import (
     CFG,
     P_A,
@@ -23,18 +20,8 @@ from test_analysis_export import (
     roster_of,
     world,
 )
-from test_generation_official import (  # noqa: F401  (fixtures)
-    CONTEXTS,
-    anchored,
-    build_world,
-    recognised,
-    verify,
-    view,
-)
-from test_generation_roster import make_scope
 from test_stage_b import altered_world
 
-from biorag_repro.benchmark.development_view import read_development_view
 from biorag_repro.core.hashing import HashMismatchError, canonical_json_bytes, sha256_bytes
 from biorag_repro.core.storage import read_manifest
 from biorag_repro.evaluation import analysis_handoff as ah
@@ -50,7 +37,6 @@ from biorag_repro.evaluation.analysis_storage import publish_table
 from biorag_repro.evaluation.analysis_table import build_table, primary_pairs, serialize_csv
 from biorag_repro.evaluation.attribution import Correct, Delivered
 from biorag_repro.generation.environment import GitState
-from biorag_repro.generation.handoff import official_observations
 
 CODE = GitState(status="ok", commit="a" * 40, dirty=False, dirty_paths=0)
 BOTH = ("JATS", "PDF_DOCLING")
@@ -480,13 +466,23 @@ def test_read_back_verifies_and_a_rehearsal_has_no_scientific_authority(tmp_path
     assert verified.official is False
 
 
-def test_rehearsal_and_official_inputs_cannot_be_mixed(tmp_path):
+def test_an_official_origin_is_refused_when_building_and_reading(tmp_path):
     w = world()
-    _, build = publish(tmp_path, pair(w))
-    with pytest.raises(ah.HandoffError, match="exactly one"):
-        ah.build_handoff(build, tmp_path, code=CODE)
-    with pytest.raises(ah.HandoffError, match="exactly one"):
-        ah.build_handoff(build, tmp_path, code=CODE, rehearsal=True, official_runs=[object()])  # type: ignore[list-item]
+    _, build = publish(tmp_path / "a", pair(w))
+    with pytest.raises(ah.OfficialProvenanceNotVerified, match="Phase 8"):
+        ah.build_handoff(build, tmp_path / "a", code=CODE)
+    # A schema-valid record that claims an official origin is still refused on read-back.
+    _, _, handoff = rehearsal(tmp_path / "b", pair(w))
+    run = ah.SourceRun(
+        run_id="run_x", completion=handoff.table_build, run_record_sha256="1" * 64,
+        resolved_config_sha256="2" * 64, raw_config_sha256="3" * 64, roster_sha256="4" * 64,
+        matrix_arm="confirmatory", backend_kind="official", observations=2,
+    )  # fmt: skip
+    claimed = handoff.model_copy(
+        update={"input_origin": "verified_official_run", "source_runs": [run]}
+    )
+    with pytest.raises(ah.OfficialProvenanceNotVerified, match="Phase 8"):
+        ah.read_handoff(stored(tmp_path / "b", claimed), tmp_path / "b")
 
 
 def test_a_final_test_handoff_is_refused_by_the_model(tmp_path):
@@ -603,109 +599,6 @@ def test_a_rehearsal_record_cannot_be_read_back_as_official(tmp_path):
     _, build = ah.publish_handoff(handoff, tmp_path)
     with pytest.raises(ah.HandoffError, match="rehearsal"):
         ah.read_handoff(build, tmp_path, require_official=True)
-
-
-# ---- official origin (scripted official run, no model) --------------------------------------
-
-
-def official_table(tmp_path, view, tiny, **options):
-    world_ = build_world(tmp_path / "run", view, tiny, **options)
-    verified = verify(world_, anchored(world_))
-    items = read_development_view(*view)[1]
-    scope = make_scope(*view, {"q_a", "q_b"}, conditions=("JATS", "PDF_DOCLING"))
-    observations = official_observations(verified, items, lambda item, condition: None)
-    table = build_table(observations, scope)
-    root = tmp_path / "analysis_root"
-    root.mkdir()
-    _csv, _inventory, build = publish_table(table, root)
-    return verified, root, build
-
-
-@needs_tokenizer
-def test_official_handoff_records_and_rechecks_the_source_run(tmp_path, view, tiny, recognised):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    handoff = ah.build_handoff(build, root, code=CODE, official_runs=[verified])
-    assert handoff.input_origin == "verified_official_run"
-    [run] = handoff.source_runs
-    completion = verified.completed.completion
-    assert run.run_id == verified.run_id and run.completion.sha256 == verified.manifest_sha256
-    assert run.resolved_config_sha256 == completion.resolved_config_sha256
-    assert run.matrix_arm == completion.matrix_arm
-    assert [a.matrix_arm for a in handoff.arms] == [completion.matrix_arm]
-    _, built = ah.publish_handoff(handoff, root, official_runs=[verified])
-    assert "run_completion" in {
-        i.role for i in read_manifest(root / built.logical_ref, built.sha256).inputs
-    }
-    result = ah.read_handoff(built, root, official_runs=[verified])
-    assert result.official is True
-
-
-@needs_tokenizer
-def test_official_read_back_without_fresh_verified_runs_fails_closed(
-    tmp_path, view, tiny, recognised
-):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    handoff = ah.build_handoff(build, root, code=CODE, official_runs=[verified])
-    _, built = ah.publish_handoff(handoff, root, official_runs=[verified])
-    with pytest.raises(ah.OfficialProvenanceNotVerified):
-        ah.read_handoff(built, root)
-    with pytest.raises(ah.OfficialProvenanceNotVerified):
-        ah.publish_handoff(handoff.model_copy(update={"code": CODE}), root)
-
-
-@needs_tokenizer
-def test_official_handoff_needs_the_run_the_rows_cite(tmp_path, view, tiny, recognised):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    other = dataclasses.replace(verified, run_id="some_other_run")
-    with pytest.raises(ah.HandoffError, match="run"):
-        ah.build_handoff(build, root, code=CODE, official_runs=[other])
-
-
-@needs_tokenizer
-@pytest.mark.parametrize(
-    "change",
-    [
-        {"resolved_config_sha256": "f" * 64},
-        {"matrix_arm": "chunk_robustness"},
-    ],
-)
-def test_official_handoff_checks_configuration_and_arm(tmp_path, view, tiny, recognised, change):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    completion = verified.completed.completion.model_copy(update=change)
-    altered = dataclasses.replace(
-        verified, completed=dataclasses.replace(verified.completed, completion=completion)
-    )
-    with pytest.raises(ah.HandoffError):
-        ah.build_handoff(build, root, code=CODE, official_runs=[altered])
-
-
-@needs_tokenizer
-def test_official_completed_observation_missing_from_the_table_is_refused(
-    tmp_path, view, tiny, recognised
-):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    extra = verified.results[0].model_copy(update={"observation_key": "obs_not_in_table"})
-    altered = dataclasses.replace(verified, results=[*verified.results, extra])
-    with pytest.raises(ah.HandoffError, match="absent from the analysis table"):
-        ah.build_handoff(build, root, code=CODE, official_runs=[altered])
-
-
-@needs_tokenizer
-def test_official_result_that_differs_from_the_table_is_refused(tmp_path, view, tiny, recognised):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    first = verified.results[0].model_copy(update={"attempt_id": "attempt_other"})
-    altered = dataclasses.replace(verified, results=[first, *verified.results[1:]])
-    with pytest.raises(ah.HandoffError):
-        ah.build_handoff(build, root, code=CODE, official_runs=[altered])
-
-
-@needs_tokenizer
-def test_official_origin_cannot_be_claimed_for_a_synthetic_table(tmp_path, view, tiny, recognised):
-    verified, _, _ = official_table(tmp_path, view, tiny)
-    w = world()
-    _, build = publish(tmp_path / "synthetic_root", pair(w))
-    with pytest.raises(ah.HandoffError):
-        ah.build_handoff(build, tmp_path / "synthetic_root", code=CODE, official_runs=[verified])
 
 
 def test_serialization_of_csv_is_unchanged_by_the_handoff(tmp_path):

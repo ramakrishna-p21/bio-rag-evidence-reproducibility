@@ -779,23 +779,6 @@ def test_non_official_completions_are_never_accepted(tmp_path, kind):
         official_completions(store)
 
 
-def test_official_run_yields_only_complete_observations(tmp_path):
-    from synthetic_environment import evidence
-
-    from biorag_repro.generation.environment_gate import publish_environment_evidence
-
-    store, _ = new_store(tmp_path, kind="official")
-    publish_environment_evidence(store.run_dir, evidence())  # an official attempt cites it
-    done = store.plan(coordinates(0))
-    finish(store, done, kind="official")
-    store.plan(coordinates(1))
-    failed = store.plan(coordinates(2))
-    a = start(store, failed, "official")
-    store.fail(failed, a, kind="invalid_prompt", detail="x", retryable=False)
-    assert store.record.official
-    assert [o.key for o in official_completions(store)] == [done]
-
-
 def test_environment_backend_must_match_the_run(tmp_path):
     store, _ = new_store(tmp_path, kind="mock")
     key = store.plan(coordinates())

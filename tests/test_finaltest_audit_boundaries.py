@@ -9,7 +9,6 @@ from pydantic import ValidationError
 
 import biorag_repro
 from biorag_repro.finaltest import layout
-from biorag_repro.generation import driver
 from biorag_repro.generation.attempts import RunRecord, RunStore
 from biorag_repro.generation.roster import RosterMismatch, _check_scope
 
@@ -115,17 +114,7 @@ def test_registry_events_are_not_activated():
     assert {"layout.py"} <= users <= {"layout.py", "inventory.py", "registry.py"}, users
 
 
-def test_existing_final_test_refusals_stand(monkeypatch, tmp_path):
-    fake_scope = types.SimpleNamespace(phase="final_test")
-    prepared = types.SimpleNamespace(
-        scope=fake_scope, config=types.SimpleNamespace(settings=types.SimpleNamespace())
-    )
-    monkeypatch.setattr(driver, "check_placement", lambda *_: None)
-    monkeypatch.setattr(driver, "prepare", lambda *_: prepared)
-    plan = types.SimpleNamespace(run_root=tmp_path / "run", anchor_dir=tmp_path / "anchor")
-    with pytest.raises(driver.DriverError, match="final_test scope cannot be executed here"):
-        driver.execute(plan, [], mode="mock", start=lambda _: pytest.fail("started"))
-    assert not (tmp_path / "run").exists()
+def test_existing_final_test_refusals_stand():
     with pytest.raises(RosterMismatch, match="neither development nor qualification"):
         _check_scope(types.SimpleNamespace(phase="final_test"), {}, ("b", "c"))
     with pytest.raises(ValidationError):

@@ -17,7 +17,6 @@ from test_analysis_handoff_pairing import (
     pdf_chunk_without_evidence,
     worlds,
 )
-from test_matrix_rehearsal import ARM_CONFIG
 from test_r_input_fixture import CODE, derive, needs_r, run_primary
 from test_stage_b import Case, deliver
 
@@ -29,6 +28,7 @@ from biorag_repro.retrieval.models import DenseQuery
 from biorag_repro.retrieval.storage import record_ref
 
 N_ITEMS = 24
+ARM_CONFIG = {arm: f"{n:x}" * 64 for n, arm in enumerate(FROZEN_MATRIX, 1)}
 ITEMS = [f"q_{n:03d}" for n in range(1, N_ITEMS + 1)]
 PAPER = {item: f"P{(n // 2) + 1:02d}" for n, item in enumerate(ITEMS)}
 ARM_OFFSET = {

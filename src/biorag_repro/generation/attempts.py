@@ -145,7 +145,8 @@ def _check_backend_purpose(kind: str, purpose: str) -> None:
 
 RunPhase = Literal["development", "qualification"]
 
-# Environment evidence stored with an official run (see environment_gate).
+# Environment evidence stored with an official run. Its writer was removed in Phase 2.5, so an
+# official run cannot start until a Phase 8 replacement exists.
 EVIDENCE_DIR = "environment_evidence"
 LOCK_FILE = f"{EVIDENCE_DIR}/lock.toml"
 VERIFICATION_FILE = f"{EVIDENCE_DIR}/verification.json"

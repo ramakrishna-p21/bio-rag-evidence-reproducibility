@@ -21,7 +21,7 @@ from test_stage_b import P_A, P_B, P_C, prose_xml
 import biorag_repro
 from biorag_repro.evaluation import analysis_handoff, analysis_table
 from biorag_repro.evaluation.stage_a import IneligibleItem, check_item
-from biorag_repro.generation import attempts, driver, roster
+from biorag_repro.generation import attempts, roster
 from biorag_repro.readiness.guard import FinalTestAuthorization
 from biorag_repro.readiness.models import Candidate, HostBinding
 
@@ -56,20 +56,6 @@ def authorization() -> FinalTestAuthorization:
 
 
 # ---- behavioural refusals ------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("mode", driver.MODES)
-def test_driver_refuses_a_final_test_scope_before_any_backend_starts(monkeypatch, mode):
-    started = []
-    prepared = SimpleNamespace(
-        config=SimpleNamespace(settings=None), scope=SimpleNamespace(phase="final_test")
-    )
-    monkeypatch.setattr(driver, "check_placement", lambda *a: None)
-    monkeypatch.setattr(driver, "prepare", lambda *a: prepared)
-    plan = SimpleNamespace(run_root=Path("r"), anchor_dir=Path("a"))
-    with pytest.raises(driver.DriverError, match="final_test scope cannot be executed"):
-        driver.execute(plan, [], mode=mode, start=lambda p: started.append(p))  # type: ignore[arg-type]
-    assert started == []
 
 
 def test_roster_refuses_a_scope_that_is_not_development_or_qualification():
@@ -110,9 +96,6 @@ def test_analysis_handoff_is_development_only():
 @pytest.mark.parametrize(
     "function",
     [
-        driver.execute,
-        driver.prepare,
-        driver.dry_run,
         roster.build_roster,
         check_item,
         analysis_table.build_row,
@@ -163,7 +146,6 @@ def test_only_the_readiness_package_refers_to_the_guard():
 
 
 REVIEWED_REFERENCES = {
-    "generation/driver.py": {"execute"},
     "evaluation/stage_a.py": {"check_item"},
     "evaluation/analysis_table.py": {"build_row"},
     "evaluation/analysis_models.py": {"analysis_role", "AnalysisRow", "Phase"},

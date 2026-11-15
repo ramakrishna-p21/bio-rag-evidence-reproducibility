@@ -7,13 +7,11 @@ import json
 
 import pytest
 from generation_support import ROOT, artifact, needs_tokenizer, resolve, synthetic_settings
-from synthetic_environment import evidence as synthetic_evidence
 from test_generation_attempts import Clock, environment
 from test_generation_receipts import CONTEXT, CONTEXT_REF, facts_for
 
 from biorag_repro.generation.attempts import Coordinates, RunStore
 from biorag_repro.generation.environment import BackendIdentity
-from biorag_repro.generation.environment_gate import publish_environment_evidence
 from biorag_repro.generation.inputs import (
     CorruptInput,
     build_input_record,
@@ -59,8 +57,6 @@ def new_store(tmp_path, renderer, kind="smoke"):
         backend_kind=kind,
         now=Clock(),
     )
-    if kind == "official":  # an official attempt cites the stored environment verification
-        publish_environment_evidence(store.run_dir, synthetic_evidence())
     return store
 
 
@@ -221,27 +217,6 @@ def test_facts_without_a_stored_input_are_a_failure(tmp_path, renderers):
     state = store.observation(store.observation_keys()[0])
     assert state.status == "terminal_failure"
     assert state.events[-1].failure_kind == "receipt_without_input_record"
-
-
-def test_official_run_needs_the_recorded_input_of_every_observation(tmp_path, renderers):
-    renderer = renderers["development_candidate"]
-    store = new_store(tmp_path, renderer, kind="official")
-    entry = entry_for(renderer, store, with_record=False)
-    backend = Backend(renderer, kind="official")
-    with pytest.raises(RosterMismatch, match="official"):
-        run(store, [entry], backend, kind="official")
-    assert backend.calls == []
-
-
-def test_official_run_does_not_complete_an_observation_without_a_receipt(tmp_path, renderers):
-    renderer = renderers["development_candidate"]
-    store = new_store(tmp_path, renderer, kind="official")
-    entry = entry_for(renderer, store)
-    run(store, [entry], Backend(renderer, kind="official", with_facts=False), kind="official")
-    state = store.observation(store.observation_keys()[0])
-    assert state.status == "terminal_failure"
-    assert state.events[-1].failure_kind == "missing_execution_receipt"
-    assert not (store.run_dir / "observations" / state.key / "raw").exists()
 
 
 def test_rerun_after_completion_stores_nothing_new(tmp_path, renderers):

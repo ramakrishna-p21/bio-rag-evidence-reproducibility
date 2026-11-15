@@ -8,9 +8,13 @@ hashes); a later result record cites this one by hash. Python stays the only sou
 Stage A/B/C labels and answer correctness, and R must reproduce the accounting here
 rather than re-derive evaluability.
 
-A handoff is either built from verified official runs or is an explicit synthetic
-rehearsal. A rehearsal has no scientific authority and cannot be read back as official.
-Final-test handoffs are not supported before the final-test readiness gate.
+Only an explicit synthetic rehearsal can be built. A rehearsal has no scientific authority and
+cannot be read back as official. An official-origin handoff (`verified_official_run`) is
+refused both when building and when reading: verifying official runs is an outstanding Phase 8
+requirement, and its earlier implementation was removed in Phase 2.5. The schema keeps
+`input_origin`, `source_runs` and `SourceRun` unchanged so that published handoffs and the R
+contract keep their bytes. Final-test handoffs are not supported before the final-test
+readiness gate.
 """
 
 from collections import defaultdict
@@ -43,10 +47,7 @@ from biorag_repro.evaluation.analysis_models import (
 from biorag_repro.evaluation.analysis_storage import publish_derived_record, read_table
 from biorag_repro.evaluation.analysis_table import primary_pairs
 from biorag_repro.evaluation.attribution import Correct, Delivered, Execution
-from biorag_repro.evaluation.stage_c import generation_digest
-from biorag_repro.generation.completion import MANIFEST as COMPLETION_MANIFEST
 from biorag_repro.generation.environment import GitState
-from biorag_repro.generation.official import VerifiedOfficialRun
 
 SCHEMA_VERSION = "1"
 TRANSFORMATION = "analysis_handoff_v1"
@@ -59,7 +60,13 @@ class HandoffError(ValueError):
 
 
 class OfficialProvenanceNotVerified(HandoffError):
-    """An official-origin handoff was used without freshly verified official runs."""
+    """An official-origin handoff was requested; official provenance cannot be verified here."""
+
+
+OFFICIAL_UNAVAILABLE: Final = (
+    "an official-origin handoff is unavailable: verifying official runs is an outstanding "
+    "Phase 8 requirement"
+)
 
 
 # ---- frozen analysis method (EXPERIMENT_PLAN sections 6-9, REPRODUCIBILITY_SPEC section 8) ----
@@ -383,98 +390,25 @@ class AnalysisHandoff(Record):
 # ---- construction --------------------------------------------------------------------------
 
 
-def _check_official(
-    rows: list[AnalysisRow], runs: Sequence[VerifiedOfficialRun]
-) -> list[SourceRun]:
-    if not runs:
-        raise OfficialProvenanceNotVerified("an official handoff needs verified official runs")
-    by_id: dict[str, VerifiedOfficialRun] = {}
-    for run in runs:
-        if not isinstance(run, VerifiedOfficialRun):
-            raise OfficialProvenanceNotVerified("only a VerifiedOfficialRun can establish origin")
-        if run.run_id in by_id or run.completed.completion.run_id != run.run_id:
-            raise HandoffError(f"run {run.run_id} is repeated or differs from its completion")
-        by_id[run.run_id] = run
-    cited = {r.run_id for r in rows if r.run_id is not None}
-    if cited != set(by_id):
-        raise HandoffError(
-            f"run ids in the table {sorted(cited)} differ from the supplied runs {sorted(by_id)}"
-        )
-    row_by_key = {r.observation_key: r for r in rows}
-    for run in by_id.values():
-        completion = run.completed.completion
-        phase = run.completed.store.record.phase
-        retrieval = run.completed.store.config.settings.retrieval_config_sha256
-        results = {r.observation_key: r for r in run.results}
-        for row in rows:
-            if row.run_id != run.run_id:
-                continue
-            result = results.get(row.observation_key)
-            if (row.phase, phase) != ("development", "development"):
-                raise HandoffError(f"row {row.observation_key} is not a development row")
-            if (row.matrix_arm, row.config_sha256, row.retrieval_config_sha256) != (
-                completion.matrix_arm,
-                completion.resolved_config_sha256,
-                retrieval,
-            ):
-                raise HandoffError(f"row {row.observation_key} differs from run {run.run_id}")
-            if (
-                result is None
-                or result.run_id != run.run_id
-                or result.attempt_id != row.attempt_id
-                or result.status != row.execution_status
-                or generation_digest(result) not in run.digests
-            ):
-                raise HandoffError(f"row {row.observation_key} is not a result of run {run.run_id}")
-        for key in results:
-            found = row_by_key.get(key)
-            if found is None or found.run_id != run.run_id:
-                raise HandoffError(f"completed observation {key} is absent from the analysis table")
-    return [
-        SourceRun(
-            run_id=run.run_id,
-            completion=ArtifactRef(
-                artifact_id=f"completion_{run.manifest_sha256}",
-                logical_ref=f"runs/{run.run_id}/{COMPLETION_MANIFEST}",
-                sha256=run.manifest_sha256,
-            ),
-            run_record_sha256=run.completed.completion.run_record_sha256,
-            resolved_config_sha256=run.completed.completion.resolved_config_sha256,
-            raw_config_sha256=run.completed.completion.raw_config_sha256,
-            roster_sha256=run.completed.completion.roster_sha256,
-            matrix_arm=run.completed.completion.matrix_arm,
-            backend_kind=run.completed.completion.backend_kind,
-            observations=len(run.completed.completion.observations),
-        )
-        for run in sorted(by_id.values(), key=lambda r: r.run_id)
-    ]
-
-
 def build_handoff(
     table_build: ArtifactRef,
     root: Path,
     *,
     code: GitState,
-    official_runs: Sequence[VerifiedOfficialRun] = (),
     rehearsal: bool = False,
 ) -> AnalysisHandoff:
-    """Describe one published analysis table; nothing is written.
-
-    Give verified official runs, or set `rehearsal` for an explicit synthetic rehearsal.
-    """
-    return _describe(table_build, root, code, official_runs, rehearsal)[0]
+    """Describe one published analysis table as an explicit synthetic rehearsal; nothing is written."""
+    if not rehearsal:
+        raise OfficialProvenanceNotVerified(OFFICIAL_UNAVAILABLE)
+    return _describe(table_build, root, code)[0]
 
 
 def _describe(
     table_build: ArtifactRef,
     root: Path,
     code: GitState,
-    official_runs: Sequence[VerifiedOfficialRun],
-    rehearsal: bool,
 ) -> tuple[AnalysisHandoff, list[AnalysisRow]]:
-    """The handoff and the table rows it was built from (verified once, by `read_table`)."""
-    if bool(official_runs) == rehearsal:
-        raise HandoffError("give exactly one of verified official runs or rehearsal=True")
+    """The rehearsal handoff and the table rows it was built from (verified once, by `read_table`)."""
     rows = read_table(table_build, root)
     manifest = read_manifest(root / table_build.logical_ref, table_build.sha256)
     outputs = {o.artifact_kind: o.artifact for o in manifest.outputs}
@@ -495,9 +429,8 @@ def _describe(
         arms[row.matrix_arm].add((row.config_sha256, row.retrieval_config_sha256))
     if any(len(configs) != 1 for configs in arms.values()):
         raise HandoffError("one matrix arm must run under one configuration")
-    source_runs = [] if rehearsal else _check_official(rows, official_runs)
     handoff = AnalysisHandoff(
-        input_origin="synthetic_rehearsal" if rehearsal else "verified_official_run",
+        input_origin="synthetic_rehearsal",
         phase="development",
         benchmark_version=roster.benchmark_version,
         corpus_version=roster.corpus_version,
@@ -514,7 +447,7 @@ def _describe(
             )
             for arm, cfg in ((a, list(c)) for a, c in sorted(arms.items()))
         ],
-        source_runs=source_runs,
+        source_runs=[],
         analysis_spec=ANALYSIS_SPEC,
         accounting=derive_accounting(rows, roster),
         non_included_items=[i for i in roster.items if i.state != "included"],
@@ -528,25 +461,18 @@ def _describe(
 # ---- verification, publication and read-back ---------------------------------------------------
 
 
-def _verify(
-    handoff: AnalysisHandoff, root: Path, runs: Sequence[VerifiedOfficialRun]
-) -> list[AnalysisRow]:
-    """Rebuild the handoff from the published table (and runs) and require equality."""
-    official = handoff.input_origin == "verified_official_run"
-    if official and not runs:
-        raise OfficialProvenanceNotVerified(
-            "an official handoff can only be checked against freshly verified official runs"
-        )
-    if not official and runs:
-        raise HandoffError("a rehearsal handoff is not checked against official runs")
-    expected, rows = _describe(handoff.table_build, root, handoff.code, runs, not official)
+def _verify(handoff: AnalysisHandoff, root: Path) -> list[AnalysisRow]:
+    """Rebuild the rehearsal handoff from the published table and require equality."""
+    if handoff.input_origin != "synthetic_rehearsal" or handoff.source_runs:
+        raise OfficialProvenanceNotVerified(OFFICIAL_UNAVAILABLE)
+    expected, rows = _describe(handoff.table_build, root, handoff.code)
     if expected != handoff:
         fields = sorted(
             name
             for name in AnalysisHandoff.model_fields
             if getattr(expected, name) != getattr(handoff, name)
         )
-        raise HandoffError(f"handoff differs from the table and runs it describes: {fields}")
+        raise HandoffError(f"handoff differs from the table it describes: {fields}")
     return rows
 
 
@@ -578,11 +504,9 @@ def _store(handoff: AnalysisHandoff, root: Path) -> tuple[ArtifactRef, ArtifactR
     )
 
 
-def publish_handoff(
-    handoff: AnalysisHandoff, root: Path, *, official_runs: Sequence[VerifiedOfficialRun] = ()
-) -> tuple[ArtifactRef, ArtifactRef]:
+def publish_handoff(handoff: AnalysisHandoff, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
     """Verify, then publish. A handoff that cannot be verified is never written."""
-    _verify(handoff, root, official_runs)
+    _verify(handoff, root)
     return _store(handoff, root)
 
 
@@ -590,17 +514,19 @@ def publish_handoff(
 class VerifiedHandoff:
     handoff: AnalysisHandoff
     rows: list[AnalysisRow]
-    official: bool  # True only when freshly verified official runs back the rows
+    official: bool  # always False: no official origin can currently be verified
 
 
 def read_handoff(
     build: ArtifactRef,
     root: Path,
     *,
-    official_runs: Sequence[VerifiedOfficialRun] = (),
     require_official: bool = False,
 ) -> VerifiedHandoff:
-    """Check manifest, bytes, lineage, the table and the run provenance; return the rows."""
+    """Check manifest, bytes, lineage and the table; return the rows.
+
+    `require_official` always refuses: no official origin can currently be verified.
+    """
     manifest = read_manifest(root / build.logical_ref, build.sha256)
     if len(manifest.outputs) != 1 or manifest.outputs[0].artifact_kind != "analysis_handoff":
         raise HandoffError("build manifest does not describe an analysis handoff")
@@ -614,5 +540,5 @@ def read_handoff(
         raise HandoffError("handoff lineage differs from its build manifest")
     if require_official and handoff.input_origin != "verified_official_run":
         raise HandoffError("a rehearsal handoff has no scientific authority")
-    rows = _verify(handoff, root, official_runs)
-    return VerifiedHandoff(handoff, rows, handoff.input_origin == "verified_official_run")
+    rows = _verify(handoff, root)
+    return VerifiedHandoff(handoff, rows, False)
