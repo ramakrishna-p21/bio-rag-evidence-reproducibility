@@ -658,31 +658,32 @@ def model_positions(model_root: Path) -> dict:
     return {k: config.get(k) for k in ("max_position_embeddings", "rope_scaling")}
 
 
-def boundary_context(renderer: InputRenderer, texts: list[str], size: int) -> str:
-    """Development text cut to exactly `size` tokens by the pinned counter.
+BOUNDARY_ORIGIN = "development contexts joined and cut to the evidence budget; not retrieval output"
+
+
+def boundary_context(renderer: InputRenderer, texts: list[str], size: int) -> tuple[str, int]:
+    """Development text cut to exactly `size` tokens by the pinned counter, and how many of
+    `texts` it draws on.
 
     Used only by the probe, never as supplied evidence: the scientific path never cuts a
     chunk. Decoding a token prefix can merge tokens at the cut, so nearby cut points are
     tried and the first one that recounts to exactly `size` is kept.
     """
     tokenizer = renderer.tokenizer
-    ids = tokenizer("\n\n".join(texts), add_special_tokens=False)["input_ids"]
+    joined = "\n\n".join(texts)
+    ids = tokenizer(joined, add_special_tokens=False)["input_ids"]
     if len(ids) < size:
         raise Refused(f"the development contexts hold {len(ids)} tokens, fewer than {size}")
     for n in sorted(range(size - 8, size + 9), key=lambda n: abs(n - size)):
         text = tokenizer.decode(ids[:n], skip_special_tokens=False)
         if n <= len(ids) and renderer.counter(text) == size:
-            return text
+            starts = [len("\n\n".join(texts[:i])) + (2 if i else 0) for i in range(len(texts))]
+            return text, sum(start < len(text) for start in starts)
     raise Refused(f"no cut of the development contexts recounts to exactly {size} tokens")
 
 
-def probe(args: argparse.Namespace, model: Any = None) -> dict:
-    """One development-only call at the exact evidence budget with the full output allowance.
-
-    Writes one standalone record; no batch, observation key, parse or score is created.
-    """
-    import torch
-
+def boundary_input(args: argparse.Namespace) -> dict:
+    """The probe's input, built and checked without a model: everything except the GPU call."""
     out = args.out
     if (out.parent / "batch.json").exists() or out.parent.name in (
         "results",
@@ -697,8 +698,7 @@ def probe(args: argparse.Namespace, model: Any = None) -> dict:
     if len(chosen) != 1:
         raise Refused(f"no confirmatory {args.condition} record for {args.item_id}")
     planned = chosen[0]
-    settings = planned.config.settings
-    budgets = settings.budgets
+    budgets = planned.config.settings.budgets
     positions = model_positions(args.model_root)
     if positions["rope_scaling"] is not None or (
         budgets.context_window_tokens > positions["max_position_embeddings"]
@@ -707,23 +707,42 @@ def probe(args: argparse.Namespace, model: Any = None) -> dict:
                       f"checkpoint's positions {positions}")  # fmt: skip
     renderer = InputRenderer(args.tokenizer_root, planned.config, prompt)
     # the chosen record's own context first, then the same condition's in package order
-    texts = [planned.record["context"]] + [
-        r["context"] for r in package["records"]
+    sources = [planned.record] + [
+        r for r in package["records"]
         if r["condition"] == args.condition and r["context"] is not None
         and r is not planned.record
     ]  # fmt: skip
-    context = boundary_context(renderer, texts, budgets.evidence_tokens)
+    context, used = boundary_context(renderer, [r["context"] for r in sources],
+                                     budgets.evidence_tokens)  # fmt: skip
     record = dict(planned.record, context=context, context_tokens=budgets.evidence_tokens,
                   context_sha256=sha256_bytes(context.encode("utf-8")))  # fmt: skip
     boundary = Planned("probe", record, 1, planned.config)
     rendered, ids = prepare(renderer, boundary)
     if rendered.input_tokens + budgets.max_new_tokens > budgets.context_window_tokens:
         raise Refused("input plus output allowance exceeds the configured window")
+    return {
+        "planned": planned, "boundary": boundary, "renderer": renderer, "rendered": rendered,
+        "ids": ids, "seeds": seeds, "positions": positions,
+        "sources": [(r["item_id"], r["matrix_arm"], r["condition"]) for r in sources[:used]],
+    }  # fmt: skip
+
+
+def probe(args: argparse.Namespace, model: Any = None) -> dict:
+    """One development-only call at the exact evidence budget with the full output allowance.
+
+    Writes one standalone record; no batch, observation key, parse or score is created.
+    """
+    import torch
+
+    built = boundary_input(args)
+    planned, rendered = built["planned"], built["rendered"]
+    settings = planned.config.settings
+    budgets = settings.budgets
     snapshot = inventory_snapshot(args.model_root, settings.model.revision)
     if model is None:
         model = load_model(args.model_root, args.device)
-    call = generate(model, renderer.tokenizer, rendered, ids, boundary, seeds,
-                    force_full_output=True)  # fmt: skip
+    call = generate(model, built["renderer"].tokenizer, rendered, built["ids"], built["boundary"],
+                    built["seeds"], force_full_output=True)  # fmt: skip
     raw = call.pop("raw")
     result = {
         "kind": "boundary_probe",
@@ -735,9 +754,11 @@ def probe(args: argparse.Namespace, model: Any = None) -> dict:
         "condition": args.condition,
         "resolved_config_sha256": planned.config.configuration_sha256,
         "model_manifest_sha256": snapshot.manifest_sha256,
-        "checkpoint_positions": positions,
+        "checkpoint_positions": built["positions"],
         "budgets": budgets.model_dump(mode="json"),
-        "boundary_context_sha256": record["context_sha256"],
+        "context_origin": BOUNDARY_ORIGIN,
+        "context_sources": [list(source) for source in built["sources"]],
+        "boundary_context_sha256": built["boundary"].record["context_sha256"],
         "context_tokens": budgets.evidence_tokens,
         "output_sha256": sha256_bytes(raw.encode("utf-8")),
         "device": str(torch.device(args.device)),
@@ -747,7 +768,7 @@ def probe(args: argparse.Namespace, model: Any = None) -> dict:
         result["probe_status"] = "output_allowance_not_reached"
     else:
         result["probe_status"] = "complete"
-    write_once(out, dump(result))
+    write_once(args.out, dump(result))
     return result
 
 

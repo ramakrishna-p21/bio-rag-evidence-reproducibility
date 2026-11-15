@@ -372,6 +372,9 @@ def test_the_probe_fills_the_exact_evidence_budget_and_the_whole_output_allowanc
     assert stored["context_tokens"] == 2048 == stored["budgets"]["evidence_tokens"]
     assert stored["output_tokens"] == 128 and stored["stop_reason"] == "length"
     assert stored["probe_status"] == "complete"
+    assert stored["context_origin"] == rg.BOUNDARY_ORIGIN
+    assert stored["context_sources"][0] == ["q_1", "confirmatory", "JATS"]
+    assert all(source[2] == "JATS" for source in stored["context_sources"])
     assert stored["checkpoint_positions"] == {"max_position_embeddings": 8192, "rope_scaling": None}
     assert stored["input_tokens"] + 128 <= stored["budgets"]["context_window_tokens"]
     assert "observation_key" not in stored and "generation_result" not in stored
@@ -436,3 +439,36 @@ def test_an_inventory_is_written_once_and_refuses_a_non_cuda_device(tmp_path):
         rg.main(["inventory", "--out", str(out)])
     with pytest.raises(rg.Refused):
         rg.inventory("cpu")
+
+
+def test_chunk_seals_survive_a_kill_and_resume_without_rewriting_or_regenerating(batch):
+    """The Colab sequence: chunk, seal, kill mid-attempt, seal, resume against the anchor, seal."""
+    rg.run(batch_with(batch, stop_after=3))
+    first = rg.seal(batch.out)
+    chunk = {k: (batch.out / "results" / f"{k}.json").read_bytes() for k in results(batch.out)}
+    run_id = json.loads((batch.out / "batch.json").read_bytes())["run_id"]
+    rg.append_event(batch.out, events(batch.out), run_id=run_id, attempt_id="att_killed",
+                    observation_key="obs_unfinished", event="started")  # fmt: skip
+    second = rg.seal(batch.out)  # sealing after a kill records the open attempt as it stands
+    anchors = sorted((batch.out / "anchors").glob("*.json"))
+    sealed = {p: p.read_bytes() for p in anchors}
+    rg.run(batch_with(batch, anchor=anchors[-1], anchor_sha256=second))
+    third = rg.seal(batch.out)
+
+    for key, data in chunk.items():  # nothing completed before the kill was regenerated
+        assert (batch.out / "results" / f"{key}.json").read_bytes() == data
+    assert len(results(batch.out)) == 11
+    log = events(batch.out)
+    assert sum(e["event"] == "completed" for e in log) == 11
+    assert [e["event"] for e in log if e["attempt_id"] == "att_killed"] == [
+        "started",
+        "interrupted",
+    ]
+    for path, data in sealed.items():  # finalized seals are never rewritten
+        assert path.read_bytes() == data
+    paths = sorted((batch.out / "anchors").glob("*.json"))
+    assert [p.name for p in paths] == ["000001.json", "000002.json", "000003.json"]
+    for path, digest in zip(paths, (first, second, third), strict=True):
+        rg.check_anchor(batch.out, path, digest)  # every earlier anchor still verifies
+    assert json.loads(paths[2].read_bytes())["previous_anchor_sha256"] == second
+    assert rg.run(batch_with(batch, anchor=paths[2], anchor_sha256=third)) == 0
