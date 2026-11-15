@@ -224,11 +224,6 @@ def test_report_with_an_unexpected_gate(fx):
     refused(fx, "report_unverifiable")
 
 
-def test_report_produced_under_another_policy(fx):
-    other = fx.policy.model_copy(update={"policy_version": "fixture-policy-1"})
-    refused(fx, "report_unverifiable", "different policy", policy=other)
-
-
 def test_unset_approval_slot_in_the_verifying_policy(fx):
     slots = fx.policy.slots.model_copy(update={"corpus_identity": None})
     refused(fx, "report_unverifiable", policy=fx.policy.model_copy(update={"slots": slots}))

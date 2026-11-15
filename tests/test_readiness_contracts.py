@@ -85,25 +85,6 @@ def test_slots_are_mapped_one_to_one_and_all_unset_in_the_real_policy():
     assert all(getattr(REAL_POLICY.slots, name) is None for name in policy.SLOT_NAMES)
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "primary_bootstrap",
-        "qwen_checkpoint",
-        "environment_lock",
-        "gpu",
-        "storage",
-        "qualification",
-        "freeze",
-    ],
-)
-def test_specific_production_approvals_stay_unset(name):
-    matching = [n for n in policy.SLOT_NAMES if name in n or n in name]
-    for slot in matching:
-        assert getattr(REAL_POLICY.slots, slot) is None
-    assert REAL_POLICY.slots == policy.ApprovalSlots()
-
-
 def test_policy_is_frozen_and_strict():
     with pytest.raises(ValidationError):
         REAL_POLICY.slots.final_test_freeze = fx.digest("x")

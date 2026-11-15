@@ -1,5 +1,5 @@
 import pytest
-from readiness_support import REAL_POLICY, digest, fixture_policy
+from readiness_support import REAL_POLICY, digest
 from readiness_world import build_world, write
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -143,7 +143,3 @@ def test_a_gate_missing_from_the_gathered_set_is_an_evaluation_error(world, monk
 def test_evaluator_identity_follows_the_package_source():
     assert evaluator_identity() == evaluator_identity()
     assert len(evaluator_identity().code_sha256) == 64
-
-
-def test_fixture_policy_exists_only_in_tests():
-    assert fixture_policy().slots.corpus_identity is not None

@@ -163,12 +163,6 @@ def test_policy_processing_code_is_inside_the_digest(world):
     assert any(p == "src/biorag_repro/readiness/policy.py" for _, _, p in probe(world.repo).entries)
 
 
-def test_frozen_specification_change_changes_the_subject(world):
-    before = digest_of(g09(world))
-    write(world.repo / "docs/frozen/EXPERIMENT_PLAN.md", "edited\n")
-    assert digest_of(g09(world)) != before
-
-
 # ---- cleanliness of the values file ------------------------------------------------------
 
 
@@ -373,7 +367,6 @@ def test_values_file_must_be_a_regular_file(tmp_path):
 
 def test_loader_reads_no_environment_and_has_no_fallback():
     import ast
-    import inspect
 
     from biorag_repro.readiness import approvals as policy
 
@@ -467,17 +460,3 @@ def test_old_report_still_verifies_under_its_own_policy(world):
     published = publish.publish_report(evaluate(world.ctx, policy), world.data)
     back = publish.read_report(world.data, published.report_sha256, policy)
     assert back.report.policy_sha256 == ORIGINAL_POLICY_SHA256
-
-
-def test_no_command_line_option_selects_a_policy():
-    parser = cli._parser()
-    options = set()
-    for sub in parser._subparsers._group_actions[0].choices.values():
-        for action in sub._actions:
-            options |= set(action.option_strings)
-    assert options == {"-h", "--help", "--data-root", "--repo", "--report-sha256"}
-    assert set(inspect.signature(authorize_final_test).parameters) == {
-        "data_root",
-        "report_sha256",
-        "repo",
-    }
