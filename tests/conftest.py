@@ -22,20 +22,17 @@ TIMEOUT_S = int(os.environ.get("BIORAG_SMOKE_TIMEOUT_S", "120"))
 
 
 def pytest_configure(config):
-    """Tests that start Rscript themselves get the same pinned BLAS kernel as the product code.
+    """Tests that start Rscript get the BLAS kernel the R goldens were produced with.
 
-    The pin is read when R starts, so it has to be in the environment of this process; see
-    biorag_repro.evaluation.analysis_result.R_BLAS_PIN.
+    The pin is read when R starts, and analysis/run_analysis.R refuses to run without it.
     """
-    from biorag_repro.evaluation.analysis_result import R_BLAS_PIN
-
-    os.environ.update(R_BLAS_PIN)
+    os.environ.update({"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"})
 
 
 def pytest_sessionstart(session):
     """BIORAG_REQUIRE_R=1 makes a missing R toolchain a failure instead of silent skips.
 
-    The Python/R handoff, rehearsal, result and supplement tests skip when Rscript or the
+    The Python/R handoff, five-arm and supplement tests skip when Rscript or the
     analysis renv library is absent. CI sets this so those tests cannot disappear unnoticed.
     """
     if os.environ.get("BIORAG_REQUIRE_R") != "1":

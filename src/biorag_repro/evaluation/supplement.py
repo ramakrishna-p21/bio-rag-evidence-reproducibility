@@ -40,7 +40,6 @@ from biorag_repro.core.storage import publish_bytes, serialize_project_json
 from biorag_repro.documents.models import CanonicalDocument, CanonicalNode
 from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff, VerifiedHandoff
 from biorag_repro.evaluation.analysis_models import MISSING, AnalysisRow
-from biorag_repro.evaluation.analysis_result import ResultError, read_result_files
 from biorag_repro.evaluation.analysis_table import (
     Observation,
     build_row,
@@ -163,6 +162,14 @@ class SupplementError(ValueError):
 
 class OfficialSupplementUnavailable(SupplementError):
     """Raised for any attempt to build a supplement from other than a verified rehearsal."""
+
+
+class ResultError(ValueError):
+    """A published supplement fails verification; `stage` names the boundary."""
+
+    def __init__(self, stage: str, message: str):
+        super().__init__(f"[{stage}] {message}")
+        self.stage = stage
 
 
 # ---- answer identity ------------------------------------------------------------------------
@@ -711,7 +718,14 @@ def read_supplement(
     """
     if verified.official or verified.handoff.input_origin != "synthetic_rehearsal":
         raise OfficialSupplementUnavailable("only a verified synthetic rehearsal is supported")
-    files = read_result_files(root, relative, (*TABLES, RECORD_FILE))
+    directory = root / relative
+    names = {*TABLES, RECORD_FILE}
+    present = {p.name for p in directory.iterdir()}
+    if present != names:
+        raise ResultError(
+            "file_set", f"missing {sorted(names - present)}, unexpected {sorted(present - names)}"
+        )
+    files = {name: (directory / name).read_bytes() for name in names}
     if sha256_bytes(files[RECORD_FILE]) != record_sha256:
         raise ResultError("hash", "the supplement record differs from the trusted SHA-256")
     record = SupplementRecord.model_validate_json(files[RECORD_FILE], strict=True)

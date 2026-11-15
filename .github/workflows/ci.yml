@@ -73,7 +73,7 @@ jobs:
       - name: R testthat suite
         working-directory: analysis
         env:
-          # Same kernel as R_BLAS_PIN in the Python package; OpenBLAS reads these when R starts.
+          # The kernel run_analysis.R requires and tests/conftest.py sets; read when R starts.
           OPENBLAS_CORETYPE: HASWELL
           OPENBLAS_NUM_THREADS: '1'
         run: Rscript -e 'testthat::test_dir("tests/testthat", reporter = "summary", stop_on_failure = TRUE)'

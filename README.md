@@ -84,7 +84,7 @@ Installed console scripts, each also runnable as `python -m <module> --help`:
 | Command | Module | Purpose |
 | --- | --- | --- |
 | `biorag-context` | `biorag_repro.retrieval.cli` | Assemble generator contexts from selected chunks and re-read them with full validation. |
-| `biorag-analysis` | `biorag_repro.evaluation.analysis_cli` | Verify the analysis table and handoff, and check R results against them. |
+| `biorag-analysis` | `biorag_repro.evaluation.analysis_cli` | Verify the analysis table, the handoff and a supplement. |
 | `biorag-checkpoint` | `biorag_repro.generation.checkpoint` | Inventory and verify a local model snapshot. |
 | `biorag-environment` | `biorag_repro.generation.environment_lock` | Compare the intended execution environment with the installed one. |
 | `biorag-readiness` | `biorag_repro.readiness.cli` | Evaluate and verify readiness for protected evaluation runs. |

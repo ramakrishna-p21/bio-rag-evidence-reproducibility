@@ -17,16 +17,11 @@ from test_analysis_handoff_pairing import (
     pdf_chunk_without_evidence,
     worlds,
 )
-from test_analysis_rehearsal import rehearse
-from test_analysis_result import needs_r
 from test_matrix_rehearsal import ARM_CONFIG
-from test_r_input_fixture import CODE
-from test_release_index import derive
+from test_r_input_fixture import CODE, derive, needs_r, run_primary
 from test_stage_b import Case, deliver
 
 from biorag_repro.evaluation import analysis_handoff as ah
-from biorag_repro.evaluation import analysis_result as ar
-from biorag_repro.evaluation import release_index as ri
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX, PlannedRoster
 from biorag_repro.evaluation.analysis_storage import publish_table
 from biorag_repro.evaluation.analysis_table import ARM_RETRIEVAL, Table, build_table
@@ -223,9 +218,8 @@ def five_arm_run(tmp_path_factory, built_table):
     _ref, handoff_build = ah.publish_handoff(
         ah.build_handoff(table_build, root, code=CODE, rehearsal=True), root
     )
-    done = rehearse(root, handoff_build)
-    secondary, inputs = derive(root, done.preflight_build, done.result_dir, "analysis/r_secondary")
-    return table, root, done, secondary, inputs
+    primary = run_primary(root, handoff_build)
+    return table, root, primary, derive(root, handoff_build, primary)
 
 
 def test_the_table_has_the_planned_five_arm_structure(built_table):
@@ -248,8 +242,8 @@ def test_the_table_has_the_planned_five_arm_structure(built_table):
 
 @needs_r
 def test_the_primary_result_equals_an_independent_calculation(five_arm_run):
-    _table, root, done, _secondary, _inputs = five_arm_run
-    result = root / done.result_dir
+    _table, root, primary, _secondary = five_arm_run
+    result = root / primary
     by_outcome = {r["outcome"]: r for r in read_csv(result, "coprimary_results.csv")}
     assert set(by_outcome) == {"evidence_delivered", "answer_correct"}
     for outcome, row in by_outcome.items():
@@ -278,8 +272,8 @@ def test_the_primary_result_equals_an_independent_calculation(five_arm_run):
 
 @needs_r
 def test_paper_and_state_counts_follow_the_primary_pairs_only(five_arm_run):
-    _table, root, done, _secondary, _inputs = five_arm_run
-    result = root / done.result_dir
+    _table, root, primary, _secondary = five_arm_run
+    result = root / primary
     papers = read_csv(result, "paper_counts.csv")
     for outcome in ("evidence_delivered", "answer_correct"):
         complete = Counter(PAPER[i] for i, _j, _p in expected_pairs(outcome, "confirmatory"))
@@ -302,7 +296,7 @@ def test_paper_and_state_counts_follow_the_primary_pairs_only(five_arm_run):
 
 @needs_r
 def test_robustness_arms_are_reported_per_arm_and_never_enter_the_primary(five_arm_run):
-    _table, root, done, secondary, _inputs = five_arm_run
+    _table, root, result_dir, secondary = five_arm_run
     rows = read_csv(root / secondary, "secondary_robustness.csv")
     assert {r["matrix_arm"] for r in rows} == {"confirmatory", *ROBUSTNESS}
     for r in rows:
@@ -312,8 +306,7 @@ def test_robustness_arms_are_reported_per_arm_and_never_enter_the_primary(five_a
         assert int(r["n_complete"]) == len(pairs)
         assert float(r["rd"]) == pytest.approx(sum(j - p for _i, j, p in pairs) / len(pairs))
     primary = {
-        r["outcome"]: float(r["rd"])
-        for r in read_csv(root / done.result_dir, "coprimary_results.csv")
+        r["outcome"]: float(r["rd"]) for r in read_csv(root / result_dir, "coprimary_results.csv")
     }
     reference = {r["outcome"]: float(r["rd"]) for r in rows if r["matrix_arm"] == "confirmatory"}
     assert reference == pytest.approx(primary)
@@ -321,7 +314,7 @@ def test_robustness_arms_are_reported_per_arm_and_never_enter_the_primary(five_a
 
 @needs_r
 def test_repeat_and_closed_book_tables_use_the_full_repeat_structure(five_arm_run):
-    _table, root, _done, secondary, _inputs = five_arm_run
+    _table, root, _primary, secondary = five_arm_run
     outcomes = read_csv(root / secondary, "secondary_repeat_outcomes.csv")
     seen = {(r["matrix_arm"], r["condition"], int(r["repeat_index"])) for r in outcomes}
     assert {(a, c, k) for a, c, k in seen if a == "confirmatory"} == {
@@ -335,16 +328,3 @@ def test_repeat_and_closed_book_tables_use_the_full_repeat_structure(five_arm_ru
         if r["matrix_arm"] == "closed_book":
             assert int(r["n_items"]) == N_ITEMS
             assert int(r["n_all_repeats_evaluable"]) == N_ITEMS  # no closed-book failures planned
-
-
-@needs_r
-def test_the_release_index_cites_the_five_arm_primary_and_secondary(five_arm_run):
-    _table, root, done, secondary, inputs = five_arm_run
-    index = ri.build_release_index(
-        root, primary_dir=done.result_dir, secondary_dir=secondary, inputs=inputs
-    )
-    assert index.final is False and index.scientific_authority == "none"
-    assert index.primary_scientific_result_sha256 == done.scientific_result_sha256
-    assert ar.read_result_record(done.record.build, root).record.scientific_result_sha256 == (
-        done.scientific_result_sha256
-    )

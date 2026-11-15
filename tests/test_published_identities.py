@@ -10,9 +10,7 @@ Everything is synthetic; no value is a scientific result.
 
 from pathlib import Path
 
-from test_analysis_rehearsal import real_runs  # noqa: F401  (session fixture)
-from test_analysis_result import needs_r
-from test_release_index import derive
+from test_r_input_fixture import derive, needs_r, publish_frozen_handoff, run_primary
 
 from biorag_repro.core.hashing import sha256_file
 
@@ -47,9 +45,9 @@ def hashes(directory: Path, names: dict[str, str]) -> dict[str, str]:
 
 
 @needs_r
-def test_handoff_and_r_tables_keep_their_published_bytes(real_runs):  # noqa: F811
-    root, build, first, _second = real_runs
+def test_handoff_and_r_tables_keep_their_published_bytes(tmp_path):
+    build = publish_frozen_handoff(tmp_path)
     assert (build.artifact_id, build.sha256, build.logical_ref) == HANDOFF_BUILD
-    assert hashes(root / first.result_dir, PRIMARY) == PRIMARY
-    secondary, _ = derive(root, first.preflight_build, first.result_dir, "analysis/r_secondary")
-    assert hashes(root / secondary, SECONDARY) == SECONDARY
+    primary = run_primary(tmp_path, build)
+    assert hashes(tmp_path / primary, PRIMARY) == PRIMARY
+    assert hashes(tmp_path / derive(tmp_path, build, primary), SECONDARY) == SECONDARY
