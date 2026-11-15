@@ -10,6 +10,16 @@ observation keys come from the package, so there is one implementation of each.
         --phase development --out DIR [--anchor F --anchor-sha256 H] [--stop-after N]
     python scripts/run_generation.py seal --out DIR
     python scripts/run_generation.py verify --out DIR --anchor F --anchor-sha256 H
+    python scripts/run_generation.py inventory --out FILE [--device cuda:0]
+    python scripts/run_generation.py probe --contexts F --contexts-sha256 H --configs DIR \\
+        --prompt F --seeds F --tokenizer-root DIR --model-root DIR --device cuda:0 \\
+        --item-id Q --condition JATS --out FILE
+
+`inventory` and `probe` are qualification aids. They write one standalone write-once file each,
+never into a batch: an inventory is a read-only record of the GPUs, driver and packages; a
+probe is one development-only call at the exact evidence budget with the full output
+allowance forced. A probe has no observation key, is never parsed or scored and cannot enter
+the five-arm plan.
 
 Layout of --out: batch.json (identity, written once); attempts/NNNNNN.json (one write-once
 file per attempt event: started, completed, failed, interrupted); results/<key>.json (one
@@ -27,6 +37,8 @@ import hashlib
 import json
 import os
 import platform
+import re
+import socket
 import subprocess
 import sys
 import time
@@ -350,7 +362,7 @@ def measured_call(torch: Any, device: Any, call: Any) -> tuple[Any, int, dict]:
 
 
 def generate(model: Any, tokenizer: Any, rendered: Any, ids: list[int], planned: Planned,
-             seeds) -> dict:  # fmt: skip
+             seeds, force_full_output: bool = False) -> dict:  # fmt: skip
     """One call, as in the Dev35 runner: exact input, explicit decoding, stop on end of turn."""
     import torch
     from transformers import set_seed
@@ -359,6 +371,8 @@ def generate(model: Any, tokenizer: Any, rendered: Any, ids: list[int], planned:
     stop_ids = [tokenizer.convert_tokens_to_ids(t) for t in ("<|im_end|>", "<|endoftext|>")]
     decoding = settings.decoding
     options: dict[str, Any] = {"do_sample": decoding.do_sample, "num_beams": 1}
+    if force_full_output:  # boundary probe only: end-of-turn is suppressed until the limit
+        options["min_new_tokens"] = settings.budgets.max_new_tokens
     seed = None
     if decoding.do_sample:
         seed = repeat_seed(seeds, planned.repeat)  # same named seed for JATS and PDF_DOCLING
@@ -566,6 +580,177 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
         lock.unlink()
 
 
+# ---- qualification aids: GPU inventory and boundary probe --------------------------------
+
+GPU_FIELDS = ("index", "name", "uuid", "memory.total", "driver_version", "compute_cap",
+              "pci.bus_id")  # fmt: skip
+
+
+def gpu_inventory() -> dict:
+    """What nvidia-smi reports about the visible GPUs and driver. Queries only; changes nothing."""
+    try:
+        listing = subprocess.run(
+            ["nvidia-smi", f"--query-gpu={','.join(GPU_FIELDS)}", "--format=csv,noheader"],
+            capture_output=True, text=True, check=True, timeout=60,
+        ).stdout  # fmt: skip
+        full = subprocess.run(
+            ["nvidia-smi", "-q"], capture_output=True, text=True, check=True, timeout=60
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as error:
+        return {"status": "unavailable", "reason": f"nvidia-smi: {error}"[:300]}
+    gpus = [
+        dict(zip(GPU_FIELDS, (part.strip() for part in line.split(","))))
+        for line in listing.splitlines()
+        if line.strip()
+    ]
+    cuda = re.search(r"^CUDA Version\s*:\s*(\S+)", full, re.MULTILINE)
+    return {
+        "status": "measured",
+        "gpus": gpus,
+        "driver_cuda_version": cuda.group(1) if cuda else None,
+        "nvidia_smi_q_sha256": sha256_bytes(full.encode()),
+        "nvidia_smi_q": full,
+    }
+
+
+def inventory(device: str | None) -> dict:
+    """A session record: host, packages, nvidia-smi and, for a named CUDA device, torch's view."""
+    import tokenizers
+    import torch
+    import transformers
+
+    freeze = subprocess.run(
+        [sys.executable, "-m", "pip", "freeze"], capture_output=True, text=True, check=True
+    ).stdout
+    record = {
+        "captured_utc": utc_now(),
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "torch_cuda": torch.version.cuda,
+        "transformers": transformers.__version__,
+        "tokenizers": tokenizers.__version__,
+        "pip_freeze": freeze,
+        "pip_freeze_sha256": sha256_bytes(freeze.encode()),
+        "nvidia": gpu_inventory(),
+        "torch_device": None,
+    }
+    if device is not None:
+        target = torch.device(device)
+        if target.type != "cuda" or target.index is None:
+            raise Refused("inventory --device names one explicit CUDA device, for example cuda:0")
+        free, total = torch.cuda.mem_get_info(target.index)
+        record["torch_device"] = {
+            "device": device,
+            "name": torch.cuda.get_device_name(target.index),
+            "capability": list(torch.cuda.get_device_capability(target.index)),
+            "total_bytes": total,
+            "free_bytes": free,
+            "cudnn": torch.backends.cudnn.version(),
+        }
+    return record
+
+
+def model_positions(model_root: Path) -> dict:
+    """The checkpoint's own context-length settings, read from its config.json."""
+    config = json.loads((model_root / "config.json").read_bytes())
+    return {k: config.get(k) for k in ("max_position_embeddings", "rope_scaling")}
+
+
+def boundary_context(renderer: InputRenderer, texts: list[str], size: int) -> str:
+    """Development text cut to exactly `size` tokens by the pinned counter.
+
+    Used only by the probe, never as supplied evidence: the scientific path never cuts a
+    chunk. Decoding a token prefix can merge tokens at the cut, so nearby cut points are
+    tried and the first one that recounts to exactly `size` is kept.
+    """
+    tokenizer = renderer.tokenizer
+    ids = tokenizer("\n\n".join(texts), add_special_tokens=False)["input_ids"]
+    if len(ids) < size:
+        raise Refused(f"the development contexts hold {len(ids)} tokens, fewer than {size}")
+    for n in sorted(range(size - 8, size + 9), key=lambda n: abs(n - size)):
+        text = tokenizer.decode(ids[:n], skip_special_tokens=False)
+        if n <= len(ids) and renderer.counter(text) == size:
+            return text
+    raise Refused(f"no cut of the development contexts recounts to exactly {size} tokens")
+
+
+def probe(args: argparse.Namespace, model: Any = None) -> dict:
+    """One development-only call at the exact evidence budget with the full output allowance.
+
+    Writes one standalone record; no batch, observation key, parse or score is created.
+    """
+    import torch
+
+    out = args.out
+    if (out.parent / "batch.json").exists() or out.parent.name in (
+        "results",
+        "attempts",
+        "anchors",
+    ):
+        raise Refused("a probe record is never written into a batch directory")
+    package, plan, seeds, prompt = load_inputs(args)
+    chosen = [p for p in plan if p.record["item_id"] == args.item_id
+              and p.record["matrix_arm"] == "confirmatory"
+              and p.record["condition"] == args.condition and p.repeat == 1]  # fmt: skip
+    if len(chosen) != 1:
+        raise Refused(f"no confirmatory {args.condition} record for {args.item_id}")
+    planned = chosen[0]
+    settings = planned.config.settings
+    budgets = settings.budgets
+    positions = model_positions(args.model_root)
+    if positions["rope_scaling"] is not None or (
+        budgets.context_window_tokens > positions["max_position_embeddings"]
+    ):
+        raise Refused(f"configured window {budgets.context_window_tokens} exceeds the "
+                      f"checkpoint's positions {positions}")  # fmt: skip
+    renderer = InputRenderer(args.tokenizer_root, planned.config, prompt)
+    # the chosen record's own context first, then the same condition's in package order
+    texts = [planned.record["context"]] + [
+        r["context"] for r in package["records"]
+        if r["condition"] == args.condition and r["context"] is not None
+        and r is not planned.record
+    ]  # fmt: skip
+    context = boundary_context(renderer, texts, budgets.evidence_tokens)
+    record = dict(planned.record, context=context, context_tokens=budgets.evidence_tokens,
+                  context_sha256=sha256_bytes(context.encode("utf-8")))  # fmt: skip
+    boundary = Planned("probe", record, 1, planned.config)
+    rendered, ids = prepare(renderer, boundary)
+    if rendered.input_tokens + budgets.max_new_tokens > budgets.context_window_tokens:
+        raise Refused("input plus output allowance exceeds the configured window")
+    snapshot = inventory_snapshot(args.model_root, settings.model.revision)
+    if model is None:
+        model = load_model(args.model_root, args.device)
+    call = generate(model, renderer.tokenizer, rendered, ids, boundary, seeds,
+                    force_full_output=True)  # fmt: skip
+    raw = call.pop("raw")
+    result = {
+        "kind": "boundary_probe",
+        "not_an_observation": True,
+        "researcher": "Rama Krishna Pudota",
+        "probed_utc": utc_now(),
+        "contexts_sha256": args.contexts_sha256,
+        "item_id": args.item_id,
+        "condition": args.condition,
+        "resolved_config_sha256": planned.config.configuration_sha256,
+        "model_manifest_sha256": snapshot.manifest_sha256,
+        "checkpoint_positions": positions,
+        "budgets": budgets.model_dump(mode="json"),
+        "boundary_context_sha256": record["context_sha256"],
+        "context_tokens": budgets.evidence_tokens,
+        "output_sha256": sha256_bytes(raw.encode("utf-8")),
+        "device": str(torch.device(args.device)),
+        **call,
+    }
+    if result["output_tokens"] != budgets.max_new_tokens:
+        result["probe_status"] = "output_allowance_not_reached"
+    else:
+        result["probe_status"] = "complete"
+    write_once(out, dump(result))
+    return result
+
+
 def seal(out: Path) -> str:
     """Write the next anchor over every finished result and event; return its SHA-256."""
     files = {
@@ -594,6 +779,17 @@ def main(argv: list[str] | None = None) -> None:
     go.add_argument("--anchor", type=Path)
     go.add_argument("--anchor-sha256")
     go.add_argument("--stop-after", type=int)
+    test = commands.add_parser("probe")
+    for name in ("contexts", "configs", "prompt", "seeds", "tokenizer-root", "model-root", "out"):
+        test.add_argument(f"--{name}", type=Path, required=True)
+    test.add_argument("--contexts-sha256", required=True)
+    test.add_argument("--device", required=True)
+    test.add_argument("--item-id", required=True)
+    test.add_argument("--condition", required=True, choices=("JATS", "PDF_DOCLING"))
+    test.set_defaults(phase="qualification")
+    look = commands.add_parser("inventory")
+    look.add_argument("--out", type=Path, required=True)
+    look.add_argument("--device")
     for name in ("seal", "verify"):
         sub = commands.add_parser(name)
         sub.add_argument("--out", type=Path, required=True)
@@ -605,6 +801,12 @@ def main(argv: list[str] | None = None) -> None:
         if (args.anchor is None) != (args.anchor_sha256 is None):
             parser.error("--anchor and --anchor-sha256 go together")
         print(f"finished {run(args)} observations in this session")
+    elif args.command == "probe":
+        result = probe(args)
+        print(f"probe {result['probe_status']}: {result['output_tokens']} output tokens")
+    elif args.command == "inventory":
+        write_once(args.out, dump(inventory(args.device)))
+        print(f"inventory sha256 {sha256_file(args.out)}; record it outside the data root")
     elif args.command == "seal":
         print(f"anchor sha256 {seal(args.out)}; record it outside the data root")
     else:

@@ -343,3 +343,96 @@ def test_a_cuda_call_is_synchronized_and_reads_this_calls_peak_memory():
         "peak_allocated_bytes": 300, "peak_reserved_bytes": 400, "device_total_bytes": 1000,
         "device_used_after_bytes": 400,
     }  # fmt: skip
+
+
+def long_contexts(batch: Namespace) -> Namespace:
+    """The fixture batch with development-length JATS contexts (about 1,400 tokens each)."""
+    count = QwenCounter(ROOT, tokenizer_snapshot())
+    data = json.loads(batch.contexts.read_bytes())
+    for n, rec in enumerate(data["records"]):
+        if rec["condition"] == "JATS":
+            text = " ".join(
+                f"In cohort {n}-{i}, expression rose 2.{i}-fold (p < 0.01)." for i in range(55)
+            )
+            rec.update(context=text, context_sha256=sha256_bytes(text.encode()),
+                       context_tokens=count(text))  # fmt: skip
+            assert 1000 < rec["context_tokens"] < 2048
+    batch.contexts.write_bytes(json.dumps(data).encode())
+    return batch_with(batch, contexts_sha256=sha256_bytes(batch.contexts.read_bytes()),
+                      phase="qualification", item_id="q_1", condition="JATS",
+                      out=batch.out.parent / "probes" / "probe.json")  # fmt: skip
+
+
+def test_the_probe_fills_the_exact_evidence_budget_and_the_whole_output_allowance(batch):
+    args = long_contexts(batch)
+    result = rg.probe(args)
+    stored = json.loads(args.out.read_bytes())
+    assert stored == json.loads(rg.dump(result))
+    assert stored["kind"] == "boundary_probe" and stored["not_an_observation"] is True
+    assert stored["context_tokens"] == 2048 == stored["budgets"]["evidence_tokens"]
+    assert stored["output_tokens"] == 128 and stored["stop_reason"] == "length"
+    assert stored["probe_status"] == "complete"
+    assert stored["checkpoint_positions"] == {"max_position_embeddings": 8192, "rope_scaling": None}
+    assert stored["input_tokens"] + 128 <= stored["budgets"]["context_window_tokens"]
+    assert "observation_key" not in stored and "generation_result" not in stored
+    assert not batch.out.exists()  # no batch, attempt or result was created
+    with pytest.raises(FileExistsError):
+        rg.probe(args)
+
+
+@pytest.mark.parametrize(
+    ("problem", "reason"),
+    [
+        ("inside_batch", "never written into a batch"),
+        ("window_beyond_checkpoint", "exceeds the checkpoint's positions"),
+        ("final_test", "development or qualification"),
+    ],
+)
+def test_the_probe_refuses_unsafe_targets_and_configurations(batch, problem, reason):
+    args = long_contexts(batch)
+    if problem == "inside_batch":
+        rg.run(batch_with(args, phase="development", out=batch.out, stop_after=1))
+        args = batch_with(args, out=batch.out / "probe.json")
+    elif problem == "window_beyond_checkpoint":
+        path = batch.configs / "confirmatory.toml"
+        path.write_text(path.read_text().replace(
+            '"context_window_tokens" = 8192', '"context_window_tokens" = 16384'))  # fmt: skip
+    else:
+        args = batch_with(args, phase="final_test")
+    with pytest.raises(rg.Refused, match=reason):
+        rg.probe(args)
+    assert not args.out.exists()
+
+
+def test_the_gpu_inventory_reads_nvidia_smi_and_states_when_it_is_absent(monkeypatch):
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError("nvidia-smi")
+
+    monkeypatch.setattr(rg.subprocess, "run", missing)
+    assert rg.gpu_inventory() == {"status": "unavailable", "reason": "nvidia-smi: nvidia-smi"}
+
+    full = "Driver Version : 550.54.15\nCUDA Version : 12.4\n"
+    listing = "0, NVIDIA L4, GPU-1234, 23034 MiB, 550.54.15, 8.9, 00000000:00:04.0\n"
+
+    def fake(command, **_kwargs):
+        return Namespace(stdout=full if command[1] == "-q" else listing)
+
+    monkeypatch.setattr(rg.subprocess, "run", fake)
+    found = rg.gpu_inventory()
+    assert found["gpus"] == [{
+        "index": "0", "name": "NVIDIA L4", "uuid": "GPU-1234", "memory.total": "23034 MiB",
+        "driver_version": "550.54.15", "compute_cap": "8.9", "pci.bus_id": "00000000:00:04.0",
+    }]  # fmt: skip
+    assert found["driver_cuda_version"] == "12.4"
+    assert found["nvidia_smi_q_sha256"] == sha256_bytes(full.encode())
+
+
+def test_an_inventory_is_written_once_and_refuses_a_non_cuda_device(tmp_path):
+    out = tmp_path / "inventory.json"
+    rg.main(["inventory", "--out", str(out)])
+    record = json.loads(out.read_bytes())
+    assert record["torch_device"] is None and record["pip_freeze_sha256"]
+    with pytest.raises(FileExistsError):
+        rg.main(["inventory", "--out", str(out)])
+    with pytest.raises(rg.Refused):
+        rg.inventory("cpu")
