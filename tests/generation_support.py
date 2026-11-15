@@ -12,7 +12,12 @@ import pytest
 from biorag_repro.generation.config import resolve_generator_config
 from biorag_repro.generation.environment import utc_now
 from biorag_repro.generation.parsing import OUTPUT_SCHEMAS
-from biorag_repro.generation.prompt import PromptArtifact
+from biorag_repro.generation.prompt import (
+    InputRenderer,
+    PromptArtifact,
+    output_schema_sha256,
+    prompt_sha256,
+)
 
 SHA_A = "a" * 64
 
@@ -138,3 +143,22 @@ class NeverBackwards:
             value = (previous + timedelta(microseconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         self.last = value
         return value
+
+
+def generator_config(retrieval_sha, arm="confirmatory", **budgets):
+    prompt = artifact()
+    settings = synthetic_settings()
+    settings["prompt_sha256"] = prompt_sha256(prompt)
+    settings["output_schema_sha256"] = output_schema_sha256(prompt)
+    settings["budgets"].update(budgets)
+    settings["matrix_arm"] = arm
+    if arm == "closed_book":
+        del settings["retrieval_config_sha256"]
+    else:
+        settings["retrieval_config_sha256"] = retrieval_sha
+    return resolve(settings), prompt
+
+
+def make_renderer(retrieval_sha, arm="confirmatory", **budgets):
+    config, prompt = generator_config(retrieval_sha, arm, **budgets)
+    return InputRenderer(ROOT, config, prompt)

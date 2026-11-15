@@ -1,7 +1,6 @@
 """Contracts only: no execution path, no authority, no change to the real project."""
 
 import ast
-import hashlib
 import typing
 from pathlib import Path
 
@@ -10,10 +9,7 @@ from readiness_support import REAL_POLICY
 from test_finaltest_g13 import NO_AUTHORITY, Setup, world  # noqa: F401  (fixture)
 
 import biorag_repro
-from biorag_repro.finaltest import layout
-from biorag_repro.finaltest.head import HeadAttestation, attestation_sha256
 from biorag_repro.generation.attempts import RunPhase
-from biorag_repro.readiness import evidence
 from biorag_repro.readiness.guard import authorize_final_test
 
 SRC = Path(biorag_repro.__file__).parent
@@ -65,30 +61,9 @@ def test_the_real_guard_still_refuses(tmp_path):
         authorize_final_test(tmp_path, "0" * 64, repo=tmp_path)
 
 
-def test_a_stored_head_attestation_changes_nothing_about_the_real_g13(setup):
-    auth, _ = setup.approve()
-    setup.initialize(auth)
-    root_id = layout.root_id_for(auth)
-    claim = HeadAttestation(
-        root_id=root_id,
-        sequence=1,
-        event_file_sha256=hashlib.sha256(
-            (Path(auth.authorized_root) / "registry/000001.json").read_bytes()
-        ).hexdigest(),
-        provenance="test_fixture",
-    )
-    folder = setup.world.data / "readiness/approvals/head_attestation"
-    folder.mkdir(parents=True)
-    (folder / f"{attestation_sha256(claim)}.json").write_bytes(layout.serialize(claim))
-    for policy in (REAL_POLICY, None):
-        got = setup.g13(policy)
-        assert (got.state, got.reason) == ("unavailable", NO_AUTHORITY)
-    assert evidence.history_integrity().state == "unavailable"
-
-
-def test_the_continuity_and_head_modules_import_no_execution_code():
+def test_the_continuity_module_imports_no_execution_code():
     banned = {"generation", "retrieval", "evaluation", "ingestion", "chunking"}
-    for name in ("head.py", "continuity.py"):
+    for name in ("continuity.py",):
         tree = ast.parse((SRC / "finaltest" / name).read_text(encoding="utf-8"))
         imported = set()
         for node in ast.walk(tree):

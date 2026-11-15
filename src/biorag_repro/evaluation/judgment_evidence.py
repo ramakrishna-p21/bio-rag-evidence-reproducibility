@@ -17,6 +17,7 @@ agree with the stored record. Nothing is invented for a missing judgment:
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
@@ -33,13 +34,25 @@ from biorag_repro.evaluation.models import StageAJudgment
 from biorag_repro.evaluation.stage_a_storage import read_judgment as read_stage_a
 from biorag_repro.evaluation.stage_b import Inputs
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
-from biorag_repro.generation.roster import ContextSource
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval import context as phase5
 from biorag_repro.retrieval.chunking import read_chunking
-from biorag_repro.retrieval.models import ChunkSet
+from biorag_repro.retrieval.models import ChunkSet, ConfigurationRef
 from biorag_repro.retrieval.storage import record_ref
 from biorag_repro.retrieval.validation import load_canonical_input
+
+
+@dataclass(frozen=True)
+class ContextSource:
+    """A published context and the independent selection it must be recomputed from."""
+
+    context: ArtifactRef
+    manifest: ArtifactRef
+    selection: phase5.Selection
+    configuration: ConfigurationRef
+    configuration_root: Path
+    root: Path
+
 
 Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
 RowT = TypeVar("RowT", "StageARow", "StageBRow")

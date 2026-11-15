@@ -8,9 +8,15 @@ Everything is synthetic; no model runs.
 import json
 
 import pytest
-from generation_support import ROOT, artifact, needs_tokenizer, resolve, synthetic_settings
+from generation_support import (
+    ROOT,
+    artifact,
+    make_renderer,
+    needs_tokenizer,
+    resolve,
+    synthetic_settings,
+)
 from test_generation_attempts import GOOD_OUTPUT, Clock, coordinates, environment
-from test_generation_roster import make_renderer
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef

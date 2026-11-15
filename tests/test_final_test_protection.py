@@ -10,7 +10,6 @@ import ast
 import inspect
 import typing
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -21,7 +20,7 @@ from test_stage_b import P_A, P_B, P_C, prose_xml
 import biorag_repro
 from biorag_repro.evaluation import analysis_handoff, analysis_table
 from biorag_repro.evaluation.stage_a import IneligibleItem, check_item
-from biorag_repro.generation import attempts, roster
+from biorag_repro.generation import attempts
 from biorag_repro.readiness.guard import FinalTestAuthorization
 from biorag_repro.readiness.models import Candidate, HostBinding
 
@@ -58,12 +57,6 @@ def authorization() -> FinalTestAuthorization:
 # ---- behavioural refusals ------------------------------------------------------------------
 
 
-def test_roster_refuses_a_scope_that_is_not_development_or_qualification():
-    scope = SimpleNamespace(phase="final_test")
-    with pytest.raises(roster.RosterMismatch, match="neither development nor qualification"):
-        roster._check_scope(scope, {}, ("b", "c"))  # type: ignore[arg-type]
-
-
 def test_run_phase_type_excludes_final_test():
     assert typing.get_args(attempts.RunPhase) == ("development", "qualification")
     with pytest.raises(ValidationError):
@@ -96,7 +89,6 @@ def test_analysis_handoff_is_development_only():
 @pytest.mark.parametrize(
     "function",
     [
-        roster.build_roster,
         check_item,
         analysis_table.build_row,
         analysis_handoff.build_handoff,

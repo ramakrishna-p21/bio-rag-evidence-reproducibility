@@ -1,7 +1,6 @@
-"""The audit layer adds contracts and a read-only audit: no execution path, no authority."""
+"""The final-test record contracts add no execution path and no authority."""
 
 import ast
-import types
 from pathlib import Path
 
 import pytest
@@ -10,7 +9,6 @@ from pydantic import ValidationError
 import biorag_repro
 from biorag_repro.finaltest import layout
 from biorag_repro.generation.attempts import RunRecord, RunStore
-from biorag_repro.generation.roster import RosterMismatch, _check_scope
 
 SRC = Path(biorag_repro.__file__).parent
 FINALTEST = SRC / "finaltest"
@@ -29,11 +27,10 @@ def mentions(path: Path, name: str) -> bool:
     )
 
 
-def test_run_record_type_is_known_only_to_its_schema_and_the_audit():
+def test_run_record_type_is_known_only_to_its_schema_and_the_verifier():
     users = {p.name for p in SRC.rglob("*.py") if mentions(p, "FinalTestRunRecord")}
     assert users == {
         "runrecord.py",
-        "audit.py",
         "inventory.py",
         "completion.py",
     }
@@ -44,35 +41,6 @@ def test_no_run_store_constructor_takes_the_final_test_record():
         names = method.__annotations__
         assert "FinalTestRunRecord" not in " ".join(str(v) for v in names.values())
     assert RunRecord.model_fields["phase"].annotation.__args__ == ("development", "qualification")
-
-
-def test_audit_module_has_no_write_operations_and_no_publisher_imports():
-    source = tree(FINALTEST / "audit.py")
-    written = {
-        "write_bytes",
-        "write_text",
-        "mkdir",
-        "unlink",
-        "rename",
-        "replace",
-        "chmod",
-        "touch",
-    }
-    called = {
-        n.func.attr
-        for n in ast.walk(source)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-    }
-    assert not called & written
-    assert not called & {"publish_bytes", "publish_manifest", "publish_input_record"}
-    imported = {n.module for n in ast.walk(source) if isinstance(n, ast.ImportFrom) and n.module}
-    assert not any(m.endswith(("registry", "guard", "driver", "runner")) for m in imported)
-    opens = [
-        n
-        for n in ast.walk(source)
-        if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "open"
-    ]
-    assert not opens
 
 
 def test_input_contracts_import_no_execution_or_publication_module():
@@ -115,13 +83,11 @@ def test_registry_events_are_not_activated():
 
 
 def test_existing_final_test_refusals_stand():
-    with pytest.raises(RosterMismatch, match="neither development nor qualification"):
-        _check_scope(types.SimpleNamespace(phase="final_test"), {}, ("b", "c"))
     with pytest.raises(ValidationError):
         RunRecord.model_validate({"phase": "final_test"})
 
 
-def test_the_only_run_store_subclass_is_the_read_only_view():
+def test_no_run_store_subclass_exists():
     found = {}
     for path in SRC.rglob("*.py"):
         for node in ast.walk(tree(path)):
@@ -129,4 +95,4 @@ def test_the_only_run_store_subclass_is_the_read_only_view():
                 getattr(b, "id", "") == "RunStore" for b in node.bases
             ):
                 found[node.name] = path.name
-    assert found == {"ReadOnlyRunView": "readonly.py"}
+    assert found == {}

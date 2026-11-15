@@ -2,7 +2,7 @@
 
 Schema only. No `RunStore` constructor accepts this record and nothing here creates a run;
 `RunRecord` and `RunPhase` keep their development and qualification meaning. The record exists
-so that the audit can name what a stored final-test run must say about itself. Its
+so that the G13 verifier can name what a stored final-test run must say about itself. Its
 `authorization_citation_sha256` is a reference to a historical assessment, not evidence that
 the run was permitted.
 
