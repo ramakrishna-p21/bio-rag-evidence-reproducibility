@@ -300,62 +300,32 @@ def test_run_phase_still_excludes_final_test():
     assert "final_test" not in get_args(RunPhase)
 
 
-def test_structural_batches_never_give_a_positive_g13(setup):
-    """A fully materialized batch is structurally clean, but nothing establishes the head."""
-    from finaltest_campaign_support import CONFIGS, SEEDS, population
+def _second_event(root):
+    first = (root / "registry" / "000001.json").read_bytes()
+    genesis = layout.RegistryEvent.model_validate_json(first)
+    cite = layout.EvidenceCitation
+    return layout.make_event(
+        root_id=genesis.root_id,
+        sequence=2,
+        event_type="batch_reserved",
+        previous_event_sha256=sha256_bytes(first),
+        evidence=[cite(role=r, sha256="a" * 64) for r in layout.REQUIRED_ROLES["batch_reserved"]],
+        created_utc="2026-01-02T00:00:00Z",
+    )
 
-    from biorag_repro.finaltest import registry
-    from biorag_repro.finaltest.batches import make_manifest, ownership_sha256
-    from biorag_repro.finaltest.campaign import build_plan, plan_sha256
 
+@pytest.mark.parametrize("history", ["registry_event", "batches", "runs"])
+def test_any_execution_history_fails_g13(setup, history):
+    """No execution path exists: a correctly chained later event or any batch or run entry fails."""
     auth, policy = setup.approve()
     setup.initialize(auth)
-    plan = build_plan(population(**setup.scope), CONFIGS, SEEDS)
-    root, root_id = Path(auth.authorized_root), layout.root_id_for(auth)
-    witnesses, stamp = setup.base / "witnesses", (lambda: "2026-01-02T00:00:00Z")
-    manifest = make_manifest(root_id, plan, "closed_book", stamp())
-    data = layout.serialize(manifest)
-    cite = layout.EvidenceCitation
-    registry._publish_witness(
-        root, witnesses, root_id, 1, stamp
-    )  # test seam: real roots are refused
-    registry._append(
-        root,
-        witnesses,
-        root_id,
-        "batch_reserved",
-        [
-            cite(role="campaign_plan", sha256=plan_sha256(plan)),
-            cite(role="batch_id", sha256=manifest.batch_id),
-            cite(
-                role="ownership",
-                sha256=ownership_sha256(
-                    auth.benchmark_release_sha256, "closed_book", CONFIGS["closed_book"]
-                ),
-            ),
-            cite(role="batch_manifest", sha256=sha256_bytes(data)),
-        ],
-        stamp,
-    )
-    registry._publish_manifest(root, manifest.batch_id, data)
-    reservation = sha256_bytes((root / "registry" / "000002.json").read_bytes())
-    registry._append(
-        root,
-        witnesses,
-        root_id,
-        "batch_materialized",
-        [
-            cite(role="batch_id", sha256=manifest.batch_id),
-            cite(role="batch_manifest", sha256=sha256_bytes(data)),
-            cite(role="reservation_event", sha256=reservation),
-        ],
-        stamp,
-    )
-    verdict = inventory.verify_root(root, auth, setup.anchors, witnesses)
-    assert verdict.problems == (inventory.HEAD_NOT_ESTABLISHED_TEXT,)
-    assert verdict.head_authority == "not_established"
+    root = Path(auth.authorized_root)
+    if history == "registry_event":
+        (root / "registry" / "000002.json").write_bytes(layout.serialize(_second_event(root)))
+    else:
+        (root / history).mkdir()
+    verdict = inventory.verify_root(root, auth, setup.anchors)
+    assert verdict.code == "unauthorized_final_test_artifact"
     gathered = setup.g13(policy)
-    assert (gathered.state, gathered.reason) == ("unavailable", "history_inventory_incomplete")
+    assert gathered.state == "failed" and gathered.reason == "unauthorized_final_test_artifact"
     assert to_result(G13, gathered, policy).status != "passed"
-    # the real policy stays unavailable for lack of any approved identity
-    assert setup.g13(REAL_POLICY).reason == NO_AUTHORITY

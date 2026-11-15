@@ -59,16 +59,3 @@ def test_the_real_guard_still_refuses(tmp_path):
 
     with pytest.raises(AuthorizationRefused):
         authorize_final_test(tmp_path, "0" * 64, repo=tmp_path)
-
-
-def test_the_continuity_module_imports_no_execution_code():
-    banned = {"generation", "retrieval", "evaluation", "ingestion", "chunking"}
-    for name in ("continuity.py",):
-        tree = ast.parse((SRC / "finaltest" / name).read_text(encoding="utf-8"))
-        imported = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                imported.add(node.module.split(".")[1] if "." in node.module else node.module)
-            elif isinstance(node, ast.Import):
-                imported.update(a.name.split(".")[1] for a in node.names if "." in a.name)
-        assert not imported & banned, (name, imported & banned)

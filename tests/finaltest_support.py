@@ -5,14 +5,13 @@ import hashlib
 import json
 from pathlib import Path
 
-from biorag_repro.finaltest.inventory import HEAD_NOT_ESTABLISHED_TEXT, initialize_root
+from biorag_repro.finaltest.inventory import initialize_root
 from biorag_repro.finaltest.layout import StorageAuthorization
 
 CORPUS = hashlib.sha256(b"corpus").hexdigest()
 RELEASE = hashlib.sha256(b"release").hexdigest()
 
-# Problem codes the root verifier reports, and the standing note that no head is established.
-NOTE = HEAD_NOT_ESTABLISHED_TEXT
+# Problem codes the root verifier reports.
 INCOMPLETE = "history_inventory_incomplete"
 UNAUTH = "unauthorized_final_test_artifact"
 CONFLICT = "conflicting_final_test_artifact"
