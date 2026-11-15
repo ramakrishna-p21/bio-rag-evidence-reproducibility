@@ -253,3 +253,93 @@ def test_the_batch_records_its_provenance_and_a_sealed_anchor_detects_tampering(
 
 def batch_with(batch: Namespace, **changes) -> Namespace:
     return Namespace(**(vars(batch) | changes))
+
+
+@pytest.mark.parametrize("field", ["input_tokens", "input_token_ids_sha256"])
+def test_a_generation_input_unlike_the_rendered_input_stops_before_any_attempt(
+    batch, monkeypatch, field
+):
+    render = rg.InputRenderer.render
+
+    def drifted(self, *args):
+        rendered = render(self, *args)
+        wrong = rendered.input_tokens + 1 if field == "input_tokens" else "0" * 64
+        return rendered.model_copy(update={field: wrong})
+
+    monkeypatch.setattr(rg.InputRenderer, "render", drifted)
+    with pytest.raises(rg.Refused, match="token-id hashes differ"):
+        rg.run(batch_with(batch, stop_after=1))
+    assert events(batch.out) == [] and results(batch.out) == {}
+    assert not (batch.out / "batch.lock").exists()
+
+
+def test_a_cpu_call_records_tokens_timing_and_no_cuda_memory(batch):
+    rg.run(batch_with(batch, stop_after=3))
+    _package, plan, _seeds, prompt = rg.load_inputs(batch)
+    by_key = {p.key: p for p in plan}
+    for key, value in results(batch.out).items():
+        planned = by_key[key]
+        rendered = rg.InputRenderer(ROOT, planned.config, prompt).render(
+            planned.record["question"], planned.record["context"], planned.record["context_tokens"]
+        )
+        assert value["input_tokens"] == rendered.input_tokens
+        assert value["input_token_ids_sha256"] == rendered.input_token_ids_sha256
+        assert len(value["output_token_ids_sha256"]) == 64
+        assert isinstance(value["generation_ns"], int) and value["generation_ns"] > 0
+        assert value["cuda_memory"] == {"status": "unavailable", "reason": "device cpu is not CUDA"}
+        assert "latency_s" not in value
+
+
+def test_output_token_hashes_repeat_across_independent_batches(batch, tmp_path):
+    rg.run(batch_with(batch, stop_after=4))
+    rg.run(batch_with(batch, stop_after=4, out=tmp_path / "again"))
+    first, second = results(batch.out), results(tmp_path / "again")
+    assert first.keys() == second.keys()
+    for key in first:
+        assert first[key]["output_token_ids_sha256"] == second[key]["output_token_ids_sha256"]
+    # the hash rule is SHA-256 of the compact JSON array, checked against hashlib directly
+    import hashlib
+
+    assert rg.token_ids_sha256([151645, 7, 0]) == hashlib.sha256(b"[151645,7,0]").hexdigest()
+
+
+def test_a_cuda_call_is_synchronized_and_reads_this_calls_peak_memory():
+    import torch
+
+    order = []
+
+    class Cuda:
+        def synchronize(self, index):
+            order.append(("sync", index))
+
+        def memory_allocated(self, index):
+            return 100
+
+        def reset_peak_memory_stats(self, index):
+            order.append(("reset", index))
+
+        def max_memory_allocated(self, index):
+            return 300
+
+        def max_memory_reserved(self, index):
+            return 400
+
+        def mem_get_info(self, index):
+            return 600, 1000
+
+        def get_device_name(self, index):
+            return "Stub GPU"
+
+    fake = Namespace(cuda=Cuda())
+    result, elapsed, memory = rg.measured_call(
+        fake, torch.device("cuda:1"), lambda: order.append("call") or "out"
+    )
+    assert result == "out" and elapsed >= 0
+    assert order == [("sync", 1), ("reset", 1), "call", ("sync", 1)]
+    assert memory == {
+        "status": "measured",
+        "scope": "this process, peak since reset immediately before model.generate",
+        "device_index": 1, "device_name": "Stub GPU", "allocated_before_bytes": 100,
+        "peak_allocated_bytes": 300, "peak_reserved_bytes": 400, "device_total_bytes": 1000,
+        "device_used_after_bytes": 400,
+    }  # fmt: skip

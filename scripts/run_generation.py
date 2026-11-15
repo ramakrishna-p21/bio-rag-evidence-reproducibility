@@ -45,6 +45,7 @@ from biorag_repro.generation.config import check_retrieval_reference, resolve_ge
 from biorag_repro.generation.model_snapshot import inventory_snapshot
 from biorag_repro.generation.parsing import parse_output
 from biorag_repro.generation.prompt import InputRenderer, PromptArtifact, prompt_sha256
+from biorag_repro.generation.receipt import token_ids_sha256
 from biorag_repro.generation.seeds import (
     GenerationSeedRegistry,
     check_seeds_for_configuration,
@@ -289,16 +290,72 @@ def load_model(model_root: Path, device: str) -> Any:
     return model.to(device).eval()
 
 
-def generate(model: Any, renderer: InputRenderer, planned: Planned, seeds) -> dict:
+def prepare(renderer: InputRenderer, planned: Planned) -> tuple[Any, list[int]]:
+    """The rendered input and the token ids the model will receive, checked before any attempt.
+
+    The runner tokenizes the rendered text itself; those ids must equal the renderer's count
+    and hash. A mismatch is a hard stop, not an operational failure: no attempt is started.
+    """
+    record = planned.record
+    rendered = renderer.render(record["question"], record["context"], record["context_tokens"])
+    ids = renderer.tokenizer(rendered.rendered_text, add_special_tokens=False)["input_ids"]
+    if (
+        len(ids) != rendered.input_tokens
+        or token_ids_sha256(ids) != rendered.input_token_ids_sha256
+    ):
+        raise Refused(
+            f"{planned.key}: generation input has {len(ids)} tokens, the rendered input "
+            f"{rendered.input_tokens}, or their token-id hashes differ"
+        )
+    return rendered, ids
+
+
+def measured_call(torch: Any, device: Any, call: Any) -> tuple[Any, int, dict]:
+    """Run `call`; return its result, elapsed monotonic nanoseconds and a CUDA memory reading.
+
+    On CUDA the device is synchronized before the clock starts and before it is read, so queued
+    work from earlier calls is excluded and this call's work is included. Peak counters are
+    reset just before the call, so the peaks are this process's maximum during the call and
+    include the resident weights.
+    """
+    cuda = device.type == "cuda"
+    if cuda:
+        index = device.index if device.index is not None else torch.cuda.current_device()
+        torch.cuda.synchronize(index)
+        before = torch.cuda.memory_allocated(index)
+        torch.cuda.reset_peak_memory_stats(index)
+    start = time.perf_counter_ns()
+    result = call()
+    if cuda:
+        torch.cuda.synchronize(index)
+    elapsed = time.perf_counter_ns() - start
+    if not cuda:
+        return result, elapsed, {"status": "unavailable", "reason": f"device {device} is not CUDA"}
+    free, total = torch.cuda.mem_get_info(index)
+    return (
+        result,
+        elapsed,
+        {
+            "status": "measured",
+            "scope": "this process, peak since reset immediately before model.generate",
+            "device_index": index,
+            "device_name": torch.cuda.get_device_name(index),
+            "allocated_before_bytes": before,
+            "peak_allocated_bytes": torch.cuda.max_memory_allocated(index),
+            "peak_reserved_bytes": torch.cuda.max_memory_reserved(index),
+            "device_total_bytes": total,
+            "device_used_after_bytes": total - free,  # includes other processes on the device
+        },
+    )
+
+
+def generate(model: Any, tokenizer: Any, rendered: Any, ids: list[int], planned: Planned,
+             seeds) -> dict:  # fmt: skip
     """One call, as in the Dev35 runner: exact input, explicit decoding, stop on end of turn."""
     import torch
     from transformers import set_seed
 
     settings = planned.config.settings
-    record = planned.record
-    rendered = renderer.render(record["question"], record["context"], record["context_tokens"])
-    tokenizer = renderer.tokenizer
-    ids = tokenizer(rendered.rendered_text, add_special_tokens=False)["input_ids"]
     stop_ids = [tokenizer.convert_tokens_to_ids(t) for t in ("<|im_end|>", "<|endoftext|>")]
     decoding = settings.decoding
     options: dict[str, Any] = {"do_sample": decoding.do_sample, "num_beams": 1}
@@ -313,18 +370,20 @@ def generate(model: Any, renderer: InputRenderer, planned: Planned, seeds) -> di
         }
     device = next(model.parameters()).device
     input_ids = torch.tensor([ids], device=device)
-    start = time.perf_counter()
-    with torch.inference_mode():
-        out = model.generate(
-            input_ids=input_ids,
-            attention_mask=torch.ones_like(input_ids),
-            max_new_tokens=settings.budgets.max_new_tokens,
-            use_model_defaults=False,
-            eos_token_id=stop_ids,
-            pad_token_id=stop_ids[-1],
-            **options,
-        )
-    latency = time.perf_counter() - start
+
+    def call() -> Any:
+        with torch.inference_mode():
+            return model.generate(
+                input_ids=input_ids,
+                attention_mask=torch.ones_like(input_ids),
+                max_new_tokens=settings.budgets.max_new_tokens,
+                use_model_defaults=False,
+                eos_token_id=stop_ids,
+                pad_token_id=stop_ids[-1],
+                **options,
+            )
+
+    out, elapsed_ns, memory = measured_call(torch, device, call)
     output_ids = out[0, len(ids) :].tolist()
     stop = "eos" if output_ids and output_ids[-1] in stop_ids else "length"
     body = output_ids[:-1] if stop == "eos" else output_ids
@@ -335,9 +394,11 @@ def generate(model: Any, renderer: InputRenderer, planned: Planned, seeds) -> di
         "input_tokens": rendered.input_tokens,
         "input_token_ids_sha256": rendered.input_token_ids_sha256,
         "output_tokens": len(output_ids),
+        "output_token_ids_sha256": token_ids_sha256(output_ids),  # includes the stop token
         "stop_reason": stop,
         "seed": seed,
-        "latency_s": round(latency, 3),
+        "generation_ns": elapsed_ns,  # model.generate only; see measured_call
+        "cuda_memory": memory,
     }
 
 
@@ -467,6 +528,8 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
             if args.stop_after is not None and done >= args.stop_after:
                 break
             settings = planned.config.settings
+            renderer = renderers[settings.matrix_arm]
+            rendered, ids = prepare(renderer, planned)
             while True:
                 failures = sum(e["event"] == "failed" and e["observation_key"] == planned.key
                                for e in events)  # fmt: skip
@@ -474,7 +537,7 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
                 append_event(out, events, run_id=run_id, attempt_id=attempt_id,
                              observation_key=planned.key, event="started")  # fmt: skip
                 try:
-                    call = generate(model, renderers[settings.matrix_arm], planned, seeds)
+                    call = generate(model, renderer.tokenizer, rendered, ids, planned, seeds)
                 except Exception as error:  # noqa: BLE001 - an operational failure, never a scientific score
                     kind = failure_kind(error)
                     retryable = kind in settings.retryable_failures
