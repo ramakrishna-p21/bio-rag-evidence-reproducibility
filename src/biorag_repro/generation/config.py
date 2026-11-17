@@ -36,10 +36,13 @@ APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {
 }
 
 # SHA-256 of each environment lock file Rama has approved for official runs. A lock cannot
-# approve itself: its own status field and any hash a caller supplies prove nothing. Empty on
-# purpose; an entry is added by hand after the lock has been resolved and reviewed on the
-# execution machine.
-APPROVED_ENVIRONMENT_LOCKS: frozenset[str] = frozenset()
+# approve itself: its own status field and any hash a caller supplies prove nothing. Entries
+# are added only after the lock has been resolved and reviewed on the execution machine.
+APPROVED_ENVIRONMENT_LOCKS: frozenset[str] = frozenset(
+    {
+        "96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a",
+    }
+)
 
 
 class ModelPin(Record):

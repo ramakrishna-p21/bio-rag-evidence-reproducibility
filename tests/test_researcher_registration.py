@@ -1,4 +1,4 @@
-"""Scientific choices do not supply missing technical approvals."""
+"""Registered choices do not supply missing final-test technical approvals."""
 
 import json
 import shutil
@@ -28,7 +28,7 @@ def copy_registration(tmp_path):
     return tmp_path
 
 
-def test_exact_checkpoint_seed_and_unset_technical_approvals():
+def test_exact_checkpoint_seed_and_environment_registration():
     assert config.APPROVED_CHECKPOINTS == {
         (
             "Qwen/Qwen3-8B",
@@ -37,7 +37,9 @@ def test_exact_checkpoint_seed_and_unset_technical_approvals():
     }
     seed = read_analysis_seed(ROOT)
     assert (seed.name, seed.value, seed.resamples) == ("primary_bootstrap", 1572911995, 10000)
-    assert config.APPROVED_ENVIRONMENT_LOCKS == frozenset()
+    assert config.APPROVED_ENVIRONMENT_LOCKS == frozenset(
+        {"96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a"}
+    )
     assert all(v is None for v in load_policy(ROOT).slots.model_dump().values())
     assert len(APPROVED_REGISTRY_SHA256) == 64
 
