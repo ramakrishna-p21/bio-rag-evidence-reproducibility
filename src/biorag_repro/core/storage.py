@@ -64,6 +64,7 @@ def publish_bytes(
     expected_sha256: str,
     *,
     validate_temp: Callable[[Path], object] | None = None,
+    reuse_identical: bool = False,
 ) -> str:
     """Publish complete, verified bytes without replacing an existing target.
 
@@ -71,6 +72,18 @@ def publish_bytes(
     fsynced; persistence of the directory entry across a system crash is not claimed.
     """
     validate_sha256(expected_sha256)
+
+    def verify_existing() -> str:
+        if target.is_symlink() or not target.is_file():
+            raise ValueError("existing publication must be a regular file")
+        if read_verified_bytes(target, expected_sha256) != content:
+            raise ValueError("existing publication differs from expected bytes")
+        if validate_temp is not None:
+            validate_temp(target)
+        return expected_sha256
+
+    if reuse_identical and target.exists():
+        return verify_existing()
     descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=target.parent)
     temporary = Path(name)
     try:
@@ -81,7 +94,12 @@ def publish_bytes(
         if validate_temp is not None:
             validate_temp(temporary)
         verify_file_sha256(temporary, expected_sha256)
-        os.link(temporary, target)
+        try:
+            os.link(temporary, target)
+        except FileExistsError:
+            if not reuse_identical:
+                raise
+            return verify_existing()
         return expected_sha256
     finally:
         temporary.unlink(missing_ok=True)
@@ -102,7 +120,11 @@ def verify_manifest_outputs(manifest: BuildManifest, output_paths: Mapping[str, 
 
 
 def publish_manifest(
-    manifest: BuildManifest, target: Path, output_paths: Mapping[str, Path]
+    manifest: BuildManifest,
+    target: Path,
+    output_paths: Mapping[str, Path],
+    *,
+    reuse_identical: bool = False,
 ) -> str:
     """Publish a build manifest after checking all listed retained outputs."""
     content = serialize_manifest(manifest)
@@ -113,4 +135,5 @@ def publish_manifest(
         content,
         expected_sha256,
         validate_temp=lambda path: read_manifest(path, expected_sha256),
+        reuse_identical=reuse_identical,
     )

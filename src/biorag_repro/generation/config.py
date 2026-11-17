@@ -17,12 +17,23 @@ Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 GitRevision = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 
 OFFICIAL_REPOSITORY = "Qwen/Qwen3-8B"
+APPROVED_CHECKPOINT_GPU = "NVIDIA L4"
 EVIDENCE_BUDGET_TOKENS = 2048  # EXPERIMENT_PLAN section 4; independent of the model window
 
+# Qualified settings pins do not confer checkpoint or environment approval.
+QUALIFIED_CONFIRMATORY_SHA256 = "11290e58973f3eec13ae2ce2712b9848f19fb57900bc42e7a73bd6f687949927"
+QUALIFIED_CLOSED_BOOK_SHA256 = "c247b14982c8bdba5d8110816465e1e2dc07789c8f1d7d8debe0948cfe397888"
+QUALIFIED_RETRIEVAL_SHA256 = "e3467647a2aa14b01149b586c9720d6af4a28c8fe66f3d51b3858bd505be7a52"
+
 # Approved official checkpoints: (repository, revision) -> manifest hash of the local file
-# inventory (generation.environment.manifest_sha256). Empty on purpose. An entry is added
-# only after the downloaded files have been inventoried and the hash approved by Rama.
-APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {}
+# inventory (generation.environment.manifest_sha256). Researcher decision and exact scope:
+# approvals/researcher_decisions.json, researcher_authority_v1. Environment approval is separate.
+APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {
+    (
+        OFFICIAL_REPOSITORY,
+        "b968826d9c46dd6066d109eabc6255188de91218",
+    ): "4a133fa0d16ea3fdd42e987d7aa5135f3f8562ce45c55bf478b2f777f53e6fad",
+}
 
 # SHA-256 of each environment lock file Rama has approved for official runs. A lock cannot
 # approve itself: its own status field and any hash a caller supplies prove nothing. Empty on
@@ -134,3 +145,20 @@ def check_retrieval_reference(config: GeneratorConfiguration, phase5_sha256: str
     """The configuration must name the retrieval configuration actually used."""
     if config.retrieval_config_sha256 != phase5_sha256:
         raise ValueError("retrieval configuration does not match the one the generator names")
+
+
+def require_qualified_settings(settings: GeneratorConfiguration) -> None:
+    """Compare controls with Phase 7 while retaining each arm's real configuration identity.
+
+    This is a settings check, never checkpoint/environment approval or execution proof.
+    """
+    from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+
+    value = settings.model_dump()
+    if settings.matrix_arm == "closed_book":
+        expected = QUALIFIED_CLOSED_BOOK_SHA256
+    else:
+        value.update(matrix_arm="confirmatory", retrieval_config_sha256=QUALIFIED_RETRIEVAL_SHA256)
+        expected = QUALIFIED_CONFIRMATORY_SHA256
+    if sha256_bytes(canonical_json_bytes(value)) != expected:
+        raise ValueError("generator controls differ from the exact qualified settings")

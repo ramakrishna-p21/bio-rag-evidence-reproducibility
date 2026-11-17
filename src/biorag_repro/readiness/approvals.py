@@ -16,7 +16,7 @@ from biorag_repro.readiness.files import FileProblem, loads_strict, read_regular
 from biorag_repro.readiness.git_state import APPROVAL_FILE
 from biorag_repro.readiness.policy import SLOT_NAMES, ApprovalPolicy
 
-POLICY_VERSION: Final = "1"
+POLICY_VERSION: Final = "2"
 
 
 class PolicyError(ValueError):
@@ -33,8 +33,19 @@ def load_policy(repo: Path) -> ApprovalPolicy:
     # ApprovalSlots defaults a missing slot to unset, which must not read as approved-nothing
     if not isinstance(slots, dict) or set(SLOT_NAMES) - set(slots):
         raise PolicyError(f"{APPROVAL_FILE} must name all {len(SLOT_NAMES)} slots")
-    if value["policy_version"] != POLICY_VERSION:
-        raise PolicyError(f"{APPROVAL_FILE}: policy_version must be {POLICY_VERSION!r}")
+    if value.get("policy_version") not in ("1", POLICY_VERSION):
+        raise PolicyError(f"{APPROVAL_FILE}: unsupported policy_version")
+    if value["policy_version"] == "2":
+        try:
+            authority = loads_strict(read_regular(repo, "approvals/researcher_decisions.json"))
+            if (
+                authority["protocol_version"] != "researcher_authority_v1"
+                or authority["authority"] != "Rama Krishna Pudota"
+                or authority["authority_role"] != "researcher_of_record"
+            ):
+                raise ValueError("researcher authority differs from the prospective amendment")
+        except (FileProblem, KeyError, TypeError, ValueError) as error:
+            raise PolicyError(f"researcher authority record is unusable: {error}") from error
     try:
         return ApprovalPolicy.model_validate(value)
     except ValidationError as error:

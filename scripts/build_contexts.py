@@ -17,9 +17,14 @@ the runner's --contexts-sha256.
 
 import argparse
 import json
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
-from biorag_repro.benchmark.development_view import read_development_view
+from biorag_repro.benchmark.development_view import (
+    BENCHMARK_V1_DEVELOPMENT_SHA256,
+    read_development_view,
+)
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, sha256_file
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import read_project_json
@@ -27,14 +32,35 @@ from biorag_repro.documents.ingestion import Phase4Validation, load_frozen_paper
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
 from biorag_repro.evaluation.analysis_table import ARM_RETRIEVAL
-from biorag_repro.retrieval import bm25
-from biorag_repro.retrieval.chunking import chunk_document, load_construction_counter
+from biorag_repro.retrieval import bm25, context, dense
+from biorag_repro.retrieval.chunking import (
+    chunk_document,
+    chunk_set_manifest_ref,
+    load_construction_counter,
+    publish_chunking,
+    read_chunking,
+    verified_once,
+)
 from biorag_repro.retrieval.context import QwenCounter, pack, tokenizer_snapshot
-from biorag_repro.retrieval.models import CanonicalInput, ConfigurationRef, Phase5Configuration
-from biorag_repro.retrieval.storage import record_ref
+from biorag_repro.retrieval.models import (
+    CanonicalInput,
+    ChunkSet,
+    ConfigurationRef,
+    Phase5Configuration,
+)
+from biorag_repro.retrieval.source_selection import select_pair
+from biorag_repro.retrieval.storage import publish_input, record_ref
 
 REPRESENTATIONS = FROZEN_MATRIX["confirmatory"][0]
 CHUNK_TOKENS = {"chunk_robustness": 192}  # every other retrieval arm uses 384
+
+
+def check_scope_pool(arms: list[str], pool: list[str]) -> None:
+    """The scope arm searches the frozen corpus, not a development-only pool."""
+    if "scope_robustness" in arms and set(pool) != {f"P{i:03d}" for i in range(1, 51)}:
+        raise SystemExit("refused: scope_robustness requires all 50 frozen papers")
+    if len(pool) != len(set(pool)):
+        raise SystemExit("refused: a paper occurs twice in the retrieval pool")
 
 
 def load_configuration(entry: dict) -> tuple[Phase5Configuration, ConfigurationRef]:
@@ -95,18 +121,391 @@ def ranked_candidates(arm, item, chunks, ids, scorers, dense) -> list:
     return [chunks[n] for n, _ in rank_vectors(vectors, query[0], ids, papers, designated)]
 
 
+def build_published(
+    selection: dict, destination: Path, output_root: Path, *, resume: bool = False
+) -> None:
+    """Publish a declared development subset; only the full roster is marked complete."""
+    check_scope_pool(selection["arms"], selection["pool_papers"])
+    arms = selection["arms"]
+    if not arms or len(set(arms)) != len(arms) or set(arms) - set(FROZEN_MATRIX):
+        raise ValueError("unknown or duplicate development arms")
+    pool = selection["pool_papers"]
+    if any(a != "closed_book" for a in arms):
+        check_scope_pool(["scope_robustness"], pool)
+    expected = {f"{p}/{a}" for p in pool for a in ("JATS", "PDF_DOCLING")}
+    if set(selection["canonical"]) != expected:
+        raise ValueError(
+            f"published construction requires exactly {len(expected)} source selections"
+        )
+    if selection.get("view_sha256") != BENCHMARK_V1_DEVELOPMENT_SHA256:
+        raise ValueError("published inputs require the exact frozen development-only view")
+    import subprocess
+
+    revision = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    output_root.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+
+    def progress(message):
+        stamp = datetime.now(UTC).isoformat()
+        print(f"{stamp} elapsed={time.perf_counter() - started:.1f}s {message}", flush=True)
+
+    def config(value, name):
+        data = json.dumps(value.model_dump(mode="json"), indent=2).encode() + b"\n"
+        digest = sha256_bytes(canonical_json_bytes(value.model_dump()))
+        path = output_root / f"{name}.json"
+        if path.exists():
+            if path.read_bytes() != data:
+                raise ValueError("configuration publication already contains different bytes")
+        else:
+            path.write_bytes(data)
+        return ConfigurationRef(
+            artifact=ArtifactRef(
+                artifact_id="configuration_" + digest,
+                logical_ref=path.name,
+                sha256=sha256_bytes(data),
+            ),
+            resolved_sha256=digest,
+        )
+
+    selected = {}
+    for p in pool:
+        j, d = (selection["canonical"][p + "/" + a] for a in ("JATS", "PDF_DOCLING"))
+        root = Path(j["root"])
+        if root != Path(d["root"]):
+            raise ValueError("paired selections require one artifact root")
+        jr, dr = (
+            ArtifactRef(**{k: e[k] for k in ("artifact_id", "logical_ref", "sha256")})
+            for e in (j, d)
+        )
+        auth = select_pair(
+            corpus_root=Path(selection["corpus_root"]),
+            artifact_root=root,
+            release_path=Path(selection["release_record"]),
+            release_sha256=selection["release_sha256"],
+            paper_id=p,
+            jats_validation=jr,
+            pdf_validation=dr,
+            verification_revision=revision,
+        )
+        for arm, vr in [("JATS", jr), ("PDF_DOCLING", dr)]:
+            v = read_project_json(root / vr.logical_ref, vr.sha256, Phase4Validation)
+            doc = read_project_json(
+                root / v.canonical_artifact.logical_ref,
+                v.canonical_artifact.sha256,
+                CanonicalDocument,
+            )
+            ci = CanonicalInput(
+                corpus_version="corpus_v1",
+                corpus_release_sha256=selection["release_sha256"],
+                paper_id=p,
+                representation=arm,
+                canonical=v.canonical_artifact,
+                validation=vr,
+                build_manifest=v.build_manifest,
+            )
+            publish_input(ci, auth, output_root, reuse_identical=resume)
+            selected[p, arm] = (doc, ci, auth)
+        progress(f"{p} pair scientifically checked; no authentication claimed")
+    completed_chunks = {}
+    if resume:
+        for path in (output_root / "corpus/derived/phase5/chunk_set").glob("drv_*.json"):
+            if path.name.count(".") != 1:
+                continue
+            metadata = read_project_json(path, sha256_file(path), ChunkSet)
+            cr, cm = record_ref(metadata), chunk_set_manifest_ref(metadata)
+            if path != output_root / cr.logical_ref:
+                raise ValueError("retained chunk-set path differs from exact identity")
+            if not (output_root / cm.logical_ref).exists():
+                continue
+            key = (
+                metadata.input.paper_id,
+                metadata.input.representation,
+                metadata.configuration.resolved_sha256,
+            )
+            if key in completed_chunks and completed_chunks[key] != (metadata, cr, cm):
+                raise ValueError("conflicting retained chunk sets")
+            completed_chunks[key] = (metadata, cr, cm)
+    view, items = read_development_view(Path(selection["view_dir"]), selection["view_sha256"])
+    if (
+        len(items) != 86
+        or any(i.split != "development" for i in items)
+        or set(selection["item_papers"]) != {i.paper_id for i in items}
+    ):
+        raise ValueError("requires exactly 86 development items")
+    from biorag_repro.generation.config import QUALIFIED_RETRIEVAL_SHA256
+
+    base, base_ref = load_configuration(selection["retrieval_configs"]["confirmatory"])
+    if base_ref.resolved_sha256 != QUALIFIED_RETRIEVAL_SHA256:
+        raise ValueError("published inputs require the frozen confirmatory retrieval settings")
+    records = []
+    indexes = []
+    encoder = None
+    for arm in arms:
+        if arm == "closed_book":
+            for i in items:
+                records.append(
+                    {
+                        "item_id": i.item_id,
+                        "paper_id": i.paper_id,
+                        "benchmark_version": view.benchmark_version,
+                        "split": "development",
+                        "answer_class": i.answer_class,
+                        "question": i.question,
+                        "matrix_arm": arm,
+                        "condition": "CLOSED_BOOK",
+                        "context": None,
+                        "context_sha256": None,
+                        "context_tokens": None,
+                        "retrieval_config_sha256": None,
+                    }
+                )
+            continue
+        settings = base.model_copy(
+            update={
+                "chunk_tokens": 192 if arm == "chunk_robustness" else 384,
+                "scope": "full_corpus" if arm == "scope_robustness" else "designated_paper",
+            }
+        )
+        if arm == "dense_robustness":
+            encoder = dense.BgeEncoder(Path(selection["bge_model_root"]))
+            settings = settings.model_copy(update={"bge_model": encoder.execution.model})
+        cfg = config(settings, arm)
+        count = load_construction_counter(settings, Path(selection["bge_tokenizer_root"]))
+        cc = config(
+            settings.model_copy(
+                update={
+                    "packing_tokenizer": context.tokenizer_snapshot(),
+                    "context_rendering": context.POLICY,
+                }
+            ),
+            arm + "_context",
+        )
+        for rep in ("JATS", "PDF_DOCLING"):
+            stage_started = time.perf_counter()
+            progress(f"{arm} {rep} starting chunks; papers={len(pool)}")
+            with verified_once():
+                sources = []
+                for p in pool:
+                    doc, ci, auth = selected[p, rep]
+                    retained = completed_chunks.get((p, rep, cfg.resolved_sha256))
+                    if retained is not None:
+                        metadata, cr, cm = retained
+                        if metadata.input != ci or metadata.configuration != cfg:
+                            raise ValueError("retained chunk-set selected lineage differs")
+                        result = read_chunking(
+                            cr,
+                            cm,
+                            auth,
+                            cfg,
+                            output_root,
+                            output_root,
+                            tokenizer_root=Path(selection["bge_tokenizer_root"]),
+                        )
+                        state = "reused after scientific verification"
+                    else:
+                        result = chunk_document(doc, ci, cfg, settings, count)
+                        cr, cm = publish_chunking(
+                            result,
+                            auth,
+                            cfg,
+                            output_root,
+                            output_root,
+                            tokenizer_root=Path(selection["bge_tokenizer_root"]),
+                            reuse_identical=resume,
+                        )
+                        state = "published"
+                    progress(
+                        f"{arm} {rep} {p} {state}; chunks={len(result.chunks)} "
+                        f"papers={len(sources) + 1}/{len(pool)} "
+                        f"stage_elapsed={time.perf_counter() - stage_started:.1f}s"
+                    )
+                    sources.append(
+                        bm25.ChunkSelection(
+                            cr,
+                            cm,
+                            auth,
+                            cfg,
+                            output_root,
+                            output_root,
+                            Path(selection["bge_tokenizer_root"]),
+                        )
+                    )
+                if arm == "dense_robustness":
+                    index, vectors = dense.build_index(sources, cfg, output_root, encoder)
+                    ir, im = dense.publish_index(
+                        index,
+                        vectors,
+                        sources,
+                        cfg,
+                        output_root,
+                        encoder,
+                        output_root,
+                        reuse_identical=resume,
+                    )
+                else:
+                    index = bm25.build_index(sources)
+                    ir, im = bm25.publish_index(index, sources, output_root, reuse_identical=resume)
+
+                progress(
+                    f"{arm} {rep} index verified; papers={len(index.paper_ids)} "
+                    f"chunks={len(index.ordered_chunk_ids)}"
+                )
+
+                if set(index.paper_ids) != set(pool):
+                    raise ValueError("index differs from the selected source universe")
+                indexes.append(
+                    {
+                        "arm": arm,
+                        "representation": rep,
+                        "index": ir.model_dump(),
+                        "manifest": im.model_dump(),
+                        "papers": index.paper_ids,
+                    }
+                )
+                for item_number, i in enumerate(items, 1):
+                    q = bm25.Query(
+                        query_id=i.item_id,
+                        question=i.question,
+                        scope=settings.scope,
+                        designated_paper_id=i.paper_id
+                        if settings.scope == "designated_paper"
+                        else None,
+                    )
+                    if arm == "dense_robustness":
+                        ranked = dense.retrieve(
+                            index, vectors, sources, q, cfg, output_root, encoder
+                        )
+                        rr, rm = dense.publish_retrieval(
+                            ranked,
+                            ir,
+                            im,
+                            sources,
+                            q,
+                            cfg,
+                            output_root,
+                            encoder,
+                            output_root,
+                            reuse_identical=resume,
+                        )
+                    else:
+                        ranked = bm25.retrieve(index, sources, q, cfg, output_root)
+                        rr, rm = bm25.publish_retrieval(
+                            ranked,
+                            ir,
+                            im,
+                            sources,
+                            q,
+                            cfg,
+                            output_root,
+                            output_root,
+                            reuse_identical=resume,
+                        )
+                    sel = context.Selection(
+                        rr,
+                        rm,
+                        ir,
+                        im,
+                        sources,
+                        q,
+                        cfg,
+                        output_root,
+                        output_root,
+                        "bge" if arm == "dense_robustness" else "bm25",
+                        encoder,
+                    )
+                    value = context.assemble(
+                        sel, cc, output_root, Path(selection["qwen_tokenizer_root"])
+                    )
+                    vr, vm = context.publish(
+                        value,
+                        sel,
+                        cc,
+                        output_root,
+                        Path(selection["qwen_tokenizer_root"]),
+                        output_root,
+                        reuse_identical=resume,
+                    )
+                    records.append(
+                        {
+                            "item_id": i.item_id,
+                            "paper_id": i.paper_id,
+                            "benchmark_version": view.benchmark_version,
+                            "split": "development",
+                            "answer_class": i.answer_class,
+                            "question": i.question,
+                            "matrix_arm": arm,
+                            "condition": rep,
+                            "context": value.exact_context,
+                            "context_sha256": sha256_bytes(value.exact_context.encode()),
+                            "context_tokens": value.generator_tokens,
+                            "retrieval_config_sha256": cfg.resolved_sha256,
+                            "context_record": vr.model_dump(),
+                            "context_manifest": vm.model_dump(),
+                        }
+                    )
+                    progress(
+                        f"{arm} {rep} context={item_number}/86 "
+                        f"total_conditions={len(records)} "
+                        f"stage_elapsed={time.perf_counter() - stage_started:.1f}s"
+                    )
+                progress(f"{arm} {rep} published")
+    expected_conditions = len(items) * sum(len(FROZEN_MATRIX[a][0]) for a in arms)
+    if len(records) != expected_conditions:
+        raise ValueError("incomplete declared development matrix")
+    observations = len(items) * sum(
+        len(FROZEN_MATRIX[a][0]) * len(FROZEN_MATRIX[a][1]) for a in arms
+    )
+    out = {
+        "header": {
+            "benchmark_version": view.benchmark_version,
+            "corpus_release_sha256": selection["release_sha256"],
+            "item_arm_cells": len(items) * len(arms),
+            "condition_records": len(records),
+            "planned_observations": observations,
+            "status": (
+                "complete_bounded_development_inputs"
+                if set(arms) == set(FROZEN_MATRIX)
+                else "partial_bounded_development_inputs"
+            ),
+            "authenticated_complete_gate": False,
+            "item_ids": [i.item_id for i in items],
+            "item_papers": selection["item_papers"],
+            "arms": arms,
+            "pool_papers": pool,
+            "benchmark_view_sha256": selection["view_sha256"],
+            "indexes": indexes,
+        },
+        "records": records,
+    }
+    with destination.open("x") as f:
+        json.dump(out, f, ensure_ascii=False, indent=1)
+    observations = len(items) * sum(
+        len(FROZEN_MATRIX[a][0]) * len(FROZEN_MATRIX[a][1]) for a in arms
+    )
+    print(
+        f"{len(records)} conditions; {len(items) * len(arms)} cells; {observations} observations",
+        flush=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--selection", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--publish-root", type=Path)
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
     selection = json.loads(args.selection.read_bytes())
+    if args.publish_root is not None:
+        build_published(selection, args.out, args.publish_root, resume=args.resume)
+        return
     arms = selection["arms"]
     if any(arm not in FROZEN_MATRIX for arm in arms):
         raise SystemExit("refused: an arm outside the frozen matrix")
 
     # 1. frozen sources and canonical documents of every pool paper
     pool, item_papers = selection["pool_papers"], selection["item_papers"]
+    check_scope_pool(arms, pool)
     if not set(item_papers) <= set(pool):
         raise SystemExit("refused: every item paper must be in the pool")
     documents, provenance = {}, {}

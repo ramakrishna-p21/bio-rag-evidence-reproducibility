@@ -321,7 +321,7 @@ class HistoricalEvidenceIncomplete(ReadbackError):
 
 # Fixed here on purpose: it names the schema this reader can interpret and must not follow
 # the version of the policy currently in force.
-HISTORICAL_POLICY_VERSIONS = frozenset({"1"})
+HISTORICAL_POLICY_VERSIONS = frozenset({"1", "2"})
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 

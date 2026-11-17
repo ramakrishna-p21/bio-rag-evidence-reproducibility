@@ -315,7 +315,7 @@ def test_g09_clean_tree_records_tracked_and_frozen_identities(world):
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and g.facts["head_sha"] == world.commit
     names = {r.locator for r in g.refs if r.kind == "frozen_specification"}
-    assert len(names) == 7 and all(n.startswith("repo/docs/frozen/") for n in names)
+    assert len(names) == 8 and all(n.startswith("repo/docs/frozen/") for n in names)
     assert g.subject["frozen_specifications"]["ARCHITECTURE.md"] == sha256_bytes(
         b"frozen ARCHITECTURE\n"
     )

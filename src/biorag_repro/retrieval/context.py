@@ -221,7 +221,12 @@ def _assemble(
     else:
         raise ValueError("unknown selected retrieval method")
     chunks: dict[str, Chunk] = {}
+    # The scientific retrieval reader above has already verified the full index.
+    # Only hit papers are needed for exact candidate lookup and context packing.
+    candidate_papers = {hit.paper_id for hit in ranked.hits}
     for source in selected.sources:
+        if source.authority.evidence.paper_id not in candidate_papers:
+            continue
         result = read_chunking(
             source.chunk_set,
             source.manifest,
@@ -321,6 +326,7 @@ def publish(
     root: Path,
     *,
     fixture_counter: Callable[[str], int] | None = None,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     validate(
         value,
@@ -338,8 +344,14 @@ def publish(
         serialize_project_json(value, ContextRecord),
         ref.sha256,
         validate_temp=lambda p: read_project_json(p, ref.sha256, ContextRecord),
+        reuse_identical=reuse_identical,
     )
-    publish_manifest(build_manifest(value), root / mr.logical_ref, {ref.logical_ref: target})
+    publish_manifest(
+        build_manifest(value),
+        root / mr.logical_ref,
+        {ref.logical_ref: target},
+        reuse_identical=reuse_identical,
+    )
     return ref, mr
 
 

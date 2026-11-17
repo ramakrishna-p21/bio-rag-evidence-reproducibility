@@ -238,10 +238,13 @@ class CanonicalNode(Record):
     target_node_ids: list[str] = Field(default_factory=list)
     relation_state: MappingState | None = None
     table: TableData | None = None
+    figure_footnote_node_ids: list[str] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
 
 class CanonicalDocument(Record):
-    schema_version: Literal["4"] = "4"
+    schema_version: Literal["4", "5"] = "4"
     paper_id: str
     representation: Literal["JATS", "PDF_DOCLING"]
     source: ArtifactRef
@@ -267,6 +270,11 @@ class CanonicalDocument(Record):
             raise ValueError("complete PDF document requires saved native artifact")
         if not self.nodes:
             raise ValueError("empty canonical document")
+        if self.schema_version == "5" and (
+            self.representation != "PDF_DOCLING"
+            or self.transformation_id != "docling_pdf_adapter_v5"
+        ):
+            raise ValueError("canonical schema 5 requires the versioned figure-footnote adapter")
         ids = {node.node_id for node in self.nodes}
         if len(ids) != len(self.nodes):
             raise ValueError("duplicate canonical node ID")
@@ -284,6 +292,15 @@ class CanonicalDocument(Record):
                 raise ValueError("PDF node requires this saved native artifact")
             if node.parent_node_id is not None and node.parent_node_id not in ids:
                 raise ValueError("unresolved canonical parent")
+            if node.figure_footnote_node_ids is not None:
+                notes = node.figure_footnote_node_ids
+                if self.schema_version != "5" or node.kind != "figure":
+                    raise ValueError("figure footnotes require a schema 5 figure")
+                if len(set(notes)) != len(notes) or any(target not in ids for target in notes):
+                    raise ValueError("duplicate or unresolved figure footnote")
+                targets = {n.node_id: n for n in self.nodes}
+                if any(targets[target].native_label != "footnote" for target in notes):
+                    raise ValueError("figure footnote target has a contradictory native role")
             if any(target not in ids for target in node.target_node_ids):
                 raise ValueError("unresolved canonical target")
             if any(target not in ids for target in node.native_child_node_ids):

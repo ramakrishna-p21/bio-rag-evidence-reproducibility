@@ -52,6 +52,11 @@ from biorag_repro.corpus.manifest import (
     validate_corpus,
     verify_source_bytes,
 )
+from biorag_repro.evaluation.seeds import (
+    APPROVED_REGISTRY_SHA256,
+    REGISTRY_PATH,
+    read_analysis_seed,
+)
 from biorag_repro.finaltest import layout as root_layout
 from biorag_repro.finaltest.inventory import (
     INCOMPLETE,
@@ -83,6 +88,7 @@ FROZEN_SPECIFICATIONS = (
     "REPRODUCIBILITY_SPEC.md",
     "CORPUS_MANIFEST_SPEC.md",
     "IMPLEMENTATION_PLAN.md",
+    "RESEARCHER_AUTHORITY_AMENDMENT_V1.md",
 )
 ENVIRONMENT_SPEC = "configs/environment.toml"
 RENV_LOCK = "analysis/renv.lock"
@@ -286,8 +292,9 @@ def generator_qualification() -> Gathered:
     return _absent(
         "independent_phase7_evidence_absent",
         "Phase 7 qualification",
-        "peak GPU memory and full-length-context evidence are not recorded by the "
-        "qualification interfaces; rehearsal, smoke and descriptive reports are not accepted",
+        "no published machine-verifiable gate subject binds the archived Phase 7 "
+        "fit, boundary and replay evidence; reports and scientific checkpoint approval "
+        "alone are not gate evidence",
     )
 
 
@@ -578,13 +585,32 @@ def seed_registry(ctx: Context, release: BenchmarkRelease | None) -> Gathered:
         return Gathered("failed", "seed_registry_missing", scope, str(error))
     except (FileProblem, ValueError, ValidationError) as error:
         return Gathered("failed", "seed_registry_invalid", scope, str(error)[:300])
-    out = Gathered(
-        "absent",
-        "production_analysis_seed_unapproved",
-        scope,
-        "the construction seeds verify; no production analysis seed is registered and "
-        "the synthetic rehearsal seed has no production authority",
-    )
+    try:
+        seed = read_analysis_seed(ctx.repo)
+    except FileMissing:
+        out = Gathered("absent", "production_analysis_seed_unapproved", scope)
+    except (FileProblem, ValueError) as error:
+        out = Gathered("failed", "production_analysis_seed_invalid", scope, str(error)[:300])
+    else:
+        out = Gathered(
+            "ok",
+            "checks_passed",
+            scope,
+            subject={
+                "kind": "seed_registries_v1",
+                "benchmark_seed_registry_sha256": release.seed_registry.sha256,
+                "analysis_seed_registry_sha256": APPROVED_REGISTRY_SHA256,
+            },
+        )
+        out.refs.append(
+            EvidenceRef(
+                kind="analysis_seed_registry",
+                locator="repo/" + REGISTRY_PATH,
+                sha256=APPROVED_REGISTRY_SHA256,
+                subject_kind="stored_file_bytes",
+            )
+        )
+        out.add_snapshot("registered_analysis_seed", seed.model_dump(mode="json"))
     out.refs.append(ref)
     return out
 

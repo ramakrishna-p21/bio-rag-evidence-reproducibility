@@ -3,8 +3,8 @@
 The reviewer-facing packet shows canonical source text exactly as stored. Only identifiers,
 file names, representation names and presentation wrappers are withheld. Unmasked provenance
 is written to a separate directory and its hash is fixed in the session manifest before any
-review. Judgments are validated by the existing Stage A validator and are never published
-into a Stage A inventory.
+review. Judgments use the existing Stage A validator. An explicit publication command freezes
+only supplied human judgments from a development review queue.
 """
 
 import argparse
@@ -84,10 +84,15 @@ def structure(item: BenchmarkItem) -> str:
 
 
 def select_items(
-    items: list[BenchmarkItem], papers: tuple[str, ...], pairs: int, seed: int
+    items: list[BenchmarkItem],
+    papers: tuple[str, ...],
+    pairs: int,
+    seed: int,
+    *,
+    include_previously_reviewed: bool = False,
 ) -> list[BenchmarkItem]:
     """Seeded draw: papers balanced first, then uncovered and rarer class x structure strata."""
-    if set(papers) & EXCLUDED_PAPERS:
+    if set(papers) & EXCLUDED_PAPERS and not include_previously_reviewed:
         raise ReviewError("an excluded paper was requested")
     pool = sorted(
         (i for i in items if i.paper_id in papers and i.split == "development"),
@@ -450,6 +455,7 @@ def build_packet(
     created_utc: str,
     code: str | None,
     previous_manifest: Path | None = None,
+    include_previously_reviewed: bool = False,
 ) -> None:
     if role not in ROLES or (pairs is None) == (fraction is None):
         raise ReviewError("give a known role and exactly one of pairs/fraction")
@@ -457,7 +463,9 @@ def build_packet(
     count = pairs if pairs is not None else math.ceil((fraction or 0) * len(eligible))
     if role == "intra_rater":
         check_washout(previous_manifest, seed, created_utc)
-    chosen = select_items(items, papers, count, seed)
+    chosen = select_items(
+        items, papers, count, seed, include_previously_reviewed=include_previously_reviewed
+    )
     order = schedule(
         [i.item_id for i in chosen], seed, groups={i.item_id: i.paper_id for i in chosen}
     )
@@ -505,11 +513,13 @@ def build_packet(
     }
     unmasked_sha = write(provenance / "unmasked_evidence.json", dumps(units))
     manifest = {
-        "status": STATUS,
+        "status": ("development_pending_human_review" if include_previously_reviewed else STATUS),
         "role": role,
         "seed": seed,
         "papers": list(papers),
-        "excluded_papers": sorted(EXCLUDED_PAPERS),
+        "excluded_papers": [] if include_previously_reviewed else sorted(EXCLUDED_PAPERS),
+        "previously_reviewed_papers": sorted(set(papers) & EXCLUDED_PAPERS),
+        "publication_requires_human_judgments": True,
         "pairs": len(chosen),
         "units": len(order),
         "gap": min_gap(len(chosen)),
@@ -770,6 +780,56 @@ def validate_all(out: Path, reviewer: str, role: str = "first_rater") -> dict[st
 # ---- summary --------------------------------------------------------------------------
 
 
+def publish_review(
+    out: Path, reviewer: str, destination: Path, inventory: Path, role: str = "first_rater"
+) -> dict[str, Any]:
+    """Freeze completed human records; blank templates and rehearsal queues cannot publish."""
+    from biorag_repro.core.storage import publish_bytes
+    from biorag_repro.evaluation import stage_a_storage
+
+    manifest, units = load_provenance(out)
+    if manifest["status"] != "development_pending_human_review":
+        raise ReviewError("only an explicitly prepared development review can publish")
+    judgments = validate_all(out, reviewer, role)
+    refs = {}
+    for handle, judgment in judgments.items():
+        analysis = load_analysis(handle, manifest["seed"], units[handle])
+        source = analysis.source
+        candidate_ref = stage_a_ref(analysis.candidate)
+        if (destination / candidate_ref.logical_ref).exists():
+            stage_a_storage.read_candidate(
+                candidate_ref, destination, source.item, source.document, source.canonical
+            )
+        else:
+            stage_a_storage.publish_candidate(
+                analysis.candidate, source.item, source.document, source.canonical, destination
+            )
+        ref = stage_a_ref(judgment)
+        if (destination / ref.logical_ref).exists():
+            stage_a_storage.read_judgment(
+                ref, destination, source.item, source.document, source.canonical
+            )
+        else:
+            stage_a_storage.publish_judgment(
+                judgment, source.item, source.document, source.canonical, destination
+            )
+        refs[f"{judgment.item_id}/{judgment.representation}"] = ref.model_dump(mode="json")
+    value = {
+        "status": "human_judgments_submitted",
+        "reviewer": reviewer,
+        "role": role,
+        "session_manifest_sha256": sha256_bytes(
+            (out / "provenance/session_manifest.json").read_bytes()
+        ),
+        "judgments": refs,
+        "stage_b_judgments": {},
+    }
+    data = dumps(value)
+    inventory.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(inventory, data, sha256_bytes(data))
+    return value
+
+
 def quartiles(values: list[float]) -> dict[str, float]:
     q = statistics.quantiles(values, n=4, method="inclusive") if len(values) > 1 else values * 3
     return {
@@ -921,6 +981,12 @@ def main(argv: list[str] | None = None) -> int:
         c.add_argument("--out", type=Path, required=True)
         c.add_argument("--reviewer", default="Rama Krishna Pudota")
         c.add_argument("--role", choices=ROLES, default="first_rater")
+    pub = commands.add_parser("publish")
+    pub.add_argument("--out", type=Path, required=True)
+    pub.add_argument("--reviewer", required=True)
+    pub.add_argument("--destination", type=Path, required=True)
+    pub.add_argument("--inventory", type=Path, required=True)
+    pub.add_argument("--role", choices=ROLES, default="first_rater")
     args = parser.parse_args(argv)
     try:
         if args.command == "queue":
@@ -947,6 +1013,11 @@ def main(argv: list[str] | None = None) -> int:
             guess(args.out, args.handle, args.representation, args.confidence, now())
         elif args.command == "inspect":
             print(inspect(args.out, args.handle, args.container, now()))
+        elif args.command == "publish":
+            result = publish_review(
+                args.out, args.reviewer, args.destination, args.inventory, args.role
+            )
+            print(f"{len(result['judgments'])} supplied human judgments published")
         elif args.command == "check":
             print(f"{len(validate_all(args.out, args.reviewer, args.role))} judgments valid")
         else:

@@ -48,7 +48,8 @@ def test_duplicate_node_and_broken_mapping_rejected():
 
 def test_schema_version_and_serialization_round_trip():
     schema = CanonicalDocument.model_json_schema()
-    assert schema["properties"]["schema_version"]["const"] == "4"
+    assert schema["properties"]["schema_version"]["enum"] == ["4", "5"]
+    assert schema["properties"]["schema_version"]["default"] == "4"
     doc = document()
     encoded = serialize_project_json(doc, CanonicalDocument)
     assert CanonicalDocument.model_validate_json(encoded) == doc

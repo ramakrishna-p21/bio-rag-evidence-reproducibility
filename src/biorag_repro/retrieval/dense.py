@@ -3,6 +3,7 @@
 import io
 import json
 import platform
+from contextvars import ContextVar
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal
@@ -22,7 +23,7 @@ from biorag_repro.core.storage import (
     verify_manifest_outputs,
 )
 from biorag_repro.documents.models import Record
-from biorag_repro.retrieval.bm25 import ChunkSelection, Query
+from biorag_repro.retrieval.bm25 import ChunkSelection, Query, _selection_key
 from biorag_repro.retrieval.chunking import read_chunking
 from biorag_repro.retrieval.models import (
     Chunk,
@@ -461,6 +462,9 @@ def build_index(
     return value, vectors
 
 
+_verified_indexes: ContextVar[dict | None] = ContextVar("verified_dense_indexes", default=None)
+
+
 def validate_index(
     value: DenseIndex,
     vectors: FloatArray,
@@ -472,6 +476,22 @@ def validate_index(
     reproduce: bool = False,
 ) -> list[Chunk]:
     value = DenseIndex.model_validate(value.model_dump())
+    load_configuration(configuration, configuration_root)
+    cache = _verified_indexes.get()
+    key = None
+    if cache is not None:
+        validate_vectors(vectors, len(value.ordered_chunk_ids), value.dimension)
+        key = (
+            record_ref(value).sha256,
+            vector_ref(vectors, value).sha256,
+            _selection_key(sources),
+            configuration.model_dump_json(),
+            str(configuration_root),
+            id(encoder),
+            encoder.execution.model_dump_json(),
+        )
+        if not reproduce and key in cache:
+            return list(cache[key][0])
     selected, chunks = _selected(sources, configuration, configuration_root, encoder)
     ids = [record_ref(c).artifact_id for c in chunks]
     rows = prepare_inputs(
@@ -506,6 +526,8 @@ def validate_index(
         # Same recorded execution settings: require exact retained float32 arrays.
         if not np.array_equal(vectors, expected):
             raise ValueError("vectors differ from independently reproduced model execution")
+    if cache is not None:
+        cache[key] = (tuple(chunks), tuple(sources), encoder)
     return chunks
 
 
@@ -551,7 +573,9 @@ def manifest_ref(value: DenseIndex | RankedRetrieval) -> ArtifactRef:
     return _manifest_ref(build_manifest(value), record_ref(value).logical_ref + ".dense.build.json")
 
 
-def _publish(value: DenseIndex | RankedRetrieval, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
+def _publish(
+    value: DenseIndex | RankedRetrieval, root: Path, *, reuse_identical: bool = False
+) -> tuple[ArtifactRef, ArtifactRef]:
     ref, mr = record_ref(value), manifest_ref(value)
     target = root / ref.logical_ref
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -560,8 +584,14 @@ def _publish(value: DenseIndex | RankedRetrieval, root: Path) -> tuple[ArtifactR
         serialize_project_json(value, type(value)),
         ref.sha256,
         validate_temp=lambda p: read_project_json(p, ref.sha256, type(value)),
+        reuse_identical=reuse_identical,
     )
-    publish_manifest(build_manifest(value), root / mr.logical_ref, {ref.logical_ref: target})
+    publish_manifest(
+        build_manifest(value),
+        root / mr.logical_ref,
+        {ref.logical_ref: target},
+        reuse_identical=reuse_identical,
+    )
     return ref, mr
 
 
@@ -573,6 +603,8 @@ def publish_index(
     configuration_root: Path,
     encoder: Any,
     root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     validate_index(value, vectors, sources, configuration, configuration_root, encoder)
     target = root / value.vectors.logical_ref
@@ -584,13 +616,15 @@ def publish_index(
         validate_temp=lambda p: validate_vectors(
             np.load(p, allow_pickle=False), len(value.ordered_chunk_ids), value.dimension
         ),
+        reuse_identical=reuse_identical,
     )
     publish_manifest(
         vector_manifest(value),
         root / value.vectors_build_manifest.logical_ref,
         {value.vectors.logical_ref: target},
+        reuse_identical=reuse_identical,
     )
-    return _publish(value, root)
+    return _publish(value, root, reuse_identical=reuse_identical)
 
 
 def _read(ref: ArtifactRef, mr: ArtifactRef, root: Path, model: Any) -> Any:
@@ -707,6 +741,8 @@ def publish_retrieval(
     configuration_root: Path,
     encoder: Any,
     root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     index_record = read_project_json(root / ir.logical_ref, ir.sha256, DenseIndex)
     index, vectors = read_index(
@@ -715,7 +751,7 @@ def publish_retrieval(
     validate_retrieval(
         value, index, vectors, sources, query, configuration, configuration_root, encoder
     )
-    return _publish(value, root)
+    return _publish(value, root, reuse_identical=reuse_identical)
 
 
 def read_retrieval(

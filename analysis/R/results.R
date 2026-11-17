@@ -165,12 +165,21 @@ state_counts_table <- function(accounting) {
 
 # ---- the computation, from pinned inputs to hashed bytes ---------------------------------------
 
-# Inputs are the ones the reader verifies. Only a synthetic rehearsal is accepted: the reader
-# refuses everything else, and the check is repeated here so this boundary stands on its own.
-compute_results <- function(handoff_path, handoff_sha256, csv_path, seed) {
-  inputs <- read_inputs(handoff_path, handoff_sha256, csv_path)
-  if (!identical(inputs$input_origin, "synthetic_rehearsal")) {
+# The reader verifies input bytes and asks Python to verify official source lineage.
+# Repeat the origin guard here before any statistical computation.
+compute_results <- function(handoff_path, handoff_sha256, csv_path, seed, official_request = NULL, python = NULL, project_dir = NULL) {
+  inputs <- read_inputs(handoff_path, handoff_sha256, csv_path, official_request, python, project_dir)
+  if (!inputs$input_origin %in% c("synthetic_rehearsal", "verified_official_run")) {
     run_error("origin", sprintf("input_origin '%s' is not accepted; only a synthetic rehearsal is", inputs$input_origin))
+  }
+  if (identical(inputs$input_origin, "verified_official_run") &&
+      (is.null(inputs$official_proof) || is.null(official_request) ||
+       !identical(inputs$handoff$input_origin, "verified_official_run"))) {
+    run_error("origin", "official inputs lack fresh Python verification")
+  }
+  if (!is.null(inputs$handoff$scoring_reference$primary_bootstrap_registry_sha256)) {
+    seed_record(seed, "development_rehearsal", inputs$handoff,
+                inputs$official_proof$scientific_bootstrap_seed)
   }
   accounting <- derive_accounting(inputs$rows, inputs$handoff)
   inference <- coprimary_inference(accounting, inputs$handoff, seed)

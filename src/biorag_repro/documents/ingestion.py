@@ -38,8 +38,12 @@ from biorag_repro.documents.jats import TRANSFORMATION_ID as JATS_TRANSFORMATION
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.lineage import check_manifest, check_manifest_contract, runtime_settings
 from biorag_repro.documents.models import CanonicalDocument, Record
+from biorag_repro.documents.pdf import (
+    FIGURE_FOOTNOTE_TRANSFORMATION_ID,
+    FOOTNOTE_TRANSFORMATION_ID,
+    native_classification,
+)
 from biorag_repro.documents.pdf import TRANSFORMATION_ID as PDF_TRANSFORMATION
-from biorag_repro.documents.pdf import native_classification
 from biorag_repro.documents.pdf_ingest import (
     NATIVE_TRANSFORMATION,
     ConversionAttempt,
@@ -373,6 +377,13 @@ def validate_build(
         settings = runtime_settings(
             settings, build.environment_sha256, build.asset_inventory_sha256
         )
+    pdf_transform = doc.transformation_id
+    if native and pdf_transform not in {
+        PDF_TRANSFORMATION,
+        FOOTNOTE_TRANSFORMATION_ID,
+        FIGURE_FOOTNOTE_TRANSFORMATION_ID,
+    }:
+        raise ValueError("unsupported canonical PDF adapter")
     check_manifest_contract(
         build.build_manifest,
         data_root,
@@ -380,11 +391,11 @@ def validate_build(
         [build.source, native] if native else [build.source],
         ["raw_pdf", "docling_native"] if native else ["raw_jats"],
         "canonical_pdf_docling" if native else "canonical_jats",
-        PDF_TRANSFORMATION if native else JATS_TRANSFORMATION,
+        pdf_transform if native else JATS_TRANSFORMATION,
         settings,
-        "4",
+        doc.schema_version,
     )
-    if doc.transformation_id != (PDF_TRANSFORMATION if native else JATS_TRANSFORMATION):
+    if doc.transformation_id != (pdf_transform if native else JATS_TRANSFORMATION):
         raise ValueError("canonical adapter identity mismatch")
     if native is not None:
         assert isinstance(build, (ConversionAttempt, PdfCanonicalBuild))
@@ -521,11 +532,20 @@ def validate_build(
                     "present" if native_captions else "unavailable"
                 ):
                     raise ValueError("native caption relation state differs")
-                if (
-                    node.table.footnote_node_ids
-                    or node.table.footnote_relation_state != "unavailable"
+                footnotes = (
+                    [link["$ref"] for link in source_item.get("footnotes", [])]
+                    if doc.transformation_id
+                    in {FOOTNOTE_TRANSFORMATION_ID, FIGURE_FOOTNOTE_TRANSFORMATION_ID}
+                    else []
+                )
+                if any(ref not in id_by_ref for ref in footnotes):
+                    raise ValueError("unresolved native table footnote")
+                if node.table.footnote_node_ids != [
+                    id_by_ref[ref] for ref in footnotes
+                ] or node.table.footnote_relation_state != (
+                    "present" if footnotes else "unavailable"
                 ):
-                    raise ValueError("native table footnote relation was inferred")
+                    raise ValueError("native table footnote relation differs or was inferred")
                 for cell in node.table.cells:
                     cell_source = resolve_native_ref(native_data, cell.mapping.native_ref or "")
                     if not isinstance(cell_source, dict) or cell.text != cell_source.get("text"):

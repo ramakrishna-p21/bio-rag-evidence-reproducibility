@@ -86,15 +86,42 @@ columns_sha256 <- function(columns) {
 
 same_values <- function(a, b) identical(unname(unlist(a)), unname(b))
 
-check_handoff <- function(handoff) {
+# Execute the fixed repository verifier; a citation or status flag is insufficient.
+read_official_proof <- function(request, python, project_dir) {
+  if (is.null(request) || is.null(python) || is.null(project_dir)) {
+    input_error("origin", "an official origin requires a verification request, Python and project directory")
+  }
+  script <- file.path(project_dir, "..", "scripts", "evaluate_development.py")
+  if (!file.exists(script) || !file.exists(request) || !file.exists(python)) {
+    input_error("origin", "official verification inputs are unavailable")
+  }
+  errors <- tempfile("official-preflight-", fileext = ".log")
+  output <- suppressWarnings(system2(normalizePath(python),
+    c(shQuote(normalizePath(script)), "--verify-request", shQuote(normalizePath(request))),
+    stdout = TRUE, stderr = errors))
+  status <- attr(output, "status")
+  if (!is.null(status) && status != 0L) {
+    input_error("origin", sprintf("Python refused official provenance; failure evidence: %s", errors))
+  }
+  proof <- tryCatch(jsonlite::fromJSON(paste(output, collapse = "\n"), simplifyVector = FALSE),
+                    error = function(e) input_error("origin", "Python returned no valid verification result"))
+  if (!identical(proof$status, "verified_official_development_handoff") ||
+      !identical(proof$source_verification, "fresh_python_verification") ||
+      proof$observations != 1290L) {
+    input_error("origin", "Python did not establish the complete official development origin")
+  }
+  proof$request_sha256 <- sha256_file(request)
+  proof
+}
+
+check_handoff <- function(handoff, official_proof = NULL) {
   if (!identical(handoff$kind, "analysis_handoff") || !identical(handoff$schema_version, "1") ||
       !identical(handoff$phase, "development")) {
     input_error("handoff_schema", "not a version 1 development analysis_handoff")
   }
-  if (!identical(handoff$input_origin, "synthetic_rehearsal")) {
-    # Pass 1 accepts rehearsal inputs only. An official origin is a claim that only a prior
-    # Python verification of the source runs can support, and no such evidence is read here.
-    input_error("origin", sprintf("input_origin '%s' is not accepted in this pass", handoff$input_origin))
+  if (!identical(handoff$input_origin, "synthetic_rehearsal") &&
+      !(identical(handoff$input_origin, "verified_official_run") && !is.null(official_proof))) {
+    input_error("origin", sprintf("input_origin '%s' lacks fresh verification", handoff$input_origin))
   }
   spec <- handoff$analysis_spec
   for (name in names(EXPECTED_SPEC)) {
@@ -135,7 +162,7 @@ check_handoff <- function(handoff) {
   invisible(handoff)
 }
 
-read_handoff_file <- function(path, expected_sha256) {
+read_handoff_file <- function(path, expected_sha256, official_request = NULL, python = NULL, project_dir = NULL) {
   if (!is.character(expected_sha256) || length(expected_sha256) != 1 ||
       !grepl("^[0-9a-f]{64}$", expected_sha256)) {
     input_error("handoff_hash", "the pinned handoff hash is not a SHA-256")
@@ -144,7 +171,19 @@ read_handoff_file <- function(path, expected_sha256) {
     input_error("handoff_hash", "handoff bytes differ from the pinned SHA-256")
   }
   handoff <- jsonlite::fromJSON(path, simplifyVector = FALSE)
-  check_handoff(handoff)
+  proof <- NULL
+  if (identical(handoff$input_origin, "verified_official_run")) {
+    proof <- read_official_proof(official_request, python, project_dir)
+    if (!identical(proof$handoff$sha256, expected_sha256) ||
+        !identical(proof$csv_sha256, handoff$csv$sha256)) {
+      input_error("origin", "Python verified different handoff or table bytes")
+    }
+  } else if (!is.null(official_request)) {
+    input_error("origin", "a synthetic rehearsal cannot claim an official verification request")
+  }
+  check_handoff(handoff, proof)
+  if (!is.null(proof)) attr(handoff, "official_proof") <- proof
+  invisible(handoff)
 }
 
 # ---- table ----------------------------------------------------------------------------------
@@ -274,12 +313,19 @@ read_table <- function(csv_path, handoff) {
 
 # The entry point of the reader. `lineage_verified_by_r` is always FALSE: lineage and official
 # origin are Python's to verify before R runs.
-read_inputs <- function(handoff_path, handoff_sha256, csv_path) {
-  handoff <- read_handoff_file(handoff_path, handoff_sha256)
+read_inputs <- function(handoff_path, handoff_sha256, csv_path, official_request = NULL, python = NULL, project_dir = NULL) {
+  handoff <- read_handoff_file(handoff_path, handoff_sha256, official_request, python, project_dir)
+  proof <- attr(handoff, "official_proof")
+  attr(handoff, "official_proof") <- NULL
   rows <- read_table(csv_path, handoff)
-  list(
+  out <- list(
     handoff = handoff, rows = rows, input_origin = handoff$input_origin,
     handoff_sha256 = handoff_sha256, csv_sha256 = handoff$csv$sha256,
     lineage_verified_by_r = FALSE
   )
+  if (!is.null(proof)) {
+    out$official_proof <- proof
+    out$official_request_sha256 <- proof$request_sha256
+  }
+  out
 }

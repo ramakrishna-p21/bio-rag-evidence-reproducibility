@@ -65,17 +65,18 @@ read_preflight_citation <- function(path, sha256) {
 
 build_run_record <- function(results, seed, lock, environment, inventory_sha256, used_versions, code, execution, preflight = NULL) {
   handoff <- results$inputs$handoff
+  official <- identical(results$inputs$input_origin, "verified_official_run")
   files <- lapply(c(results$files, list("package_inventory.csv" = results$inventory_bytes)),
                   function(b) list(bytes = length(b), sha256 = sha256_raw(b)))
   record <- list(
     kind = RECORD_KIND, schema_version = RECORD_SCHEMA_VERSION,
-    purpose = "synthetic_rehearsal", scientific_authority = "none",
+    purpose = if (official) "development_rehearsal" else "synthetic_rehearsal", scientific_authority = "none",
     verification = list(
       input_origin = results$inputs$input_origin,
       r_byte_verification = "handoff_and_csv_bytes_matched_supplied_sha256_and_reading_contract",
-      python_preflight = if (is.null(preflight)) PREFLIGHT_NOT_RECORDED else PREFLIGHT_CITED,
+      python_preflight = if (is.null(preflight)) { if (official) "fresh_official_verification" else PREFLIGHT_NOT_RECORDED } else PREFLIGHT_CITED,
       lineage_verified_by_r = FALSE,
-      official_source_runs = "not_applicable_synthetic_rehearsal",
+      official_source_runs = if (official) "fresh_python_verification" else "not_applicable_synthetic_rehearsal",
       statistical_execution = "completed",
       output_integrity = "hashes_recorded_in_this_record_only",
       record_authentication = "none_without_external_record_sha256"
@@ -102,6 +103,7 @@ build_run_record <- function(results, seed, lock, environment, inventory_sha256,
     outputs = list(files = files, scientific_result_sha256 = results$scientific_result_sha256),
     provenance = list(required = as.list(unlist(handoff$execution_provenance_required)))
   )
+  if (official) record$inputs$official_request_sha256 <- results$inputs$official_request_sha256
   if (!is.null(preflight)) {
     at <- match("python_preflight", names(record$verification))
     record$verification <- append(record$verification, list(python_preflight_scope = PREFLIGHT_SCOPE), after = at)
@@ -249,22 +251,42 @@ check_cited_primary <- function(record, primary_dir, cited) {
 # Integrity check of a published result directory, reading the bytes that are actually there.
 # `record_authenticated` is TRUE only when the caller supplied an external SHA-256 of the record
 # and it matched. Without one the result is internally consistent, nothing more.
-verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha256 = NULL, require_read_only = FALSE) {
+verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha256 = NULL, require_read_only = FALSE,
+                          official_request = NULL, python = NULL, project_dir = NULL, official_proof = NULL) {
   opened <- open_published(dir, RESULT_FILES, RECORD_FILE, "result", expected_record_sha256, require_read_only)
   paths <- opened$paths; sealed <- opened$sealed; record <- opened$record; record_sha256 <- opened$record_sha256
 
+  official <- identical(record$inputs$input_origin, "verified_official_run")
+  if (official) {
+    if (is.null(official_proof)) {
+      official_proof <- tryCatch(read_official_proof(official_request, python, project_dir),
+                                 input_error = function(e) verify_error(conditionMessage(e)))
+    }
+    if (!identical(official_proof$handoff$sha256, record$inputs$handoff_sha256) ||
+        !identical(official_proof$csv_sha256, record$inputs$csv_sha256) ||
+        !identical(official_proof$request_sha256, record$inputs$official_request_sha256)) {
+      verify_error("fresh Python verification differs from the R record's official inputs")
+    }
+  }
+  purpose <- if (official) "development_rehearsal" else "synthetic_rehearsal"
+  seed_label <- if (official) "development_rehearsal" else REHEARSAL_SEED_LABEL
+  registered <- official && !is.null(official_proof$scientific_bootstrap_seed)
+  if (registered) {
+    pinned <- official_proof$scientific_bootstrap_seed
+    if (!identical(record$seed$value, pinned$record$value)) verify_error("registered seed value differs")
+  }
   claims <- list(
     list(c("kind"), RECORD_KIND), list(c("schema_version"), RECORD_SCHEMA_VERSION),
-    list(c("purpose"), "synthetic_rehearsal"), list(c("scientific_authority"), "none"),
-    list(c("verification", "input_origin"), "synthetic_rehearsal"),
+    list(c("purpose"), purpose), list(c("scientific_authority"), "none"),
+    list(c("verification", "input_origin"), if (official) "verified_official_run" else "synthetic_rehearsal"),
     list(c("verification", "lineage_verified_by_r"), FALSE),
-    list(c("verification", "official_source_runs"), "not_applicable_synthetic_rehearsal"),
+    list(c("verification", "official_source_runs"), if (official) "fresh_python_verification" else "not_applicable_synthetic_rehearsal"),
     list(c("verification", "statistical_execution"), "completed"),
     list(c("verification", "record_authentication"), "none_without_external_record_sha256"),
-    list(c("inputs", "input_origin"), "synthetic_rehearsal"),
-    list(c("seed", "label"), REHEARSAL_SEED_LABEL), list(c("seed", "registry"), "not_registered"),
-    list(c("seed", "status"), "synthetic_rehearsal_not_scientific"),
-    list(c("seed", "production_seed"), "awaiting_approval"), list(c("seed", "spec_name"), "primary_bootstrap"),
+    list(c("inputs", "input_origin"), if (official) "verified_official_run" else "synthetic_rehearsal"),
+    list(c("seed", "label"), seed_label), list(c("seed", "registry"), if (registered) pinned$registry_sha256 else "not_registered"),
+    list(c("seed", "status"), if (registered) "registered_analysis_seed" else paste0(seed_label, "_not_scientific")),
+    list(c("seed", "production_seed"), if (registered) "approved_for_frozen_procedure" else "awaiting_approval"), list(c("seed", "spec_name"), "primary_bootstrap"),
     list(c("environment_intended", "r_version_required"), REQUIRED_R_VERSION)
   )
   check_claims(record, claims, " in this pass")
@@ -280,6 +302,8 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
         pre_bytes < 1 || pre_bytes != round(pre_bytes) || !identical(pre_scope, PREFLIGHT_SCOPE)) {
       verify_error("a cited preflight needs its SHA-256, its size and the stated scope")
     }
+  } else if (official && identical(pre_state, "fresh_official_verification")) {
+    if (!is.null(pre_sha) || !is.null(pre_bytes) || !is.null(pre_scope)) verify_error("fresh official verification is separate from a citation")
   } else if (identical(pre_state, PREFLIGHT_NOT_RECORDED)) {
     if (!is.null(pre_sha) || !is.null(pre_bytes) || !is.null(pre_scope)) verify_error("a record without a preflight must not carry a preflight citation")
   } else {
@@ -330,11 +354,12 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
 # Re-run the computation from the original inputs and compare with the published scientific files.
 # Equal bytes are reported as such; last-digit differences from another numerical library are
 # reported separately; anything larger is an error.
-verify_rerun <- function(dir, handoff_path, handoff_sha256, csv_path, tolerance = 1e-10) {
-  v <- verify_result(dir)
+verify_rerun <- function(dir, handoff_path, handoff_sha256, csv_path, tolerance = 1e-10,
+                         official_request = NULL, python = NULL, project_dir = NULL) {
+  v <- verify_result(dir, official_request = official_request, python = python, project_dir = project_dir)
   rec <- v$record
   if (!identical(rec$inputs$handoff_sha256, handoff_sha256)) verify_error("the supplied handoff hash differs from the record")
-  fresh <- compute_results(handoff_path, handoff_sha256, csv_path, rec$seed$value)
+  fresh <- compute_results(handoff_path, handoff_sha256, csv_path, rec$seed$value, official_request, python, project_dir)
   if (!identical(rec$inputs$csv_sha256, fresh$inputs$csv_sha256)) verify_error("the supplied CSV differs from the record")
   published <- lapply(stats::setNames(names(SCIENTIFIC_SCHEMAS), names(SCIENTIFIC_SCHEMAS)),
                       function(n) read_bytes(file.path(dir, n)))
@@ -404,7 +429,7 @@ active_renv_project <- function() if (requireNamespace("renv", quietly = TRUE)) 
 # The whole run: gates, computation, record, staging, verification, publication.
 run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, seed, seed_label, out_root, project_dir,
                          now = Sys.time, synchronized = NULL, code_fn = code_state,
-                         preflight_path = NULL, preflight_sha256 = NULL) {
+                         preflight_path = NULL, preflight_sha256 = NULL, official_request = NULL, python = NULL) {
   started <- now()
   seed <- check_seed(seed, seed_label)
   if (!dir.exists(out_root)) run_error("publish", "the output root must be an existing directory")
@@ -414,8 +439,9 @@ run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, se
   inventory <- installed_inventory(.libPaths(), file.path(project_dir, "renv", "library"), lock$packages)
   check_environment(lock, inventory, project_dir, active_project = active_renv_project(), synchronized = synchronized)
 
-  results <- compute_results(handoff_path, handoff_sha256, csv_path, seed)
-  seed_rec <- seed_record(seed, seed_label, results$inputs$handoff)
+  results <- compute_results(handoff_path, handoff_sha256, csv_path, seed, official_request, python, project_dir)
+  seed_rec <- seed_record(seed, seed_label, results$inputs$handoff,
+                          results$inputs$official_proof$scientific_bootstrap_seed)
   code <- code_fn(project_dir)
   if (!identical(code$status, "ok")) run_error("code", "the git state of the analysis code cannot be read")
   results$inventory_bytes <- csv_bytes(inventory, INVENTORY_SCHEMA)
@@ -438,7 +464,7 @@ run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, se
   for (f in RESULT_FILES) writeBin(contents[[f]], file.path(staging, f))
 
   target <- file.path(out_root, paste0("rehearsal_", run_id))
-  publish_result(staging, target)
+  publish_result(staging, target, verifier = function(dir, ...) verify_result(dir, ..., official_proof = results$inputs$official_proof))
   list(result_dir = target, record_sha256 = sha256_raw(record_bytes),
        scientific_result_sha256 = results$scientific_result_sha256, run_id = run_id)
 }

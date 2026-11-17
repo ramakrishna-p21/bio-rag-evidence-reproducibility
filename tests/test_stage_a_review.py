@@ -592,3 +592,29 @@ def test_packet_shows_an_accepted_flat_pdf_heading_and_no_other():
     analysis, heading = flat_pdf_analysis(heading)
     text = "".join(str(part) for line in analysis.render_container(container) for part in line)
     assert "section title" in text and heading in text
+
+
+def test_full_development_selection_records_prior_exposure(tmp_path):
+    items, _sources = make_world(tmp_path, 3)
+    # Existing rehearsal exclusions remain the default. Explicit full-development
+    # preparation may include a previously reviewed paper without concealing exposure.
+    changed = []
+    for item in items:
+        changed.append(item.model_copy(update={"paper_id": "P027"}))
+    chosen = sar.select_items(changed, ("P027",), 3, 51, include_previously_reviewed=True)
+    assert len(chosen) == 3
+    with pytest.raises(sar.ReviewError):
+        sar.select_items(changed, ("P027",), 3, 51)
+
+
+def test_empty_review_cannot_publish_judgments(tmp_path):
+    out = packet(tmp_path)
+    manifest = out / "provenance" / "session_manifest.json"
+    data = json.loads(manifest.read_bytes())
+    data["status"] = "development_pending_human_review"
+    manifest.write_text(json.dumps(data))
+    destination = tmp_path / "published"
+    with pytest.raises(sar.ReviewError):
+        sar.publish_review(out, "Synthetic reviewer", destination, tmp_path / "inventory.json")
+    assert not destination.exists()
+    assert not (tmp_path / "inventory.json").exists()

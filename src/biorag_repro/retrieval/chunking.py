@@ -38,7 +38,7 @@ from biorag_repro.retrieval.models import (
     SourceContributor,
     SourceOccurrence,
 )
-from biorag_repro.retrieval.storage import record_ref
+from biorag_repro.retrieval.storage import _record_refs, record_ref
 from biorag_repro.retrieval.validation import (
     CanonicalAuthority,
     load_canonical_input,
@@ -389,6 +389,11 @@ def render_units(
         assigned[owner].append(item)
     # Ownership is exclusive even when a paragraph contains a table or caption.
     position = {item.occurrence_id: index for index, item in enumerate(occurrences)}
+    table_nodes = [
+        node
+        for node in document.nodes
+        if node.kind == "table" or node.source_tag.rsplit("}", 1)[-1] == "table-wrap"
+    ]
     for owner in list(assigned):
         if not any(o.text and o.text.strip() for o in assigned[owner]):
             continue
@@ -406,10 +411,8 @@ def render_units(
         )
         embedded = [
             node
-            for node in document.nodes
-            if (node.kind == "table" or node.source_tag.rsplit("}", 1)[-1] == "table-wrap")
-            and owner in _ancestors(node.node_id, nodes)
-            and node.node_id != owner
+            for node in table_nodes
+            if owner in _ancestors(node.node_id, nodes) and node.node_id != owner
         ]
         for embedded_node in embedded:
             table_positions = [position[o.occurrence_id] for o in below(embedded_node.node_id)]
@@ -1023,6 +1026,15 @@ def _set_manifest(value: ChunkSet) -> BuildManifest:
     )
 
 
+def chunk_set_manifest_ref(value: ChunkSet) -> ArtifactRef:
+    digest = sha256_bytes(serialize_project_json(_set_manifest(value), BuildManifest))
+    return ArtifactRef(
+        artifact_id="build_" + digest,
+        logical_ref=record_ref(value).logical_ref + ".chunk-set.build.json",
+        sha256=digest,
+    )
+
+
 def publish_chunking(
     result: ChunkingResult,
     authority: CanonicalAuthority,
@@ -1032,6 +1044,7 @@ def publish_chunking(
     *,
     tokenizer_root: Path | None = None,
     fixture_counter: Counter | None = None,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     """Validate scientific content before writes, and publish the complete set manifest last."""
     settings = load_configuration(configuration, configuration_root)
@@ -1047,6 +1060,7 @@ def publish_chunking(
         encode_jsonl(result.chunks),
         chunks.sha256,
         validate_temp=lambda p: read_jsonl(p, chunks.sha256, Chunk),
+        reuse_identical=reuse_identical,
     )
     manifest_ref = metadata.chunks_build_manifest
     assert manifest_ref is not None
@@ -1054,6 +1068,7 @@ def publish_chunking(
         _chunks_manifest(chunks, metadata.input, configuration, settings.chunking_algorithm),
         output_root / manifest_ref.logical_ref,
         {chunks.logical_ref: target},
+        reuse_identical=reuse_identical,
     )
     ref = record_ref(metadata)
     meta_path = output_root / ref.logical_ref
@@ -1063,10 +1078,14 @@ def publish_chunking(
         serialize_project_json(metadata, ChunkSet),
         ref.sha256,
         validate_temp=lambda p: read_project_json(p, ref.sha256, ChunkSet),
+        reuse_identical=reuse_identical,
     )
     logical_ref = ref.logical_ref + ".chunk-set.build.json"
     digest = publish_manifest(
-        _set_manifest(metadata), output_root / logical_ref, {ref.logical_ref: meta_path}
+        _set_manifest(metadata),
+        output_root / logical_ref,
+        {ref.logical_ref: meta_path},
+        reuse_identical=reuse_identical,
     )
     return ref, ArtifactRef(artifact_id="build_" + digest, logical_ref=logical_ref, sha256=digest)
 
@@ -1086,10 +1105,21 @@ def verified_once() -> Iterator[None]:
     single verification: it is never kept between calls, so an artifact that changes
     afterwards is read and checked again.
     """
+    if _verified_reads.get() is not None:
+        yield
+        return
+    from biorag_repro.retrieval import bm25, dense
+
     token = _verified_reads.set({})
+    ref_token = _record_refs.set({})
+    bm25_token = bm25._verified_selections.set({})
+    dense_token = dense._verified_indexes.set({})
     try:
         yield
     finally:
+        dense._verified_indexes.reset(dense_token)
+        bm25._verified_selections.reset(bm25_token)
+        _record_refs.reset(ref_token)
         _verified_reads.reset(token)
 
 
@@ -1118,7 +1148,10 @@ def read_chunking(
     )
     if reads is not None and key in reads:
         shared = reads[key][0]
-        return ChunkingResult(list(shared.chunks), shared.chunk_set)
+        return ChunkingResult(
+            [chunk.model_copy(deep=True) for chunk in shared.chunks],
+            shared.chunk_set.model_copy(deep=True),
+        )
     result = _read_chunking(
         ref,
         manifest_ref,
@@ -1132,7 +1165,11 @@ def read_chunking(
     if reads is not None:
         # The authority and counter are kept so that their ids cannot be reused in this scope.
         reads[key] = (result, (authority, fixture_counter))
-    return ChunkingResult(list(result.chunks), result.chunk_set)
+    # Cached scientific records remain private; callers may mutate their own copies.
+    return ChunkingResult(
+        [chunk.model_copy(deep=True) for chunk in result.chunks],
+        result.chunk_set.model_copy(deep=True),
+    )
 
 
 def _read_chunking(

@@ -174,3 +174,65 @@ test_that("the pinned seed is not part of the handoff and is never invented", {
   read <- load_fixture()
   expect_identical(unlist(read$handoff$awaiting_approval), "primary_bootstrap_seed")
 })
+
+test_that("an official origin needs live Python verification, not a cited local record", {
+  expect_error(read_official_proof(NULL, NULL, NULL), class = "input_error")
+  h <- jsonlite::fromJSON(fixture_args()$handoff_path, simplifyVector = FALSE)
+  h$input_origin <- "verified_official_run"
+  expect_error(check_handoff(h), "origin")
+})
+
+test_that("Python preflight refuses qualification records before R accepts official origin", {
+  project <- normalizePath(file.path(r_dir, ".."))
+  python <- file.path(project, "..", ".venv", "bin", "python")
+  skip_if_not(file.exists(python))
+  root <- tempfile("nonofficial-batch-")
+  dir.create(root)
+  batch <- file.path(root, "runs", "batch")
+  dir.create(batch, recursive = TRUE)
+  jsonlite::write_json(list(identity = list(phase = "qualification")), file.path(batch, "batch.json"), auto_unbox = TRUE)
+  request <- stats::setNames(rep(list(file.path(root, "unused")), 13),
+    c("contexts", "configs", "prompt", "seeds", "tokenizer_root", "out", "published_context_root",
+      "environment_lock", "selection", "anchor", "reviewer_inventory", "review_root", "analysis_root"))
+  request$out <- batch
+  request$published_context_root <- root
+  request$review_root <- root
+  request$analysis_root <- root
+  request$contexts_sha256 <- paste(rep("0", 64), collapse = "")
+  request$anchor_sha256 <- request$contexts_sha256
+  request$handoff_build <- list(artifact_id = "build_fixture", logical_ref = "unused", sha256 = request$contexts_sha256)
+  path <- file.path(root, "request.json")
+  jsonlite::write_json(request, path, auto_unbox = TRUE)
+  before <- list.files(root, recursive = TRUE, all.files = TRUE)
+  expect_error(read_official_proof(path, python, project), "Python refused official provenance")
+  expect_identical(list.files(root, recursive = TRUE, all.files = TRUE), before)
+})
+
+test_that("historical development handoffs retain unregistered rehearsal seed semantics", {
+  handoff <- jsonlite::fromJSON(fixture_args()$handoff_path, simplifyVector = FALSE)
+  handoff$input_origin <- "verified_official_run"
+  expect_error(seed_record(TEST_SEED, "synthetic_rehearsal", handoff), "label")
+  seed <- seed_record(TEST_SEED, "development_rehearsal", handoff)
+  expect_identical(seed$status, "development_rehearsal_not_scientific")
+  expect_identical(seed$production_seed, "awaiting_approval")
+  expect_identical(seed$registry, "not_registered")
+  expect_error(check_seed(TEST_SEED, "production"), "production analysis is unavailable")
+})
+
+test_that("registered seed binds the freshly verified handoff without changing historical records", {
+  handoff <- jsonlite::fromJSON(fixture_args()$handoff_path, simplifyVector = FALSE)
+  handoff$input_origin <- "verified_official_run"
+  handoff$awaiting_approval <- list()
+  registry <- jsonlite::fromJSON(test_path("..", "..", "..", "configs", "analysis_seed.json"), simplifyVector = FALSE)
+  sha <- sha256_file(test_path("..", "..", "..", "configs", "analysis_seed.json"))
+  handoff$scoring_reference$primary_bootstrap_registry_sha256 <- sha
+  registration <- list(registry_sha256 = sha, record = registry)
+  seed <- seed_record(1572911995L, "development_rehearsal", handoff, registration)
+  expect_identical(seed$registry, sha)
+  expect_identical(seed$status, "registered_analysis_seed")
+  expect_identical(seed$n_resamples, 10000L)
+  expect_error(seed_record(1572911994L, "development_rehearsal", handoff, registration), "registered seed differs")
+  expect_error(seed_record(1572911995L, "development_rehearsal", handoff), "registered seed differs")
+  registration$record$sample_kind <- "Rounding"
+  expect_error(seed_record(1572911995L, "development_rehearsal", handoff, registration), "registered seed differs")
+})

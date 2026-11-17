@@ -21,12 +21,13 @@ from biorag_repro.readiness.evaluate import gather_all
 from biorag_repro.readiness.gather import to_result
 from biorag_repro.readiness.git_state import APPROVAL_FILE, probe
 from biorag_repro.readiness.guard import AuthorizationRefused, authorize_final_test
-from biorag_repro.readiness.policy import SLOT_NAMES, policy_sha256
+from biorag_repro.readiness.policy import SLOT_NAMES, ApprovalPolicy, policy_sha256
 
 G09 = "G09_scientific_source_revision"
 # SHA-256 of the canonical JSON of version "1" with all 12 slots unset, worked out before the
 # constant `REAL_POLICY` was removed (independent of the package: sorted keys, no whitespace).
 ORIGINAL_POLICY_SHA256 = "aa4bbecf902a436deb6d725f302c01bccbd9ea93ac11912ae34a6e4c6e394026"
+PROSPECTIVE_POLICY_SHA256 = "311cec52b2e6ba9a1e96c4a8d9ce5fdf59243d96279d8e47aa1e83a04b99f20e"
 
 
 @pytest.fixture
@@ -82,13 +83,16 @@ def expected_subject_digest(repo, excluded=APPROVAL_FILE):
 # ---- the policy hash and the real values file --------------------------------------------
 
 
-def test_migrated_policy_has_the_original_hash():
-    assert policy_sha256(load_policy(REAL_REPO)) == ORIGINAL_POLICY_SHA256
+def test_historical_policy_hash_is_preserved_under_prospective_authority():
+    current = load_policy(REAL_REPO)
+    historical = ApprovalPolicy(policy_version="1", slots=current.slots)
+    assert policy_sha256(historical) == ORIGINAL_POLICY_SHA256
+    assert policy_sha256(current) != ORIGINAL_POLICY_SHA256
 
 
 def test_all_twelve_real_slots_are_unset():
     policy = load_policy(REAL_REPO)
-    assert policy.policy_version == "1"
+    assert policy.policy_version == "2"
     assert set(policy.slots.model_dump()) == set(SLOT_NAMES) and len(SLOT_NAMES) == 12
     assert all(value is None for value in policy.slots.model_dump().values())
 
@@ -254,7 +258,9 @@ def test_only_the_values_file_is_missing_from_the_tracked_scope(world):
 
 
 def good(repo_world):
-    return json.loads((REAL_REPO / APPROVAL_FILE).read_text())
+    value = json.loads((REAL_REPO / APPROVAL_FILE).read_text())
+    value["policy_version"] = "1"  # exercise the unchanged historical file contract
+    return value
 
 
 def put(repo, data):
@@ -397,7 +403,7 @@ def test_cli_loads_the_policy_from_the_repo_it_evaluates(world):
     assert status == 2
     report = next((world.data / "readiness/reports").glob("[0-9a-f]" * 64 + ".json"))
     stored = json.loads(report.read_text())
-    assert stored["policy_sha256"] == ORIGINAL_POLICY_SHA256
+    assert stored["policy_sha256"] == PROSPECTIVE_POLICY_SHA256
 
 
 def test_cli_verify_uses_a_changed_policy_and_refuses_the_old_report(world):
@@ -456,7 +462,7 @@ def test_old_report_still_verifies_under_its_own_policy(world):
     from biorag_repro.readiness import publish
     from biorag_repro.readiness.evaluate import evaluate
 
-    policy = load_policy(world.repo)
+    policy = ApprovalPolicy(policy_version="1", slots=load_policy(world.repo).slots)
     published = publish.publish_report(evaluate(world.ctx, policy), world.data)
     back = publish.read_report(world.data, published.report_sha256, policy)
     assert back.report.policy_sha256 == ORIGINAL_POLICY_SHA256

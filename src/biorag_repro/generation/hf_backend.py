@@ -201,6 +201,11 @@ class HuggingFaceBackend:
             == self.snapshot.manifest_sha256
             and is_official_device(device)
         )
+        if official:
+            generator_config.require_qualified_settings(settings)
+            official = (
+                torch.cuda.get_device_name(device) == generator_config.APPROVED_CHECKPOINT_GPU
+            )
         kind: BackendKind = "official" if official else "smoke"
         cls = type(self)
         self.identity = BackendIdentity(

@@ -10,7 +10,12 @@ auditability. It is not a signature, and anyone who can change the repository ca
 policy and the evaluator. Entries are added in their own reviewed commits, never by
 evaluation, and never in the same commit as code that depends on them.
 
-Every slot is unset. The identity subject each slot digests (for example the corpus
+Under prospective policy version 2, Rama Krishna Pudota is the scientific approval
+authority (researcher_authority_v1). This is recorded researcher authorization, not an
+independent third-party signature. Technical evidence verification remains separate.
+Version 1 and its retained evidence are historical and are not reinterpreted.
+
+The identity subject each slot digests (for example the corpus
 identities, the freeze record or the storage approval) is defined together with the verifier
 that produces it, so a slot is not filled before its subject exists. The real policy
 therefore cannot authorize final-test execution: no gate that needs a slot can pass.
@@ -73,7 +78,7 @@ class ApprovalSlots(Record):
     restart_evidence_acceptance: Sha256 | None = None
     # G11: approved writable project/model storage for the execution host.
     storage_authorization: Sha256 | None = None
-    # G12: advisor or administrator guidance for the intended shared-GPU use.
+    # G12: actual shared-GPU permission evidence; researcher attestations must be named as such.
     gpu_authorization: Sha256 | None = None
 
 

@@ -111,6 +111,19 @@ class PdfCanonicalBuild(Record):
     build_status: Literal["complete"] = "complete"
 
 
+def is_footnote_recovery(attempt: ConversionAttempt) -> bool:
+    """Only successful native conversion rejected by the historical relation guard is recoverable."""
+    return (
+        attempt.status == "success"
+        and attempt.build_status == "failed"
+        and attempt.errors == ["ValueError: unsupported populated native relation"]
+        and attempt.native_artifact is not None
+        and attempt.native_build_manifest is not None
+        and attempt.canonical_artifact is None
+        and attempt.build_manifest is None
+    )
+
+
 def canonical_build_ref(build: PdfCanonicalBuild) -> ArtifactRef:
     content = serialize_project_json(build, PdfCanonicalBuild)
     return _ref(
@@ -390,6 +403,8 @@ def canonicalize_saved_native(
     *,
     load_native: Any = None,
     original_data_root: Path | None = None,
+    preserve_native_table_footnotes: bool = False,
+    preserve_native_figure_footnotes: bool = False,
 ) -> PdfCanonicalBuild:
     """Build a new canonical artifact from a verified, previously saved native document."""
     verify_file_sha256(source_path, source.sha256)
@@ -402,11 +417,22 @@ def canonicalize_saved_native(
         or original_attempt.source != source
         or original_attempt.configuration_sha256 != configuration_sha256
         or original_attempt.status != "success"
-        or original_attempt.build_status != "complete"
+        or (
+            original_attempt.build_status != "complete"
+            and not (
+                (preserve_native_table_footnotes or preserve_native_figure_footnotes)
+                and is_footnote_recovery(original_attempt)
+            )
+        )
         or original_attempt.native_artifact is None
         or original_attempt.native_build_manifest is None
-        or original_attempt.canonical_artifact is None
-        or original_attempt.build_manifest is None
+        or (
+            (original_attempt.canonical_artifact is None or original_attempt.build_manifest is None)
+            and not (
+                (preserve_native_table_footnotes or preserve_native_figure_footnotes)
+                and is_footnote_recovery(original_attempt)
+            )
+        )
     ):
         raise ValueError("original complete conversion attempt mismatch")
     retained_root = original_data_root if original_data_root is not None else data_root
@@ -423,12 +449,13 @@ def canonicalize_saved_native(
     native_manifest = check_manifest(
         original_attempt.native_build_manifest, retained_root, native, [source]
     )
-    check_manifest(
-        original_attempt.build_manifest,
-        retained_root,
-        original_attempt.canonical_artifact,
-        [source, native],
-    )
+    if original_attempt.build_status == "complete":
+        check_manifest(
+            original_attempt.build_manifest,
+            retained_root,
+            original_attempt.canonical_artifact,
+            [source, native],
+        )
     native_path = data_root / native.logical_ref
     native_data = json.loads(read_verified_bytes(native_path, native.sha256))
     if native_data.get("schema_name") != "DoclingDocument" or not native_data.get("version"):
@@ -439,7 +466,14 @@ def canonicalize_saved_native(
         load_native = lambda path: DoclingDocument.load_from_json(path, allow_local_images=False)
     reloaded = load_native(native_path)
     document = canonicalize_native(
-        reloaded, paper_id, source, native, configuration_sha256, native_data
+        reloaded,
+        paper_id,
+        source,
+        native,
+        configuration_sha256,
+        native_data,
+        preserve_native_table_footnotes=preserve_native_table_footnotes,
+        preserve_native_figure_footnotes=preserve_native_figure_footnotes,
     )
     validate_pdf_coverage(document, native_data)
     runtime_settings_sha256 = sha256_bytes(
@@ -463,10 +497,10 @@ def canonicalize_saved_native(
             ArtifactInput("raw_pdf", source.artifact_id, source.sha256),
             ArtifactInput("docling_native", native.artifact_id, native.sha256),
         ],
-        TRANSFORMATION_ID,
+        document.transformation_id,
         runtime_settings_sha256,
         canonical_bytes,
-        "4",
+        document.schema_version,
         "canonical/PDF_DOCLING",
     )
     canonical_path = data_root / canonical_ref.logical_ref
@@ -482,11 +516,11 @@ def canonicalize_saved_native(
             BuildInput(role="raw_pdf", artifact=source),
             BuildInput(role="docling_native", artifact=native),
         ],
-        TRANSFORMATION_ID,
+        document.transformation_id,
         runtime_settings_sha256,
         canonical_ref,
         "canonical_pdf_docling",
-        "4",
+        document.schema_version,
         data_root,
     )
     build = PdfCanonicalBuild(

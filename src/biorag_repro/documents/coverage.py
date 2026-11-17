@@ -4,7 +4,11 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from biorag_repro.documents.models import CanonicalDocument
-from biorag_repro.documents.pdf import native_classification
+from biorag_repro.documents.pdf import (
+    FIGURE_FOOTNOTE_TRANSFORMATION_ID,
+    FOOTNOTE_TRANSFORMATION_ID,
+    native_classification,
+)
 
 
 def jats_paths(content: bytes) -> dict[str, ET.Element]:
@@ -306,9 +310,38 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                 or (record.bbox.model_dump() if record.bbox else None) != native_prov.get("bbox")
             ):
                 raise ValueError("native provenance differs")
-        if item.get("annotations") or item.get("references") or item.get("footnotes"):
+        footnote_support = (
+            doc.transformation_id in {FOOTNOTE_TRANSFORMATION_ID, FIGURE_FOOTNOTE_TRANSFORMATION_ID}
+            and node.kind == "table"
+        ) or (doc.transformation_id == FIGURE_FOOTNOTE_TRANSFORMATION_ID and node.kind == "figure")
+        if (
+            item.get("annotations")
+            or item.get("references")
+            or (item.get("footnotes") and not footnote_support)
+        ):
             raise ValueError("unsupported populated native relation")
         captions = [link["$ref"] for link in item.get("captions", [])]
+        if node.kind == "figure" and doc.transformation_id == FIGURE_FOOTNOTE_TRANSFORMATION_ID:
+            links = item.get("footnotes", [])
+            if not isinstance(links, list) or any(
+                not isinstance(link, dict)
+                or set(link) != {"$ref"}
+                or not isinstance(link["$ref"], str)
+                for link in links
+            ):
+                raise ValueError("malformed native figure footnote reference")
+            targets = [link["$ref"] for link in links]
+            if len(set(targets)) != len(targets) or any(
+                target not in by_ref or source[target].get("label") != "footnote"
+                for target in targets
+            ):
+                raise ValueError("dangling or contradictory native figure footnote")
+            if set(targets) & set(captions):
+                raise ValueError("native figure caption and footnote roles contradict")
+            if node.figure_footnote_node_ids != [by_ref[target].node_id for target in targets]:
+                raise ValueError("native figure footnote relation differs or was inferred")
+        elif node.figure_footnote_node_ids is not None:
+            raise ValueError("unsupported canonical figure footnote field")
         if node.kind == "figure" and node.target_node_ids != [
             by_ref[target].node_id for target in captions
         ]:
@@ -326,8 +359,15 @@ def validate_pdf_coverage(doc: CanonicalDocument, data: dict[str, Any]) -> tuple
                 raise ValueError("native table captions differ")
             if node.table.caption_relation_state != ("present" if captions else "unavailable"):
                 raise ValueError("native table caption state differs")
-            if node.table.footnote_node_ids or node.table.footnote_relation_state != "unavailable":
-                raise ValueError("native table footnote relation was inferred")
+            footnotes = (
+                [link["$ref"] for link in item.get("footnotes", [])] if footnote_support else []
+            )
+            if any(ref not in by_ref for ref in footnotes):
+                raise ValueError("unresolved native table footnote")
+            if node.table.footnote_node_ids != [
+                by_ref[ref].node_id for ref in footnotes
+            ] or node.table.footnote_relation_state != ("present" if footnotes else "unavailable"):
+                raise ValueError("native table footnote relation differs or was inferred")
             if node.table.native_orientation != table.get("orientation"):
                 raise ValueError("native table orientation differs")
             expected_cells = {

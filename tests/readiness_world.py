@@ -94,8 +94,15 @@ def build_repo(root: Path) -> tuple[Path, str]:
     write(repo / "analysis/run_analysis.R", "b <- 1\n")
     (repo / "approvals").mkdir()
     shutil.copy(REAL_REPO / "approvals/policy.json", repo / "approvals/policy.json")
+    shutil.copy(
+        REAL_REPO / "approvals/researcher_decisions.json",
+        repo / "approvals/researcher_decisions.json",
+    )
     for name in SPECS:
         write(repo / f"docs/frozen/{name}.md", f"frozen {name}\n")
+    write(
+        repo / "docs/frozen/RESEARCHER_AUTHORITY_AMENDMENT_V1.md", "prospective authority fixture\n"
+    )
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "initial")
     return repo, git(repo, "rev-parse", "HEAD")

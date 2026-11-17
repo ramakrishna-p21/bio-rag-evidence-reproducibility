@@ -34,6 +34,9 @@ from biorag_repro.core.storage import (
     serialize_project_json,
 )
 
+# The frozen development-only publication; this pin confers no execution authority.
+BENCHMARK_V1_DEVELOPMENT_SHA256 = "5ff34235998b1aa8281e986e5a720a0ef23f62a6c2158f789bd145b17fe99f4d"
+
 PROCEDURE = "development_paper_filter_v1"
 ITEMS_FILE = "items.jsonl"
 MANIFEST_FILE = "build_manifest.json"

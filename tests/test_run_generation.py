@@ -472,3 +472,126 @@ def test_chunk_seals_survive_a_kill_and_resume_without_rewriting_or_regenerating
         rg.check_anchor(batch.out, path, digest)  # every earlier anchor still verifies
     assert json.loads(paths[2].read_bytes())["previous_anchor_sha256"] == second
     assert rg.run(batch_with(batch, anchor=paths[2], anchor_sha256=third)) == 0
+
+
+def test_published_execution_refuses_unbacked_contexts_before_loading_model(batch):
+    batch.published_context_root = batch.out.parent
+    with pytest.raises(rg.Refused, match="published ContextRecord"):
+        rg.load_inputs(batch)
+
+
+def test_published_closed_book_keeps_input_and_call_evidence(batch):
+    package = json.loads(batch.contexts.read_bytes())
+    package["header"]["arms"] = ["closed_book"]
+    package["records"] = [r for r in package["records"] if r["matrix_arm"] == "closed_book"]
+    batch.contexts.write_text(json.dumps(package))
+    batch.contexts_sha256 = sha256_bytes(batch.contexts.read_bytes())
+    batch.published_context_root = batch.out.parent
+    assert rg.run(batch) == 3
+    result_path = next((batch.out / "results").glob("*.json"))
+    saved = json.loads(result_path.read_bytes())
+    assert saved["generator_input"]["logical_ref"].startswith("inputs/")
+    assert saved["input_token_ids"] and saved["output_token_ids"]
+    from biorag_repro.core.storage import read_project_json
+    from biorag_repro.generation.receipt import ExecutionReceipt
+
+    receipt = read_project_json(
+        batch.out / saved["execution_receipt"]["logical_ref"],
+        saved["execution_receipt"]["sha256"],
+        ExecutionReceipt,
+    )
+    assert receipt.input_record_sha256 == saved["generator_input"]["sha256"]
+    assert receipt.facts.output_token_ids == saved["output_token_ids"]
+    assert receipt.facts.generation.effective["num_beams"] == 1
+    anchor_sha = rg.seal(batch.out)
+    anchor = max((batch.out / "anchors").glob("*.json"))
+    rg.check_anchor(batch.out, anchor, anchor_sha)
+    assert "inputs/" in anchor.read_text()
+    assert "receipts/" in anchor.read_text() and "environments/" in anchor.read_text()
+    assert rg.run(batch) == 0
+    saved["output_token_ids"][0] += 1
+    result_path.chmod(0o644)
+    result_path.write_text(json.dumps(saved))
+    with pytest.raises(rg.Refused, match="token|receipt"):
+        rg.run(batch)
+
+
+def test_receipt_decoding_arguments_cannot_drift(batch):
+    package = json.loads(batch.contexts.read_bytes())
+    package["header"]["arms"] = ["closed_book"]
+    package["records"] = [r for r in package["records"] if r["matrix_arm"] == "closed_book"]
+    batch.contexts.write_text(json.dumps(package))
+    batch.contexts_sha256 = sha256_bytes(batch.contexts.read_bytes())
+    batch.published_context_root = batch.out.parent
+    rg.run(batch)
+    path = next((batch.out / "results").glob("*.json"))
+    saved = json.loads(path.read_bytes())
+    saved["generation_arguments"]["do_sample"] = True
+    path.chmod(0o644)
+    path.write_text(json.dumps(saved))
+    with pytest.raises(rg.Refused, match="receipt"):
+        rg.run(batch)
+
+
+def test_official_verification_never_promotes_a_synthetic_batch(batch):
+    rg.run(batch)
+    batch.anchor_sha256 = rg.seal(batch.out)
+    batch.anchor = max((batch.out / "anchors").glob("*.json"))
+    with pytest.raises(rg.Refused, match="official|approved"):
+        rg.verify_official_batch(batch)
+
+
+def test_seal_cannot_resolve_a_file_outside_the_batch(tmp_path):
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(b"not batch evidence")
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    anchor = batch / "anchor.json"
+    anchor.write_text(
+        json.dumps({"files": {"../outside.json": sha256_bytes(outside.read_bytes())}})
+    )
+    with pytest.raises(rg.Refused, match="path|outside"):
+        rg.check_anchor(batch, anchor, sha256_bytes(anchor.read_bytes()))
+
+
+def test_preflight_refuses_a_partial_roster_without_model_execution(batch):
+    with pytest.raises(rg.Refused, match="complete five-arm"):
+        rg.preflight(batch)
+
+
+@pytest.mark.parametrize("damage", ["missing", "malformed", "valid"])
+def test_published_completion_refuses_missing_or_malformed_typed_receipt(batch, damage):
+    package = json.loads(batch.contexts.read_bytes())
+    package["header"]["arms"] = ["closed_book"]
+    package["records"] = [r for r in package["records"] if r["matrix_arm"] == "closed_book"]
+    batch.contexts.write_text(json.dumps(package))
+    batch.contexts_sha256 = sha256_bytes(batch.contexts.read_bytes())
+    batch.published_context_root = batch.out.parent
+    rg.run(batch)
+    last = rg.read_events(batch.out)[-1]
+    saved = json.loads((batch.out / "results" / f"{last['observation_key']}.json").read_bytes())
+    # Model a crash after the result write but before its completion event.
+    event_path = batch.out / "attempts" / f"{last['seq']:06d}.json"
+    event_path.chmod(0o644)
+    event_path.unlink()
+    events_before = rg.read_events(batch.out)
+    path = batch.out / saved["execution_receipt"]["logical_ref"]
+    path.chmod(0o644)
+    if damage == "valid":
+        before = {
+            p: p.read_bytes()
+            for folder in ("results", "receipts", "raw")
+            for p in (batch.out / folder).rglob("*")
+            if p.is_file()
+        }
+        assert rg.run(batch) == 0
+        assert rg.read_events(batch.out)[-1]["recovered"] is True
+        assert all(p.read_bytes() == content for p, content in before.items())
+    else:
+        if damage == "missing":
+            path.unlink()
+        else:
+            path.write_text('{"schema_version":"1"}')
+        with pytest.raises(rg.Refused, match="receipt"):
+            rg.run(batch)
+        assert rg.read_events(batch.out) == events_before

@@ -452,7 +452,7 @@ def _extra_slot(data):
         _extra_slot(_policy_dict()),
         _policy_dict(policy_version=""),
         _policy_dict(policy_version=1),
-        _policy_dict(policy_version="2"),
+        _policy_dict(policy_version="3"),
         _policy_dict(policy_version=None),
         _without_version(_policy_dict()),
         {"policy_version": "0", "approvals": []},
@@ -464,7 +464,7 @@ def _extra_slot(data):
         "extra_slot",
         "blank_version",
         "int_version",
-        "version_2",
+        "version_3",
         "null_version",
         "missing_version",
         "old",
@@ -481,7 +481,7 @@ def test_policy_the_current_schema_cannot_represent_is_unsupported(tmp_path, dat
 
 
 def test_unknown_version_is_refused_at_the_version_boundary(tmp_path):
-    content = canonical_json_bytes(_policy_dict(policy_version="2"))  # structure otherwise valid
+    content = canonical_json_bytes(_policy_dict(policy_version="3"))  # structure otherwise valid
     claimed = sha256_bytes(content)
     stub = stub_report(tmp_path, claimed)
     put(tmp_path, f"readiness/evidence/{claimed}.json", content)
@@ -500,9 +500,20 @@ def test_version_1_with_an_unsupported_structure_is_refused(tmp_path):
 
 def test_historical_version_1_does_not_follow_the_current_policy_version(fixture_root, monkeypatch):
     root, _, ready, _ = fixture_root
-    monkeypatch.setattr(approvals, "POLICY_VERSION", "2")
+    monkeypatch.setattr(approvals, "POLICY_VERSION", "future-version")
     assert read_historical(root, ready).decision == "READY"
-    assert publish.HISTORICAL_POLICY_VERSIONS == frozenset({"1"})
+    assert publish.HISTORICAL_POLICY_VERSIONS == frozenset({"1", "2"})
+
+
+def test_prospective_policy_retains_its_own_version_for_historical_readback(tmp_path):
+    policy = support.fixture_policy("2")
+    sha = publish_report(build(policy), tmp_path).report_sha256
+    result = read_historical(tmp_path, sha)
+    assert result.decision == "READY"
+    assert result.policy_sha256 == policy_sha256(policy)
+    assert (
+        json.loads(retained(tmp_path, result.policy_sha256).read_bytes())["policy_version"] == "2"
+    )
 
 
 def test_symlinked_retained_policy(fixture_root, tmp_path_factory):

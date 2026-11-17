@@ -1,0 +1,15 @@
+{
+  "schema_version": "analysis_seed_v1",
+  "name": "primary_bootstrap",
+  "value": 1572911995,
+  "resamples": 10000,
+  "method": "whole_paper_percentile",
+  "rng_algorithm": "Mersenne-Twister",
+  "normal_kind": "Inversion",
+  "sample_kind": "Rejection",
+  "experiment": "EXPERIMENT_PLAN sections 6-9",
+  "authority": "Rama Krishna Pudota",
+  "protocol_version": "researcher_authority_v1",
+  "decision_record_sha256": "71d19323f23a6d12ebec9a8e8d407abc8f9049957ac2e55cbd06e887b8f8fddb",
+  "registered_at_utc": "2026-11-17T16:48:48.354090Z"
+}

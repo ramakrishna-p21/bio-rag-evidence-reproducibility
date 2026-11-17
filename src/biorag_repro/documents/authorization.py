@@ -29,12 +29,14 @@ from biorag_repro.documents.ingestion import (
 from biorag_repro.documents.jats import TRANSFORMATION_ID as JATS_TRANSFORMATION
 from biorag_repro.documents.lineage import check_manifest_contract, runtime_settings
 from biorag_repro.documents.models import CanonicalDocument, Record
+from biorag_repro.documents.pdf import FIGURE_FOOTNOTE_TRANSFORMATION_ID, FOOTNOTE_TRANSFORMATION_ID
 from biorag_repro.documents.pdf import TRANSFORMATION_ID as PDF_TRANSFORMATION
 from biorag_repro.documents.pdf_ingest import (
     NATIVE_TRANSFORMATION,
     ConversionAttempt,
     PdfCanonicalBuild,
     canonical_build_ref,
+    is_footnote_recovery,
 )
 
 # Frozen scientific selection; neither value is human publication approval.
@@ -151,6 +153,20 @@ def validate_scientific_pair(
         authority.native_attempt.sha256,
         ConversionAttempt,
     )
+    pdf_report = read_project_json(
+        root / value.pdf_validation.logical_ref, value.pdf_validation.sha256, Phase4Validation
+    )
+    selected_pdf = read_project_json(
+        root / pdf_report.canonical_artifact.logical_ref,
+        pdf_report.canonical_artifact.sha256,
+        CanonicalDocument,
+    )
+    recovery = (
+        selected_pdf.transformation_id
+        in {FOOTNOTE_TRANSFORMATION_ID, FIGURE_FOOTNOTE_TRANSFORMATION_ID}
+        and pdf_report.canonical_build_artifact is not None
+        and is_footnote_recovery(attempt)
+    )
     if (
         authority.native_attempt.artifact_id != "attempt_" + attempt.attempt_id
         or authority.native_attempt.logical_ref != attempt.attempt_logical_ref
@@ -160,8 +176,8 @@ def validate_scientific_pair(
         or attempt.environment_sha256 != authority.environment_sha256
         or attempt.asset_inventory_sha256 != authority.asset_inventory_sha256
         or attempt.status != "success"
-        or attempt.build_status != "complete"
-        or attempt.errors
+        or (attempt.build_status != "complete" and not recovery)
+        or (attempt.errors and not recovery)
         or attempt.native_artifact is None
         or attempt.native_build_manifest is None
     ):
@@ -209,7 +225,13 @@ def validate_scientific_pair(
             report.canonical_artifact.sha256,
             CanonicalDocument,
         )
-        transform = JATS_TRANSFORMATION if arm == "JATS" else PDF_TRANSFORMATION
+        if arm == "PDF_DOCLING" and doc.transformation_id not in {
+            PDF_TRANSFORMATION,
+            FOOTNOTE_TRANSFORMATION_ID,
+            FIGURE_FOOTNOTE_TRANSFORMATION_ID,
+        }:
+            raise ValueError("unsupported canonical PDF adapter")
+        transform = JATS_TRANSFORMATION if arm == "JATS" else doc.transformation_id
         check_manifest_contract(
             report.build_manifest,
             root,
@@ -219,9 +241,9 @@ def validate_scientific_pair(
             "canonical_jats" if arm == "JATS" else "canonical_pdf_docling",
             transform,
             config if arm == "JATS" else settings,
-            "4",
+            doc.schema_version,
         )
-        if doc.schema_version != "4" or doc.transformation_id != transform:
+        if doc.transformation_id != transform:
             raise ValueError("canonical schema or adapter mismatch")
         build: JatsBuild | ConversionAttempt | PdfCanonicalBuild
         if arm == "JATS":
