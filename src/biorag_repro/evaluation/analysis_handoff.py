@@ -368,6 +368,9 @@ class AnalysisHandoff(Record):
     inventory: ArtifactRef
     roster: ArtifactRef
     scoring_reference: dict[str, str]
+    stage_a_review_protocols: dict[str, list[str]] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     csv_contract: CsvContract
     arms: list[ArmConfig] = Field(min_length=1)
     source_runs: list[SourceRun]
@@ -440,6 +443,7 @@ def _describe(
         inventory=outputs["analysis_inventory"],
         roster=outputs["planned_roster"],
         scoring_reference=inventory.scoring_reference,
+        stage_a_review_protocols=inventory.stage_a_review_protocols,
         csv_contract=derive_csv_contract(inventory),
         arms=[
             ArmConfig(

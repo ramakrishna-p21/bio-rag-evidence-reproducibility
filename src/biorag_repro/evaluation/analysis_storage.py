@@ -95,7 +95,13 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     roster_bytes = serialize_project_json(table.roster, PlannedRoster)
     roster_ref = _ref("planned_roster", "json", sha256_bytes(roster_bytes), canonical)
     inventory = make_inventory(
-        rows, csv_ref, table.roster, roster_ref, table.stage_c_rules, table.stage_b_rules
+        rows,
+        csv_ref,
+        table.roster,
+        roster_ref,
+        table.stage_c_rules,
+        table.stage_b_rules,
+        table.inputs,
     )
     inventory_bytes = serialize_project_json(inventory, AnalysisInventory)
     inventory_ref = _ref("analysis_inventory", "json", sha256_bytes(inventory_bytes), canonical)
@@ -248,6 +254,6 @@ def read_table(build: ArtifactRef, root: Path) -> list[AnalysisRow]:
     check_references(rows, manifest.inputs)
     roster = read_project_json(root / roster_ref.logical_ref, roster_ref.sha256, PlannedRoster)
     check_roster(rows, roster)
-    if inventory != make_inventory(rows, csv_ref, roster, roster_ref, *rules):
+    if inventory != make_inventory(rows, csv_ref, roster, roster_ref, *rules, manifest.inputs):
         raise ValueError("inventory differs from the table it describes")
     return rows

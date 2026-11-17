@@ -294,15 +294,23 @@ def environment(device: Any) -> dict:
     }
 
 
-def prospective_freeze_identity(raw_freeze: str, candidate_lock: bytes, git_head: str) -> dict:
+def prospective_freeze_identity(
+    raw_freeze: str,
+    candidate_lock: bytes,
+    git_head: str,
+    *,
+    packaging_root: Path | None = None,
+    packaging_reference: bytes | None = None,
+    project_root: Path | None = None,
+) -> dict:
     """Propose a path-independent batch identity without changing the current runner.
 
     The candidate lock's complete lines are compared independent of locale order.
-    Only the editable project locator is excluded from the proposed hash; its full
-    line remains provenance.
-    Nonlocal direct references remain exact. A local build reference needs an
-    independently approved content identity before a portable identity can be proposed;
-    its absolute path remains provenance and cannot stand in for package identity.
+    The editable project locator stays outside the portable hash. A verified local
+    build is represented by content identity; its exact raw line remains checked provenance.
+    Nonlocal direct references remain exact. The retained local packaging build needs
+    verified candidate content and an observed clean project revision. This produces
+    a review proposal, never approval or a reconstruction of historical installations.
     """
     try:
         locked = candidate_lock.decode("utf-8")
@@ -324,14 +332,43 @@ def prospective_freeze_identity(raw_freeze: str, candidate_lock: bytes, git_head
     dependencies = [line for line in lines if line != project]
     if sorted(dependencies) != sorted(locked.splitlines(keepends=True)):
         raise Refused("installed dependencies differ from the exact candidate lock")
-    if re.search(r"\s@\s*file:", locked, re.IGNORECASE):
-        raise Refused(
-            "portable identity requires an approved content identity for non-project local "
-            "build references; absolute paths are retained only as provenance"
+    local_lines = [line for line in dependencies if re.search(r"\s@\s*file:", line, re.IGNORECASE)]
+    verified_build = None
+    if local_lines:
+        if packaging_root is None or packaging_reference is None or project_root is None:
+            raise Refused(
+                "portable identity requires a verified candidate content identity and project "
+                "checkout for non-project local build references; activation still requires approval"
+            )
+        from biorag_repro.generation.environment import system_probes
+        from biorag_repro.generation.local_build import (
+            CANDIDATE_LOCK_SHA256,
+            verify_packaging_payload,
         )
+
+        if sha256_bytes(candidate_lock) != CANDIDATE_LOCK_SHA256:
+            raise Refused("local-build evidence requires the exact retained S1/S2 candidate lock")
+
+        observed = system_probes(project_root).git()
+        if observed.status != "ok" or observed.dirty or observed.commit != git_head:
+            raise Refused("project checkout is not the exact clean reviewed revision")
+        try:
+            verified_build = verify_packaging_payload(packaging_root, packaging_reference)
+        except ValueError as error:
+            raise Refused(str(error)) from error
+        if local_lines != [f"packaging @ {verified_build['source_url']}\n"]:
+            raise Refused("local dependency reference differs from the verified packaging build")
+    elif packaging_root is not None or packaging_reference is not None:
+        raise Refused("packaging evidence is unrelated to this lock")
+    requirements = [
+        {"local_build": verified_build["identity"]}
+        if line in local_lines
+        else {"requirement": line.rstrip("\n")}
+        for line in sorted(dependencies)
+    ]
     portable = {
         "rule": "prospective_freeze_identity_v1",
-        "candidate_lock_sha256": sha256_bytes(candidate_lock),
+        "dependency_identity_sha256": sha256_bytes(canonical_json_bytes(requirements)),
         "project_revision": git_head,
     }
     return {
@@ -343,6 +380,8 @@ def prospective_freeze_identity(raw_freeze: str, candidate_lock: bytes, git_head
         "raw_freeze_sha256": sha256_bytes(raw_freeze.encode()),
         "editable_install": project.rstrip("\n"),
         "git_head": git_head,
+        "local_build_verification": verified_build,
+        "approved_for_execution": False,
     }
 
 
@@ -1630,6 +1669,9 @@ def main(argv: list[str] | None = None) -> None:
     proposed.add_argument("--freeze", type=Path, required=True)
     proposed.add_argument("--candidate-lock", type=Path, required=True)
     proposed.add_argument("--git-head", required=True)
+    proposed.add_argument("--packaging-root", type=Path)
+    proposed.add_argument("--packaging-reference", type=Path)
+    proposed.add_argument("--project-root", type=Path)
     proposed.add_argument("--out", type=Path, required=True)
     for name in ("seal", "verify"):
         sub = commands.add_parser(name)
@@ -1660,6 +1702,11 @@ def main(argv: list[str] | None = None) -> None:
             args.freeze.read_text(encoding="utf-8"),
             args.candidate_lock.read_bytes(),
             args.git_head,
+            packaging_root=args.packaging_root,
+            packaging_reference=args.packaging_reference.read_bytes()
+            if args.packaging_reference
+            else None,
+            project_root=args.project_root,
         )
         write_once(args.out, dump(record))
         print(f"candidate identity sha256 {sha256_file(args.out)}; not approved for execution")

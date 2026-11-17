@@ -10,6 +10,7 @@ import io
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, get_args
 
 from biorag_repro.benchmark.development_view import DevelopmentView, check_development_items
@@ -42,9 +43,12 @@ from biorag_repro.evaluation.analysis_models import (
     column_type,
 )
 from biorag_repro.evaluation.attribution import A_FAILED, Execution, attribute
-from biorag_repro.evaluation.models import StageAJudgment
-from biorag_repro.evaluation.stage_a import item_digest, stage_a_ref
-from biorag_repro.evaluation.stage_a import validate_judgment as validate_stage_a
+from biorag_repro.evaluation.stage_a import item_digest
+from biorag_repro.evaluation.stage_a_retrospective import Judgment as StageAJudgment
+from biorag_repro.evaluation.stage_a_retrospective import judgment_ref as stage_a_ref
+from biorag_repro.evaluation.stage_a_retrospective import (
+    validate_scientific_judgment as validate_stage_a,
+)
 from biorag_repro.evaluation.stage_b import Inputs, stage_b_ref
 from biorag_repro.evaluation.stage_b import validate_judgment as validate_stage_b
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
@@ -106,6 +110,7 @@ class Evidence:
     stage_a: StageAJudgment
     stage_b: StageBJudgment | None = None
     b_inputs: Inputs | None = None  # the records Stage B was judged from
+    stage_a_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -138,7 +143,9 @@ def _check_evidence(obs: Observation, evidence: Evidence) -> None:
     item = obs.item
     if evidence.document.representation != obs.condition:
         raise ValueError("evidence is for another representation than the observation's")
-    validate_stage_a(evidence.stage_a, item, evidence.document, evidence.canonical)
+    validate_stage_a(
+        evidence.stage_a, item, evidence.document, evidence.canonical, evidence.stage_a_root
+    )
     b, inputs = evidence.stage_b, evidence.b_inputs
     if b is None:
         if inputs is not None:
@@ -590,6 +597,24 @@ def parse_csv(data: bytes) -> list[AnalysisRow]:
 # ---- inventory -----------------------------------------------------------------------------
 
 
+def stage_a_review_protocols(inputs: list[BuildInput]) -> dict[str, list[str]] | None:
+    """Report record provenance without changing scientific labels or row denominators."""
+    protocols: dict[str, list[str]] = defaultdict(list)
+    for entry in inputs:
+        if entry.role == "stage_a_judgment":
+            protocol = (
+                "researcher_approved_retrospective_transcription_v1"
+                if entry.artifact.logical_ref.startswith(
+                    "evaluation/stage_a/stage_a_retrospective/"
+                )
+                else "legacy_stage_a_judgment_v1"
+            )
+            protocols[protocol].append(entry.artifact.artifact_id)
+    if "researcher_approved_retrospective_transcription_v1" not in protocols:
+        return None
+    return {p: sorted(set(ids)) for p, ids in sorted(protocols.items())}
+
+
 def make_inventory(
     rows: list[AnalysisRow],
     csv_ref: ArtifactRef,
@@ -597,6 +622,7 @@ def make_inventory(
     roster_ref: ArtifactRef,
     stage_c_rules: str = "v1",
     stage_b_rules: str = "v1",
+    inputs: list[BuildInput] | None = None,
 ) -> AnalysisInventory:
     counts: dict[str, int] = defaultdict(int)
     open_rows = []
@@ -636,6 +662,7 @@ def make_inventory(
         planned_observations=len(roster.coordinates()),
         executed_observations=sum(r.execution_status != "planned_not_executed" for r in rows),
         scoring_reference=scoring_reference(stage_c_rules, stage_b_rules),
+        stage_a_review_protocols=stage_a_review_protocols(inputs or []),
         columns=[
             ColumnSpec(name=n, type=_TYPES[n], nullable=n in _NULLABLE)  # type: ignore[arg-type]
             for n in COLUMNS

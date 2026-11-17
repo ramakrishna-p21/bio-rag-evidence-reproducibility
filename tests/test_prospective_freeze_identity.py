@@ -6,11 +6,8 @@ from biorag_repro.core.hashing import sha256_bytes
 from scripts.run_generation import Refused, main, prospective_freeze_identity
 
 HEAD = "f371d0da83a37843212074094b62be1522f0fc74"
-LOCK = (
-    b"numpy==2.4.6\n"
-    b"packaging @ https://example.invalid/dist/packaging.whl#sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
-    b"torch==2.15.0+cu132\n"
-)
+# Minimal nonlocal lock for unit calculation tests; not evidence for the qualified environment.
+LOCK = b"numpy==2.4.6\ntorch==2.15.0+cu132\n"
 
 
 def freeze(path: str, lock: bytes = LOCK, head: str = HEAD) -> str:
@@ -90,7 +87,7 @@ def test_proposal_command_writes_only_a_candidate_record(tmp_path):
     "raw,lock,head",
     [
         (freeze("/drive", LOCK.replace(b"torch==2.15.0+cu132", b"torch==2.16.0")), LOCK, HEAD),
-        (freeze("/drive", LOCK.replace(b"dist/packaging.whl", b"other/packaging.whl")), LOCK, HEAD),
+        (freeze("/drive", LOCK + b"unexpected==1\n"), LOCK, HEAD),
         (freeze("/drive", head="0" * 40), LOCK, HEAD),
         (LOCK.decode(), LOCK, HEAD),
         (freeze("/drive") + "-e git+file:///other@" + HEAD + "#egg=biorag_repro\n", LOCK, HEAD),
@@ -105,5 +102,5 @@ def test_local_build_path_cannot_supply_a_portable_package_identity():
     local = b"packaging @ file:///host/build/work\n"
     moved = b"packaging @ file:///another/host/build/work\n"
     for lock in (local, moved):
-        with pytest.raises(Refused, match="approved content identity"):
+        with pytest.raises(Refused, match="candidate content identity"):
             prospective_freeze_identity(freeze("/drive", lock), lock, HEAD)

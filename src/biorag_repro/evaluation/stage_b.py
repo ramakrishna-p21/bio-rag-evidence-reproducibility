@@ -7,13 +7,18 @@ Nothing here reads generator output or benchmark gold.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.documents.models import CanonicalDocument
-from biorag_repro.evaluation.models import Placement, StageAJudgment
-from biorag_repro.evaluation.stage_a import _blocking, _spans, item_digest, stage_a_ref
-from biorag_repro.evaluation.stage_a import validate_judgment as validate_stage_a
+from biorag_repro.evaluation.models import Placement
+from biorag_repro.evaluation.stage_a import _blocking, _spans, item_digest
+from biorag_repro.evaluation.stage_a_retrospective import Judgment
+from biorag_repro.evaluation.stage_a_retrospective import judgment_ref as stage_a_ref
+from biorag_repro.evaluation.stage_a_retrospective import (
+    validate_scientific_judgment as validate_stage_a,
+)
 from biorag_repro.evaluation.stage_b_models import (
     ComponentSpan,
     Delivered,
@@ -52,13 +57,14 @@ class Inputs:
 
     item: BenchmarkItem
     document: CanonicalDocument
-    stage_a: StageAJudgment
+    stage_a: Judgment
     context: ContextRecord
     ranked: RankedRetrieval
     chunk_set: ChunkSet
     chunks: dict[str, Chunk]
     canonical: ArtifactRef
     context_ref: ArtifactRef
+    stage_a_root: Path | None = None
 
 
 @dataclass
@@ -75,7 +81,7 @@ class Supplied:
 
 def _verify(i: Inputs) -> Supplied:
     item, ctx, ranked = i.item, i.context, i.ranked
-    validate_stage_a(i.stage_a, item, i.document, i.canonical)
+    validate_stage_a(i.stage_a, item, i.document, i.canonical, i.stage_a_root)
     if (
         i.chunk_set.input.canonical != i.canonical
         or i.chunk_set.input.paper_id != item.paper_id

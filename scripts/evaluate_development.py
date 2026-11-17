@@ -39,7 +39,7 @@ from biorag_repro.evaluation.analysis_table import (
     serialize_csv,
 )
 from biorag_repro.evaluation.seeds import APPROVED_REGISTRY_SHA256, read_analysis_seed
-from biorag_repro.evaluation.stage_a_storage import read_judgment
+from biorag_repro.evaluation.stage_a_retrospective import read_judgment
 from biorag_repro.evaluation.stage_b_storage import (
     publish_candidate,
     publish_judgment,
@@ -170,7 +170,16 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                 indexes[ranked.index.artifact_id] = chunks, sets
             chunks, sets = indexes[ranked.index.artifact_id]
             b_inputs = stage_b.Inputs(
-                item, document, a, context, ranked, sets[item.paper_id], chunks, canonical, cref
+                item,
+                document,
+                a,
+                context,
+                ranked,
+                sets[item.paper_id],
+                chunks,
+                canonical,
+                cref,
+                args.review_root,
             )
             b_key = (result.item_id, result.matrix_arm, result.representation_or_condition)
             if b_key in b_cache and b_cache[b_key] is None:
@@ -213,7 +222,7 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                     else:
                         raise generation.Refused("published Stage B judgment is missing")
                 b_cache[b_key] = b
-            evidence = Evidence(document, canonical, a, b_cache[b_key], b_inputs)
+            evidence = Evidence(document, canonical, a, b_cache[b_key], b_inputs, args.review_root)
             if result.status == "completed":
                 stored = json.loads(
                     (args.out / "results" / f"{result.observation_key}.json").read_bytes()

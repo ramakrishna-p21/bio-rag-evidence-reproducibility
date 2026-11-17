@@ -383,6 +383,9 @@ class AnalysisInventory(Record):
     missing_token: str
     primary_repeat_index: int
     scoring_reference: dict[str, str]
+    stage_a_review_protocols: dict[str, list[str]] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     columns: list[ColumnSpec]
     primary_selection: str
     scope: Scope
