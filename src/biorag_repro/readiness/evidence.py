@@ -16,10 +16,10 @@ check that produces them:
   frozen specification file. The specifications are Git-ignored local files, so Git cleanliness
   says nothing about them; their bytes are hashed here and compared only with an approved
   reference.
-* G03: the canonical content of a final-test freeze record.
+* G03/G04/G05: the prospective production and retained qualification readers live in
+  `readiness/production.py` and are called by `evaluate.gather_all`.
 
-G04, G05, G07, G08, G10, G11 and G12 have no verifiable subject yet. They are `absent`
-(pending) and say what is missing. G13 is the one adapter that reads the policy: it takes the
+G08, G10, G11 and G12 retain their own prerequisite states. G13 is the one adapter that reads the policy: it takes the
 G11 storage-authorization slot as the source of the expected root identity and verifies the
 final-test root against that approved artifact (`finaltest.inventory.verify_root`). With the
 slot unset, or without the artifact it names, G13 is `unavailable`; nothing found on disk and
@@ -625,10 +625,43 @@ def r_environment(ctx: Context) -> Gathered:
         out.state, out.reason = "failed", "installed_r_packages_differ_from_lock"
         out.detail = f"{len(differing)} packages differ"
     else:
-        out.detail = (
-            "installed R packages match the lock; the official analysis host and workflow "
-            "are not designated, and a local restore does not authorize one"
-        )
+        from biorag_repro.readiness.production import host_designation
+
+        try:
+            designation = host_designation(ctx, sources, sha256_bytes(lock_bytes))
+        except FileMissing as error:
+            out.state, out.reason, out.detail = "absent", "analysis_designation_missing", str(error)
+        except (FileProblem, ValueError, KeyError, OSError) as error:
+            out.state, out.reason, out.detail = (
+                "failed",
+                "analysis_designation_invalid",
+                str(error)[:300],
+            )
+        else:
+            designation_bytes = read_regular(
+                ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
+            )
+            out.refs.append(
+                file_ref(
+                    "analysis_designation",
+                    "repo/docs/reports/g07_researcher_designation_evidence_2026_11_20.json",
+                    designation_bytes,
+                )
+            )
+            out.state, out.reason = "ok", "checks_passed"
+            out.subject = {
+                "kind": "designated_analysis_environment_v1",
+                "designation_sha256": sha256_bytes(designation_bytes),
+                "host": designation["designation"]["host"],
+                "renv_lock_sha256": sha256_bytes(lock_bytes),
+                "analysis_sources_sha256": sources,
+                "r_version": observed["rversion"],
+                "packages": observed["packages"],
+                "blas_execution_pin": {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"},
+            }
+            out.detail = (
+                "designated host and locked runtime match; no official analysis execution claimed"
+            )
     return out
 
 

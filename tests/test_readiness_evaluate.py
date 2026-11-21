@@ -23,17 +23,17 @@ def test_real_policy_gives_a_complete_not_ready_report(world):
     report = result.report
     assert report.decision == "NOT_READY"
     assert [g.gate_id for g in report.gates] == list(MANDATORY_GATES)
-    assert len(report.blockers) == 13  # nothing passes: no approval exists
+    assert len(report.blockers) == 13  # fixture identities differ from the real approvals
     got = statuses(report)
-    assert got["G01_corpus_sources"] == ("pending", "verified_pending_policy_approval")
-    assert got["G02_benchmark_freeze"] == ("pending", "verified_pending_policy_approval")
-    assert got["G09_scientific_source_revision"][0] == "pending"
+    assert got["G01_corpus_sources"] == ("failed", "policy_mismatch")
+    assert got["G02_benchmark_freeze"] == ("failed", "policy_mismatch")
+    assert got["G09_scientific_source_revision"][0] == "failed"
     assert got["G13_final_test_history_integrity"] == (
         "unavailable",
         "final_test_inventory_authority_not_established",
     )
     assert report.policy_sha256 == policy_sha256(REAL_POLICY)
-    assert all(v is None for v in REAL_POLICY.slots.model_dump().values())
+    assert REAL_POLICY.slots.final_test_freeze is None
 
 
 def test_candidate_records_what_was_read(world):
@@ -120,7 +120,7 @@ def test_an_adapter_that_crashes_is_an_evaluation_error_not_not_ready(world, mon
     def crash():
         raise TypeError("bug")
 
-    monkeypatch.setattr(evidence, "generator_qualification", crash)
+    monkeypatch.setattr("biorag_repro.readiness.production.qualification", lambda ctx: crash())
     with pytest.raises(EvaluationError):
         evaluate(world.ctx, REAL_POLICY)
 

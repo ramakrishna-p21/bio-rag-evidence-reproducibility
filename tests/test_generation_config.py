@@ -199,6 +199,23 @@ def test_development_candidate_requires_the_official_checkpoint():
             resolve(broken)
 
 
+def test_scoring_v2_preserves_qualified_generator_controls():
+    from pathlib import Path
+
+    from biorag_repro.generation.config import require_qualified_settings
+
+    settings = resolve_generator_config(
+        (Path(__file__).parent / "fixtures/qualified_generator.toml").read_bytes()
+    ).settings
+    require_qualified_settings(settings.model_copy(update={"scoring_version": "stage_c_rules_v2"}))
+    with pytest.raises(ValueError, match="qualified settings"):
+        require_qualified_settings(
+            settings.model_copy(
+                update={"scoring_version": "stage_c_rules_v2", "retry_max_attempts": 4}
+            )
+        )
+
+
 def test_synthetic_identity_never_equals_a_candidate_identity():
     candidate = synthetic_settings()
     candidate["purpose"] = "development_candidate"

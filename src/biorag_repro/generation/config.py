@@ -158,6 +158,11 @@ def require_qualified_settings(settings: GeneratorConfiguration) -> None:
     from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 
     value = settings.model_dump()
+    if settings.scoring_version not in {"stage_c_rules_v1", "stage_c_rules_v2"}:
+        raise ValueError("scoring rule is not an approved configuration identity")
+    # Phase 7 qualified generation, not later scoring. All other controls retain the
+    # exact qualified identity after normalizing the arm's validated retrieval cell.
+    value["scoring_version"] = "stage_c_rules_v1"
     if settings.matrix_arm == "closed_book":
         expected = QUALIFIED_CLOSED_BOOK_SHA256
     else:

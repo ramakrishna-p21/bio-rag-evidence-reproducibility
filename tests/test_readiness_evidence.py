@@ -85,9 +85,9 @@ def test_g01_altered_release_record_fails(world):
     assert gathered(world, "G01_corpus_sources").state == "failed"
 
 
-def test_g01_self_consistent_but_unapproved_stays_pending(world):
+def test_g01_self_consistent_fixture_differs_from_real_approval(world):
     result = to_result("G01_corpus_sources", gathered(world, "G01_corpus_sources"), REAL_POLICY)
-    assert result.status == "pending" and result.reason_code == "verified_pending_policy_approval"
+    assert result.status == "failed" and result.reason_code == "policy_mismatch"
 
 
 # ---- G02 ----------------------------------------------------------------------------------
@@ -262,7 +262,7 @@ def test_g06_approved_lock_that_differs_from_the_machine_fails(world, monkeypatc
 
 def test_g07_matching_runtime_stays_pending_because_no_host_is_designated(world):
     g = gathered(world, "G07_r_analysis_environment")
-    assert (g.state, g.reason) == ("absent", "analysis_host_not_designated")
+    assert (g.state, g.reason) == ("absent", "analysis_designation_missing")
     kinds = {r.kind for r in g.refs}
     assert {"renv_lock", "analysis_sources", "r_inspection"} <= kinds
 
@@ -425,9 +425,9 @@ def test_g09_not_a_repository_is_unavailable(world, tmp_path):
 # ---- the gates with no evidence yet -------------------------------------------------------
 
 NO_EVIDENCE = {
-    "G03_final_test_configuration_freeze": "final_test_freeze_absent",
-    "G04_generator_qualification": "independent_phase7_evidence_absent",
-    "G05_model_parser_identities": "checkpoint_and_parser_identities_not_approved",
+    "G03_final_test_configuration_freeze": "production_freeze_evidence_missing",
+    "G04_generator_qualification": "qualification_evidence_missing",
+    "G05_model_parser_identities": "model_parser_evidence_missing",
     "G10_development_restart_recovery": "official_restart_evidence_absent",
     "G12_shared_gpu_authorization": "gpu_authorization_absent",
 }
@@ -605,4 +605,4 @@ def test_g07_recognises_the_project_library_when_the_repository_is_given_as_a_re
     ctx = world.probes(r_runtime=lambda d, p: out)
     ctx = replace(ctx, repo=pathlib.Path("."))
     g = evidence.r_environment(ctx)
-    assert g.reason == "analysis_host_not_designated", g.detail
+    assert g.reason == "analysis_designation_missing", g.detail
