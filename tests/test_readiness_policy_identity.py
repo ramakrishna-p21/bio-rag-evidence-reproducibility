@@ -97,8 +97,12 @@ def test_real_policy_has_only_reviewed_slots_approved():
     assert {name: value for name, value in slots.items() if value is not None} == {
         "corpus_identity": "f51b52e3cd5e0700575d0dda3394de26e2fd5a5314e09051e27feac1422a3768",
         "benchmark_identity": "a7d4c33e7a51a6339ce0891961e46035ede4f865f6584e7fdcb710e3f7d1dd49",
+        "final_test_freeze": "295d1d1187b37f27ea02f7ebb9d9fca4c0cc572206a85f70e1b98870f7f10c5a",
+        "generator_qualification_acceptance": "81b66267e36b52baf9f070195edda9a0f1e08a1315844624cbe736e103b350da",
+        "model_parser_identities": "f0a172490f0c37ef2e424a556647b17147abe4f4c9456e1f28652c0480e6af6c",
+        "analysis_environment": "132740d42b76935589c6fab1fb3da93fc0462b37a594461361ed030eb44f181f",
         "seed_approvals": "07c518097c6dd56142a10c44d1635f5986a7b0c51f17557379463ab9725a921a",
-        "scientific_source_identity": "57e259559b59ee9bcdb90cda2b804fa9952362f7a07afeaf52af50a2b7c439cd",
+        "scientific_source_identity": "c1e40b84d7863386a834fd5922b4d99c6474e4f730c5c4225952e2caaa5c6d3c",
     }
 
 

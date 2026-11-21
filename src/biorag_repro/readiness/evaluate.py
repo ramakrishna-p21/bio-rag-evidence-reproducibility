@@ -107,7 +107,7 @@ def gather_all(
         "G09_scientific_source_revision": source,
         "G10_development_restart_recovery": evidence.restart_recovery(),
         "G11_storage_authorization": evidence.storage_authorization(ctx, policy),
-        "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(),
+        "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(ctx),
         "G13_final_test_history_integrity": evidence.history_integrity(ctx, policy),
     }
 

@@ -108,6 +108,7 @@ def build_repo(root: Path) -> tuple[Path, str]:
         "AMENDMENT_STAGE_B_HISTORICAL_CONTEXT_READBACK_V1.md",
         "AMENDMENT_STAGE_B_HISTORICAL_PROVENANCE_V1.md",
         "DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md",
+        "G12_COLAB_CAMPAIGN_AMENDMENT_V1.md",
     ):
         write(repo / f"docs/frozen/{name}", f"frozen {name}\n")
     git(repo, "add", "-A")

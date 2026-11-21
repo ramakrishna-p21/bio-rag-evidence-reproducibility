@@ -33,7 +33,7 @@ def test_real_policy_gives_a_complete_not_ready_report(world):
         "final_test_inventory_authority_not_established",
     )
     assert report.policy_sha256 == policy_sha256(REAL_POLICY)
-    assert REAL_POLICY.slots.final_test_freeze is None
+    assert REAL_POLICY.slots.final_test_freeze is not None
 
 
 def test_candidate_records_what_was_read(world):

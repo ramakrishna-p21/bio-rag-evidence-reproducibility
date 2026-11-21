@@ -22,7 +22,7 @@ def ok():
 
 
 def test_valid_evidence_with_unset_slot_is_pending_and_keeps_the_observed_subject():
-    result = to_result(GATE, ok(), REAL_POLICY)
+    result = to_result(GATE, ok(), with_slot(None))
     assert (result.status, result.verification) == ("pending", "unverified")
     assert result.reason_code == "verified_pending_policy_approval"
     assert result.expected_sha256 is None
@@ -30,8 +30,9 @@ def test_valid_evidence_with_unset_slot_is_pending_and_keeps_the_observed_subjec
 
 
 def test_observed_subject_is_not_written_into_the_policy():
+    before = REAL_POLICY.slots.corpus_identity
     to_result(GATE, ok(), REAL_POLICY)
-    assert REAL_POLICY.slots.corpus_identity is None
+    assert REAL_POLICY.slots.corpus_identity == before
 
 
 def test_populated_slot_equal_to_subject_passes():

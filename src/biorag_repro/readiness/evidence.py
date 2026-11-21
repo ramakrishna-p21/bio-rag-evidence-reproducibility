@@ -30,6 +30,7 @@ import json
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -80,6 +81,13 @@ from biorag_repro.readiness.policy import ApprovalPolicy
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
 BENCHMARK_RELEASE = "benchmark/releases/benchmark_v1/release_record.json"
+GPU_ATTESTATION = "readiness/attestations/g12_researcher_guidance_v1.json"
+GPU_OPERATIONAL = "readiness/attestations/g12_operational_v1.json"
+GPU_CAMPAIGN_DECISION = "readiness/decisions/campaign_storage_decision_2026_11_20.json"
+GPU_AMENDMENT = "docs/frozen/G12_COLAB_CAMPAIGN_AMENDMENT_V1.md"
+GPU_AMENDMENT_SHA256 = "a648376654cfa3925f3ee6acb6ffadc12e14130e266cb49f7924e540cb67d6f8"
+GPU_G11_SHA256 = "0f7d387ac1d7d62e34a846ab3fb32dc8de8d6517ee7019a44a382af56c6922af"
+GPU_CAMPAIGN_DECISION_SHA256 = "508c5f0c4431131b97eb80f00b13a8bcf7769c7ec5ae8dddf738477c64dba9ce"
 FROZEN_SPECIFICATIONS = (
     "SCIENTIFIC_CONTRACT.md",
     "ARCHITECTURE.md",
@@ -93,6 +101,7 @@ FROZEN_SPECIFICATIONS = (
     "AMENDMENT_STAGE_B_HISTORICAL_CONTEXT_READBACK_V1.md",
     "AMENDMENT_STAGE_B_HISTORICAL_PROVENANCE_V1.md",
     "DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md",
+    "G12_COLAB_CAMPAIGN_AMENDMENT_V1.md",
 )
 ENVIRONMENT_SPEC = "configs/environment.toml"
 RENV_LOCK = "analysis/renv.lock"
@@ -389,11 +398,167 @@ def storage_authorization(
     return out
 
 
-def shared_gpu_authorization() -> Gathered:
-    return _absent(
-        "gpu_authorization_absent",
-        "shared-GPU use",
-        "no advisor or administrator authorization; local hardware is not an approval",
+def shared_gpu_authorization(ctx: Context | None = None) -> Gathered:
+    scope = "amended Colab L4 campaign GPU and material authorization"
+    if ctx is None:
+        return _absent("gpu_authorization_absent", scope, "no attestation context")
+    try:
+        amendment = read_regular(ctx.repo, GPU_AMENDMENT, max_bytes=16_384)
+        data = read_regular(ctx.data_root, GPU_ATTESTATION, max_bytes=16_384)
+    except FileMissing:
+        return _absent(
+            "gpu_authorization_absent", scope, "amendment or advisor attestation is missing"
+        )
+    except FileProblem as error:
+        return Gathered("failed", "gpu_attestation_unusable", scope, str(error)[:300])
+    if sha256_bytes(amendment) != GPU_AMENDMENT_SHA256:
+        return Gathered("failed", "gpu_amendment_changed", scope)
+    try:
+        value = loads_strict(data)
+        required = {
+            "schema_version",
+            "researcher",
+            "attested_on",
+            "advisor",
+            "source",
+            "guidance",
+            "condition",
+            "colab_gpu_use",
+            "restartable_batches",
+            "study_material_placement",
+        }
+        if not isinstance(value, dict) or set(value) != required:
+            raise ValueError("attestation fields differ")
+        if (
+            value["schema_version"] != "g12_researcher_guidance_v1"
+            or value["researcher"] != "Rama Krishna Pudota"
+            or value["advisor"] != "Professor William Andreopoulos"
+            or value["source"] != "researcher_reported_verbal_guidance"
+            or value["guidance"] != "conditional_support_for_colab"
+            or value["condition"] != "scientifically_valid_and_defensible"
+            or type(value["attested_on"]) is not str
+            or date.fromisoformat(value["attested_on"]).isoformat() != value["attested_on"]
+            or date.fromisoformat(value["attested_on"]) > datetime.now(UTC).date()
+            or value["colab_gpu_use"] is not True
+            or value["restartable_batches"] is not None
+            or value["study_material_placement"] is not None
+        ):
+            raise ValueError("attestation identity or scope is invalid")
+        if data != canonical_json_bytes(value):
+            raise ValueError("attestation is not canonical JSON")
+    except (ValueError, TypeError, KeyError) as error:
+        return Gathered("failed", "gpu_attestation_invalid", scope, str(error)[:300])
+    refs = [
+        file_ref("gpu_campaign_amendment", "repo/" + GPU_AMENDMENT, amendment),
+        file_ref("gpu_researcher_attestation", "data/" + GPU_ATTESTATION, data),
+    ]
+    try:
+        operational_bytes = read_regular(ctx.data_root, GPU_OPERATIONAL, max_bytes=16_384)
+    except FileMissing:
+        return Gathered("absent", "gpu_operational_authorization_absent", scope, refs=refs)
+    except FileProblem as error:
+        return Gathered(
+            "failed", "gpu_operational_authorization_unusable", scope, str(error)[:300], refs=refs
+        )
+    refs.append(
+        file_ref(
+            "gpu_researcher_operational_decision", "data/" + GPU_OPERATIONAL, operational_bytes
+        )
+    )
+    try:
+        campaign_bytes = read_regular(ctx.data_root, GPU_CAMPAIGN_DECISION, max_bytes=16_384)
+        storage_bytes = read_regular(
+            ctx.data_root, f"{STORAGE_APPROVALS}/{GPU_G11_SHA256}.json", max_bytes=16_384
+        )
+        campaign = loads_strict(campaign_bytes)
+        if (
+            not isinstance(campaign, dict)
+            or campaign_bytes != canonical_json_bytes(campaign)
+            or sha256_bytes(campaign_bytes) != GPU_CAMPAIGN_DECISION_SHA256
+            or sha256_bytes(storage_bytes) != GPU_G11_SHA256
+            or campaign.get("campaign_id") != "rk_capstone_final_test_2026"
+            or campaign.get("drive_root") != "/content/drive/MyDrive/RK_Capstone_Final_2026"
+            or campaign.get("execution_root") != "/content/rk_capstone_final_2026"
+            or campaign.get("custody_root")
+            != "/home/ramakrishnap/colab_transfer/official_custody_heads"
+            or campaign.get("g11_authorization_sha256") != GPU_G11_SHA256
+        ):
+            raise ValueError("campaign or storage decision changed")
+        operational = loads_strict(operational_bytes)
+        required = {
+            "schema_version",
+            "researcher",
+            "attested_on",
+            "campaign_id",
+            "platform",
+            "gpu_model",
+            "execution_root",
+            "drive_root",
+            "custody_root",
+            "g11_authorization_sha256",
+            "campaign_storage_decision_sha256",
+            "restartable_batches_authorized",
+            "restricted_material_authorized",
+            "external_restrictions_status",
+        }
+        if not isinstance(operational, dict) or set(operational) != required:
+            raise ValueError("operational fields differ")
+        if (
+            operational["schema_version"] != "g12_operational_v1"
+            or operational["researcher"] != "Rama Krishna Pudota"
+            or type(operational["attested_on"]) is not str
+            or date.fromisoformat(operational["attested_on"]).isoformat()
+            != operational["attested_on"]
+            or date.fromisoformat(operational["attested_on"]) > datetime.now(UTC).date()
+            or operational["campaign_id"] != "rk_capstone_final_test_2026"
+            or operational["platform"] != "researcher_controlled_colab_pro"
+            or operational["gpu_model"] != "NVIDIA L4"
+            or operational["execution_root"] != "/content/rk_capstone_final_2026"
+            or operational["drive_root"] != "/content/drive/MyDrive/RK_Capstone_Final_2026"
+            or operational["custody_root"]
+            != "/home/ramakrishnap/colab_transfer/official_custody_heads"
+            or operational["g11_authorization_sha256"] != GPU_G11_SHA256
+            or operational["campaign_storage_decision_sha256"] != GPU_CAMPAIGN_DECISION_SHA256
+            or operational["restartable_batches_authorized"] is not True
+            or operational["restricted_material_authorized"] is not True
+            or operational["external_restrictions_status"]
+            not in ("pending_account_specific_review", "confirmed_compliant", "conflict")
+            or operational_bytes != canonical_json_bytes(operational)
+        ):
+            raise ValueError("operational identity or scope is invalid")
+    except (FileProblem, ValueError, TypeError, KeyError) as error:
+        return Gathered(
+            "failed", "gpu_operational_authorization_invalid", scope, str(error)[:300], refs=refs
+        )
+    refs.extend(
+        [
+            file_ref(
+                "gpu_campaign_storage_decision", "data/" + GPU_CAMPAIGN_DECISION, campaign_bytes
+            ),
+            file_ref(
+                "gpu_storage_authorization",
+                "data/" + f"{STORAGE_APPROVALS}/{GPU_G11_SHA256}.json",
+                storage_bytes,
+            ),
+        ]
+    )
+    if operational["external_restrictions_status"] == "conflict":
+        return Gathered("failed", "gpu_external_restriction_conflict", scope, refs=refs)
+    if operational["external_restrictions_status"] != "confirmed_compliant":
+        return Gathered("absent", "gpu_external_restrictions_unconfirmed", scope, refs=refs)
+    return Gathered(
+        "ok",
+        "checks_passed",
+        scope,
+        subject={
+            "campaign_id": operational["campaign_id"],
+            "amendment_sha256": sha256_bytes(amendment),
+            "advisor_attestation_sha256": sha256_bytes(data),
+            "researcher_operational_sha256": sha256_bytes(operational_bytes),
+            "g11_authorization_sha256": GPU_G11_SHA256,
+            "campaign_storage_decision_sha256": GPU_CAMPAIGN_DECISION_SHA256,
+        },
+        refs=refs,
     )
 
 

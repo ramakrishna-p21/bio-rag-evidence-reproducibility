@@ -350,7 +350,7 @@ def test_g09_clean_tree_records_tracked_and_frozen_identities(world):
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and g.facts["head_sha"] == world.commit
     names = {r.locator for r in g.refs if r.kind == "frozen_specification"}
-    assert len(names) == 12 and all(n.startswith("repo/docs/frozen/") for n in names)
+    assert len(names) == 13 and all(n.startswith("repo/docs/frozen/") for n in names)
     assert g.subject["frozen_specifications"]["ARCHITECTURE.md"] == sha256_bytes(
         b"frozen ARCHITECTURE\n"
     )
@@ -481,7 +481,7 @@ def test_g03_reads_a_future_freeze_record_without_creating_one():
         policy_version="t", slots=ApprovalSlots(final_test_freeze=subject_digest(g))
     )
     assert to_result("G03_final_test_configuration_freeze", g, policy).status == "passed"
-    assert to_result("G03_final_test_configuration_freeze", g, REAL_POLICY).status == "pending"
+    assert to_result("G03_final_test_configuration_freeze", g, REAL_POLICY).status == "failed"
 
 
 @pytest.mark.parametrize(
