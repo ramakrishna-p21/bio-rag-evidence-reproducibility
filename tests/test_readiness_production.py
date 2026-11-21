@@ -1,5 +1,6 @@
 """Prospective production identities and fail-closed retained evidence readers."""
 
+import json
 from pathlib import Path
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -14,12 +15,49 @@ def context():
     return system_context(REPO, REPO / "artifacts")
 
 
-def test_g03_scoring_only_change_is_provisional_and_exact():
+def test_g03_requires_authenticated_executable_source(monkeypatch):
     ctx = context()
-    out = production.production_freeze(ctx, evidence.scientific_source(ctx))
-    assert (out.state, out.reason) == ("absent", "production_source_revision_pending")
-    assert out.subject is None
-    assert set(out.facts["configuration_sha256_by_arm"]) == set(production.ARMS)
+    source = evidence.scientific_source(ctx)
+    assert source.state == "ok"
+    original = production.read_regular
+
+    def freeze_with_binding(binding):
+        def read(root, relative):
+            data = original(root, relative)
+            if relative.endswith("g03_production_freeze_2026_11_20.json"):
+                record = json.loads(data)
+                record["execution_source_sha256"] = binding
+                return canonical_json_bytes(record)
+            return data
+
+        with monkeypatch.context() as patch:
+            patch.setattr(production, "read_regular", read)
+            return production.production_freeze(ctx, source)
+
+    unbound = freeze_with_binding(None)
+    assert (unbound.state, unbound.reason, unbound.subject) == (
+        "absent",
+        "production_source_revision_pending",
+        None,
+    )
+    assert set(unbound.facts["configuration_sha256_by_arm"]) == set(production.ARMS)
+
+    mismatched = freeze_with_binding("0" * 64)
+    assert (mismatched.state, mismatched.reason, mismatched.subject) == (
+        "failed",
+        "production_freeze_invalid",
+        None,
+    )
+
+    bound = production.production_freeze(ctx, source)
+    assert (bound.state, bound.reason) == ("ok", "checks_passed")
+    assert bound.subject["execution_source_sha256"] == sha256_bytes(
+        canonical_json_bytes(source.subject)
+    )
+    assert sha256_bytes(canonical_json_bytes(bound.subject)) == (
+        "295d1d1187b37f27ea02f7ebb9d9fca4c0cc572206a85f70e1b98870f7f10c5a"
+    )
+    assert set(bound.facts["configuration_sha256_by_arm"]) == set(production.ARMS)
 
 
 def test_g03_refuses_altered_production_identity(monkeypatch):
