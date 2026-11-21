@@ -89,6 +89,10 @@ FROZEN_SPECIFICATIONS = (
     "CORPUS_MANIFEST_SPEC.md",
     "IMPLEMENTATION_PLAN.md",
     "RESEARCHER_AUTHORITY_AMENDMENT_V1.md",
+    "AMENDMENT_STAGE_A_RETROSPECTIVE_ACCOUNTING_V2.md",
+    "AMENDMENT_STAGE_B_HISTORICAL_CONTEXT_READBACK_V1.md",
+    "AMENDMENT_STAGE_B_HISTORICAL_PROVENANCE_V1.md",
+    "DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md",
 )
 ENVIRONMENT_SPEC = "configs/environment.toml"
 RENV_LOCK = "analysis/renv.lock"
@@ -191,7 +195,12 @@ def corpus_sources(ctx: Context, release: BenchmarkRelease | None, problem: str 
 
 
 def benchmark_freeze(
-    ctx: Context, release: BenchmarkRelease | None, release_bytes: bytes | None, problem: str | None
+    ctx: Context,
+    release: BenchmarkRelease | None,
+    release_bytes: bytes | None,
+    problem: str | None,
+    *,
+    hash_only: bool = False,
 ) -> Gathered:
     scope = "data root: frozen benchmark release record"
     if release is None or release_bytes is None:
@@ -216,16 +225,60 @@ def benchmark_freeze(
             ref, data[name] = _data_ref("benchmark_" + name, ctx.data_root, getattr(release, name))
             out.refs.append(ref)
         split = _json_model(data["split"], PaperSplit)
-        items = decode_jsonl(data["items"], BenchmarkItem)
-        development = sum(1 for i in items if i.paper_id in set(split.development_ids))
-        final = sum(1 for i in items if i.paper_id in set(split.final_test_ids))
-        if len(items) != release.item_count or development + final != len(items):
-            return Gathered("failed", "benchmark_counts_differ", scope, "counts do not agree")
-        verify_release_inputs(release, ctx.data_root)
+        if hash_only:
+            # The separate witness is a researcher approval of counts from the completed
+            # freeze. This boundary must not parse the protected item stream.
+            witness_bytes = read_regular(ctx.repo, "approvals/benchmark_count_witness_v1.json")
+            witness = loads_strict(witness_bytes)
+            expected = {
+                "schema_version": "benchmark_count_witness_v1",
+                "researcher": "Rama Krishna Pudota",
+                "approved": True,
+                "benchmark_version": release.benchmark_version,
+                "release_record_sha256": sha256_bytes(release_bytes),
+                "items_sha256": release.items.sha256,
+                "split_sha256": release.split.sha256,
+                "validation_report_sha256": release.validation_report.sha256,
+                "item_count": release.item_count,
+            }
+            if not isinstance(witness, dict) or any(
+                witness.get(k) != v for k, v in expected.items()
+            ):
+                return Gathered("failed", "benchmark_count_witness_invalid", scope)
+            development = witness.get("development_items")
+            final = witness.get("final_test_items")
+            if (
+                not all(type(n) is int and n >= 0 for n in (development, final))
+                or development + final != release.item_count
+            ):
+                return Gathered("failed", "benchmark_counts_differ", scope)
+            out.refs.append(
+                file_ref(
+                    "benchmark_count_witness",
+                    "repo/approvals/benchmark_count_witness_v1.json",
+                    witness_bytes,
+                )
+            )
+            item_count = release.item_count
+        else:
+            items = decode_jsonl(data["items"], BenchmarkItem)
+            development = sum(1 for i in items if i.paper_id in set(split.development_ids))
+            final = sum(1 for i in items if i.paper_id in set(split.final_test_ids))
+            if len(items) != release.item_count or development + final != len(items):
+                return Gathered("failed", "benchmark_counts_differ", scope, "counts do not agree")
+            verify_release_inputs(release, ctx.data_root)
+            item_count = len(items)
         if not git_state.is_ancestor(ctx.repo, release.implementation_git_sha):
             return Gathered("failed", "implementation_commit_not_in_history", scope)
     except FileMissing as error:
-        return Gathered("failed", "benchmark_artifact_missing", scope, str(error))
+        return Gathered(
+            "failed",
+            "benchmark_count_witness_missing"
+            if hash_only and "witness" in str(error)
+            else "benchmark_artifact_missing",
+            scope,
+            str(error),
+        )
     except ModuleNotFoundError as error:
         return Gathered("unavailable", "benchmark_validation_dependency_missing", scope, str(error))
     except git_state.GitUnavailable as error:
@@ -238,7 +291,7 @@ def benchmark_freeze(
         "items_sha256": release.items.sha256,
         "split_sha256": release.split.sha256,
         "corpus_content_sha256": release.corpus_content_sha256,
-        "item_count": len(items),
+        "item_count": item_count,
         "development_items": development,
         "final_test_items": final,
         "development_papers": release.development_paper_count,
@@ -248,7 +301,7 @@ def benchmark_freeze(
         "benchmark_release_sha256": sha256_bytes(release_bytes),
         "benchmark_seed_registry_sha256": release.seed_registry.sha256,
     }
-    out.detail = f"{len(items)} items: {development} development, {final} final test"
+    out.detail = f"{item_count} items: {development} development, {final} final test"
     return out
 
 
@@ -315,12 +368,25 @@ def restart_recovery() -> Gathered:
     )
 
 
-def storage_authorization() -> Gathered:
-    return _absent(
-        "storage_authorization_absent",
-        "execution-host storage",
-        "no approved storage location; none is probed",
-    )
+def storage_authorization(
+    ctx: Context | None = None, policy: ApprovalPolicy | None = None
+) -> Gathered:
+    scope = "approved final-test storage and frozen corpus/benchmark identity"
+    if ctx is None or policy is None or policy.slots.storage_authorization is None:
+        return _absent("storage_authorization_absent", scope, "G11 policy slot is unset")
+    try:
+        authorization, path = _approved_storage(ctx, policy)
+    except AuthorityNotEstablished as error:
+        return Gathered("failed", error.cause, scope, str(error)[:300])
+    try:
+        evidence_bytes = read_regular(ctx.data_root, path)
+    except FileProblem as error:
+        return Gathered("failed", "storage_approval_unusable", scope, str(error)[:300])
+    if sha256_bytes(evidence_bytes) != policy.slots.storage_authorization:
+        return Gathered("failed", "storage_approval_changed", scope)
+    out = Gathered("ok", "checks_passed", scope, subject=authorization.model_dump(mode="json"))
+    out.refs.append(file_ref("storage_authorization", "data/" + path, evidence_bytes))
+    return out
 
 
 def shared_gpu_authorization() -> Gathered:

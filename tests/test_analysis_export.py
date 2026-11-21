@@ -272,6 +272,25 @@ def test_evidence_not_yet_assessed_is_neither_failure_nor_unresolved():
     assert r.earliest_failure == "incomplete" and r.stage_a_label is None
 
 
+def test_incomplete_retrospective_provenance_keeps_independent_answer_score():
+    w = world()
+    r = row(observation(w, evidence=None, retrospective_provenance_incomplete=True))
+    assert r.evidence_delivered == "non_evaluable"
+    assert r.evidence_reason == "retrospective_provenance_incomplete"
+    assert r.stage_a_label is None and r.stage_b_status is None
+    assert r.answer_correct == "yes"
+
+
+def test_retrospective_exception_cannot_enter_final_test_rows():
+    w = world()
+    with pytest.raises(ValueError, match="final-test rows"):
+        row(
+            observation(
+                w, evidence=None, phase="final_test", retrospective_provenance_incomplete=True
+            )
+        )
+
+
 def test_stage_a_only_is_not_assessed_at_stage_b():
     w = world()
     ev = Evidence(w.document, CANONICAL, w.stage_a)
@@ -436,10 +455,61 @@ def test_full_configuration_is_distinct_from_the_retrieval_configuration_it_cont
     assert full in both and CFG in both
 
 
+def test_distinct_context_configuration_retains_ranked_retrieval_identity():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    case.ctx = case.ctx.model_copy(
+        update={
+            "configuration": case.ctx.configuration.model_copy(update={"resolved_sha256": "c" * 64})
+        }
+    )
+    result = row(observation(w, case=case))
+    assert result.retrieval_config_sha256 == case.ranked.configuration.resolved_sha256
+    assert case.ctx.configuration.resolved_sha256 != result.retrieval_config_sha256
+
+
 def test_stage_b_must_come_from_the_retrieval_configuration_the_observation_names():
     w = world()
-    with pytest.raises(ValueError, match="retrieval and context configuration"):
+    with pytest.raises(ValueError, match="ranked retrieval configuration"):
         build_row(observation(w, retrieval_config_sha256="e" * 64))
+
+
+def test_stage_b_context_identity_must_match_the_actual_context():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    evidence = evidence_for(w, case)
+    wrong = evidence.stage_b.model_copy(
+        update={
+            "configuration": evidence.stage_b.configuration.model_copy(
+                update={"resolved_sha256": "c" * 64}
+            )
+        }
+    )
+    with pytest.raises(ValueError):
+        build_row(
+            observation(
+                w, evidence=Evidence(w.document, CANONICAL, w.stage_a, wrong, case.inputs())
+            )
+        )
+
+
+def test_stage_b_context_reference_must_match_its_inputs():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    evidence = evidence_for(w, case)
+    with pytest.raises(ValueError):
+        build_row(
+            observation(
+                w,
+                evidence=Evidence(
+                    w.document,
+                    CANONICAL,
+                    w.stage_a,
+                    evidence.stage_b,
+                    case.inputs(context_ref=ref("other_context")),
+                ),
+            )
+        )
 
 
 def test_retrieval_configuration_is_required_for_retrieval_and_absent_for_closed_book():

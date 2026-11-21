@@ -9,11 +9,17 @@ import contextlib
 import io
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 from biorag_repro.benchmark.development_view import read_development_view
 from biorag_repro.benchmark.storage import read_jsonl
-from biorag_repro.core.hashing import sha256_bytes, sha256_file, verify_file_sha256
+from biorag_repro.core.hashing import (
+    canonical_json_bytes,
+    sha256_bytes,
+    sha256_file,
+    verify_file_sha256,
+)
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import (
     publish_bytes,
@@ -34,11 +40,14 @@ from biorag_repro.evaluation.analysis_storage import publish_table, read_table
 from biorag_repro.evaluation.analysis_table import (
     Evidence,
     Observation,
+    build_row,
     build_table,
     roster_items_from_development_view,
     serialize_csv,
 )
 from biorag_repro.evaluation.seeds import APPROVED_REGISTRY_SHA256, read_analysis_seed
+from biorag_repro.evaluation.stage_a_accounting_v2 import PROTOCOL as ACCOUNTING_V2
+from biorag_repro.evaluation.stage_a_accounting_v2 import read_inventory as read_accounting_v2
 from biorag_repro.evaluation.stage_a_retrospective import read_judgment
 from biorag_repro.evaluation.stage_b_storage import (
     publish_candidate,
@@ -64,6 +73,13 @@ else:
     import run_generation as generation
 
 
+def benchmark_dependency_bytes(item, ref: ArtifactRef) -> bytes:
+    data = canonical_json_bytes(item.model_dump(mode="json"))
+    if sha256_bytes(data) != ref.sha256:
+        raise generation.Refused("benchmark item dependency differs from its scientific hash")
+    return data
+
+
 def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
     if (
         args.analysis_root.resolve() != args.published_context_root.resolve()
@@ -79,10 +95,33 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
     items = {i.item_id: i for i in items}
     package, plan, _, _ = generation.load_inputs(args)
     records = {(r["item_id"], r["matrix_arm"], r["condition"]): r for r in package["records"]}
-    reviewers = json.loads(args.reviewer_inventory.read_bytes())
-    if reviewers.get("status") != "human_judgments_submitted":
+    raw_reviewers = args.reviewer_inventory.read_bytes()
+    reviewers = json.loads(raw_reviewers)
+    accounting_v2 = reviewers.get("protocol") == ACCOUNTING_V2
+    if accounting_v2:
+        reviewers = read_accounting_v2(args.reviewer_inventory, sha256_bytes(raw_reviewers))
+        entries = {f"{e['item_id']}/{e['representation']}": e for e in reviewers["entries"]}
+        if len(entries) != 156:
+            raise generation.Refused(
+                "accounting entries do not have unique item-representation identities"
+            )
+        p027_path = getattr(args, "p027_inventory", None)
+        if p027_path is None:
+            raise generation.Refused(
+                "development accounting needs the separate approved P027 inventory"
+            )
+        p027_inventory = json.loads(Path(p027_path).read_bytes())
+        if (
+            p027_inventory.get("status") != "human_judgments_submitted"
+            or len(p027_inventory.get("judgments", {})) != 16
+        ):
+            raise generation.Refused("P027 inventory does not retain its 16 approved judgments")
+        if any(items[key.split("/")[0]].paper_id != "P027" for key in p027_inventory["judgments"]):
+            raise generation.Refused("P027 inventory contains a different paper")
+    elif reviewers.get("status") != "human_judgments_submitted":
         raise generation.Refused("Stage A inventory is not a submitted human review")
-    observations, pending, b_cache, indexes = [], [], {}, {}
+    observations, rows, pending, b_cache, indexes = [], [], [], {}, {}
+    active_arm = None
     if publish:
         args.analysis_root.mkdir(parents=True, exist_ok=True)
 
@@ -97,12 +136,22 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
         else:
             raise generation.Refused("a required published evaluation dependency is missing")
 
+    def record_observation(observation):
+        if accounting_v2:
+            rows.append(build_row(observation)[0])
+        else:
+            observations.append(observation)
+
     for result in results:
+        if result.matrix_arm != active_arm:
+            indexes.clear()
+            index = chunks = sets = chunk_set = loaded = b_inputs = evidence = None
+            active_arm = result.matrix_arm
         item = items[result.item_id]
         score = stage_c.score(item, result)
         for role, ref in stage_c.dependencies(score):
             if role == "benchmark_item":
-                retain(ref, serialize_project_json(item, type(item)))
+                retain(ref, benchmark_dependency_bytes(item, ref))
             elif role == "generation_result":
                 retain(ref, serialize_project_json(result, type(result)))
             elif role == "generator_output":
@@ -118,9 +167,36 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
         record = records[result.item_id, result.matrix_arm, result.representation_or_condition]
         evidence = None
         link = None
+        incomplete = False
         if result.matrix_arm != "closed_book":
             key = f"{result.item_id}/{result.representation_or_condition}"
-            if key not in reviewers.get("judgments", {}):
+            entry_v2 = entries.get(key) if accounting_v2 else None
+            p027_judgment = p027_inventory["judgments"].get(key) if accounting_v2 else None
+            if accounting_v2 and entry_v2 is None and p027_judgment is None:
+                raise generation.Refused("development result is absent from accounting inventory")
+            incomplete = bool(entry_v2 and entry_v2["verification"] == "provenance_incomplete")
+            if incomplete:
+                record_observation(
+                    Observation(
+                        item,
+                        "development",
+                        result.matrix_arm,
+                        result.representation_or_condition,
+                        result.repeat_index,
+                        result.resolved_config_sha256,
+                        record["retrieval_config_sha256"],
+                        result,
+                        score,
+                        retrospective_provenance_incomplete=True,
+                    )
+                )
+                continue
+            judgment_data = (
+                (entry_v2["judgment"] if entry_v2 is not None else p027_judgment)
+                if accounting_v2
+                else reviewers.get("judgments", {}).get(key)
+            )
+            if judgment_data is None:
                 pending.append({"item_representation": key, "stage": "A"})
                 continue
             entry = selection["canonical"][item.paper_id + "/" + result.representation_or_condition]
@@ -133,7 +209,7 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                 root / canonical.logical_ref, canonical.sha256, CanonicalDocument
             )
             a = read_judgment(
-                ArtifactRef(**reviewers["judgments"][key]),
+                ArtifactRef(**judgment_data),
                 args.review_root,
                 item,
                 document,
@@ -183,6 +259,21 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
             )
             b_key = (result.item_id, result.matrix_arm, result.representation_or_condition)
             if b_key in b_cache and b_cache[b_key] is None:
+                if accounting_v2:
+                    record_observation(
+                        Observation(
+                            item,
+                            "development",
+                            result.matrix_arm,
+                            result.representation_or_condition,
+                            result.repeat_index,
+                            result.resolved_config_sha256,
+                            record["retrieval_config_sha256"],
+                            result,
+                            score,
+                            Evidence(document, canonical, a, None, None, args.review_root),
+                        )
+                    )
                 continue
             if b_key not in b_cache:
                 candidate = stage_b.evaluate(b_inputs)
@@ -198,7 +289,11 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                     review_key = (
                         f"{result.item_id}/{result.matrix_arm}/{result.representation_or_condition}"
                     )
-                    review_ref = reviewers.get("stage_b_judgments", {}).get(review_key)
+                    review_ref = (
+                        p027_inventory.get("stage_b_judgments", {}).get(review_key)
+                        if accounting_v2 and entry_v2 is None
+                        else reviewers.get("stage_b_judgments", {}).get(review_key)
+                    )
                     if review_ref is None:
                         b_cache[b_key] = None
                         pending.append(
@@ -209,6 +304,24 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                                 "candidate": candidate_ref.model_dump(),
                             }
                         )
+                        if accounting_v2:
+                            evidence = Evidence(
+                                document, canonical, a, None, None, args.review_root
+                            )
+                            record_observation(
+                                Observation(
+                                    item,
+                                    "development",
+                                    result.matrix_arm,
+                                    result.representation_or_condition,
+                                    result.repeat_index,
+                                    result.resolved_config_sha256,
+                                    record["retrieval_config_sha256"],
+                                    result,
+                                    score,
+                                    evidence,
+                                )
+                            )
                         continue
                     b = read_b_judgment(ArtifactRef(**review_ref), args.review_root, b_inputs)
                 else:
@@ -237,7 +350,7 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                     input=ArtifactRef(**stored["generator_input"]),
                     provenance="recorded",
                 )
-        observations.append(
+        record_observation(
             Observation(
                 item,
                 "development",
@@ -252,6 +365,24 @@ def evaluate(args: argparse.Namespace, *, publish: bool = True) -> dict:
                 link,
             )
         )
+    if accounting_v2:
+        missingness = defaultdict(Counter)
+        for row in rows:
+            if row.condition != "CLOSED_BOOK":
+                missingness[(row.paper_id, row.condition)][row.evidence_reason or "evaluated"] += 1
+        return {
+            "status": "development_diagnostics_ready",
+            "accounting_protocol": ACCOUNTING_V2,
+            "inventory_sha256": sha256_bytes(raw_reviewers),
+            "stage_c_scores": len(results),
+            "answer_correctness": dict(Counter(row.answer_correct for row in rows)),
+            "evidence_missingness_by_paper_representation": {
+                f"{paper}/{representation}": dict(sorted(counts.items()))
+                for (paper, representation), counts in sorted(missingness.items())
+            },
+            "pending_stage_b_reviews": pending,
+            "evidence_comparison": "exploratory_verified_only_diagnostics",
+        }
     if pending:
         # Do not publish an incomplete table as the completed development matrix.
         return {
@@ -383,6 +514,7 @@ def verify_request(path: Path) -> dict:
     )
     args = argparse.Namespace(
         **{name: Path(request[name]) for name in names},
+        p027_inventory=Path(request["p027_inventory"]) if request.get("p027_inventory") else None,
         contexts_sha256=request["contexts_sha256"],
         anchor_sha256=request["anchor_sha256"],
         handoff_build=request["handoff_build"],
@@ -418,7 +550,15 @@ def main():
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--contexts-sha256", required=True)
     parser.add_argument("--anchor-sha256", required=True)
+    parser.add_argument("--p027-inventory", type=Path)
+    parser.add_argument("--prior-verification-prefix", type=Path)
+    parser.add_argument("--prior-stdout-sha256")
+    parser.add_argument("--prior-inputs-sha256")
     args = parser.parse_args()
+    if (args.prior_verification_prefix is None) != (args.prior_stdout_sha256 is None) or (
+        args.prior_verification_prefix is None
+    ) != (args.prior_inputs_sha256 is None):
+        parser.error("prior verification needs its prefix and both trusted hashes")
     args.phase = "development"
     print(json.dumps(evaluate(args), indent=2))
 

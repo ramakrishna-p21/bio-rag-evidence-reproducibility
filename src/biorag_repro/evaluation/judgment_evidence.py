@@ -33,6 +33,10 @@ from biorag_repro.evaluation.analysis_table import Evidence
 from biorag_repro.evaluation.models import StageAJudgment
 from biorag_repro.evaluation.stage_a_storage import read_judgment as read_stage_a
 from biorag_repro.evaluation.stage_b import Inputs
+from biorag_repro.evaluation.stage_b_historical_publication import (
+    Authority as HistoricalAuthority,
+)
+from biorag_repro.evaluation.stage_b_historical_publication import read_case_publication
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval import context as phase5
@@ -88,6 +92,13 @@ class StageBRow(Record):
     at_utc: str | None = None
 
 
+class HistoricalStageBRow(StageBRow):
+    publication_type: Literal["historical_supplied_context_v1"]
+    case_number: int
+    accounting: ArtifactRef
+    accounting_manifest: ArtifactRef
+
+
 def _rows(path: Path, model: type[RowT]) -> list[RowT]:
     try:
         data = json.loads(path.read_bytes())
@@ -115,6 +126,7 @@ def read_evidence(
     items: Sequence[BenchmarkItem],
     document_for: DocumentFor,
     inputs_for: InputsFor,
+    historical_for: Callable[[HistoricalStageBRow], tuple[HistoricalAuthority, dict]] | None = None,
 ) -> Mapping[Key, Evidence]:
     """Validated evidence per (item_id, representation); absent keys have no judgment.
 
@@ -122,7 +134,21 @@ def read_evidence(
     """
     by_id = {item.item_id: item for item in items}
     a_rows = _rows(stage_a_inventory, StageARow)
-    b_rows = [] if stage_b_inventory is None else _rows(stage_b_inventory, StageBRow)
+    if stage_b_inventory is None:
+        b_rows = []
+    else:
+        try:
+            data = json.loads(stage_b_inventory.read_bytes())
+            if not isinstance(data, list):
+                raise TypeError("an inventory is a JSON list")
+            b_rows = [
+                HistoricalStageBRow.model_validate(row)
+                if "publication_type" in row
+                else StageBRow.model_validate(row)
+                for row in data
+            ]
+        except (OSError, TypeError, ValueError) as error:
+            raise EvidenceError(f"inventory {stage_b_inventory} is not usable: {error}") from error
 
     stage_a: dict[Key, tuple[StageAJudgment, CanonicalDocument, ArtifactRef]] = {}
     for row in a_rows:
@@ -156,8 +182,23 @@ def read_evidence(
         a = stage_a[key][0]
         _check_manifest(root, b_row.manifest, b_row.judgment)
         try:
-            b_inputs = inputs_for(by_id[b_row.item_id], b_row.representation, a)
-            b_judgment = stage_b_storage.read_judgment(b_row.judgment, root, b_inputs)
+            if isinstance(b_row, HistoricalStageBRow):
+                if historical_for is None:
+                    raise EvidenceError("historical row requires its explicit authorized reader")
+                authority, case_inputs = historical_for(b_row)
+                b_judgment, accounting, b_inputs = read_case_publication(
+                    b_row.accounting,
+                    b_row.accounting_manifest,
+                    b_row.case_number,
+                    authority,
+                    case_inputs,
+                    root,
+                )
+                if accounting.judgment != b_row.judgment or b_inputs.stage_a != a:
+                    raise EvidenceError("historical row disagrees with its accounting or Stage A")
+            else:
+                b_inputs = inputs_for(by_id[b_row.item_id], b_row.representation, a)
+                b_judgment = stage_b_storage.read_judgment(b_row.judgment, root, b_inputs)
         except (OSError, ValueError) as error:
             raise EvidenceError(f"Stage B judgment for {key}: {error}") from error
         if (b_row.status, b_row.basis, b_row.reviewer, b_row.at_utc) != (

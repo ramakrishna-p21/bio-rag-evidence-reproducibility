@@ -162,6 +162,41 @@ def test_g02_does_not_leak_item_text_into_evidence_or_detail(world):
     assert "TP53" not in blob and "Question about" not in blob
 
 
+def test_g02_hash_only_requires_exact_approved_witness_without_decoding(world, monkeypatch):
+    from biorag_repro.benchmark.release import BenchmarkRelease
+
+    raw = (world.data / evidence.BENCHMARK_RELEASE).read_bytes()
+    release = BenchmarkRelease.model_validate_json(raw)
+
+    def forbidden(*args):
+        raise AssertionError("protected items were decoded")
+
+    monkeypatch.setattr(evidence, "decode_jsonl", forbidden)
+    monkeypatch.setattr(evidence, "verify_release_inputs", forbidden)
+    gate = gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"]
+    assert gate.reason == "benchmark_count_witness_missing"
+    witness = {
+        "schema_version": "benchmark_count_witness_v1",
+        "researcher": "Rama Krishna Pudota",
+        "approved": True,
+        "benchmark_version": release.benchmark_version,
+        "release_record_sha256": sha256_bytes(raw),
+        "items_sha256": release.items.sha256,
+        "split_sha256": release.split.sha256,
+        "validation_report_sha256": release.validation_report.sha256,
+        "item_count": release.item_count,
+        "development_items": 2,
+        "final_test_items": 3,
+    }
+    approval = world.repo / "approvals/benchmark_count_witness_v1.json"
+    approval.parent.mkdir(exist_ok=True)
+    approval.write_text(json.dumps(witness))
+    assert gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"].state == "ok"
+    witness["approved"] = False
+    approval.write_text(json.dumps(witness))
+    assert gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"].state == "failed"
+
+
 # ---- G06 ----------------------------------------------------------------------------------
 
 
@@ -315,7 +350,7 @@ def test_g09_clean_tree_records_tracked_and_frozen_identities(world):
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and g.facts["head_sha"] == world.commit
     names = {r.locator for r in g.refs if r.kind == "frozen_specification"}
-    assert len(names) == 8 and all(n.startswith("repo/docs/frozen/") for n in names)
+    assert len(names) == 12 and all(n.startswith("repo/docs/frozen/") for n in names)
     assert g.subject["frozen_specifications"]["ARCHITECTURE.md"] == sha256_bytes(
         b"frozen ARCHITECTURE\n"
     )
@@ -327,6 +362,12 @@ def test_g09_frozen_specification_change_changes_the_subject_without_git_noticin
     assert git(world.repo, "status", "--porcelain") == ""
     after = subject_digest(gathered(world, "G09_scientific_source_revision"))
     assert before != after
+
+
+def test_g09_drive_amendment_change_changes_the_subject(world):
+    before = subject_digest(gathered(world, "G09_scientific_source_revision"))
+    write(world.repo / "docs/frozen/DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md", "edited\n")
+    assert subject_digest(gathered(world, "G09_scientific_source_revision")) != before
 
 
 def test_g09_changed_frozen_specification_fails_a_populated_slot(world):
@@ -388,7 +429,6 @@ NO_EVIDENCE = {
     "G04_generator_qualification": "independent_phase7_evidence_absent",
     "G05_model_parser_identities": "checkpoint_and_parser_identities_not_approved",
     "G10_development_restart_recovery": "official_restart_evidence_absent",
-    "G11_storage_authorization": "storage_authorization_absent",
     "G12_shared_gpu_authorization": "gpu_authorization_absent",
 }
 
@@ -411,6 +451,15 @@ def test_local_gpu_hardware_never_approves_the_shared_gpu_gate(world):
     world.ctx = world.probes(inventory=lambda: inventory())  # reports a GPU
     g = gathered(world, "G12_shared_gpu_authorization")
     assert to_result("G12_shared_gpu_authorization", g, REAL_POLICY).status == "pending"
+
+
+def test_g11_without_approved_record_fails_closed(world):
+    policy = ApprovalPolicy(
+        policy_version="t", slots=ApprovalSlots(storage_authorization=digest("missing"))
+    )
+    gathered = evidence.storage_authorization(world.ctx, policy)
+    assert gathered.state == "failed"
+    assert to_result("G11_storage_authorization", gathered, policy).status == "failed"
 
 
 def test_g13_is_unavailable_whatever_the_data_root_contains(world, tmp_path):

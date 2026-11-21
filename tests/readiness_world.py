@@ -103,6 +103,13 @@ def build_repo(root: Path) -> tuple[Path, str]:
     write(
         repo / "docs/frozen/RESEARCHER_AUTHORITY_AMENDMENT_V1.md", "prospective authority fixture\n"
     )
+    for name in (
+        "AMENDMENT_STAGE_A_RETROSPECTIVE_ACCOUNTING_V2.md",
+        "AMENDMENT_STAGE_B_HISTORICAL_CONTEXT_READBACK_V1.md",
+        "AMENDMENT_STAGE_B_HISTORICAL_PROVENANCE_V1.md",
+        "DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md",
+    ):
+        write(repo / f"docs/frozen/{name}", f"frozen {name}\n")
     git(repo, "add", "-A")
     git(repo, "commit", "-q", "-m", "initial")
     return repo, git(repo, "rev-parse", "HEAD")

@@ -284,10 +284,10 @@ def render_units(
         return rendered
 
     def contributors(
-        items: list[SourceOccurrence], node_id: str, usage: ContributorUsage
+        items: list[SourceOccurrence], usage: ContributorUsage
     ) -> list[SourceContributor]:
         return [
-            SourceContributor(occurrence_id=o.occurrence_id, node_id=node_id, usage=usage)
+            SourceContributor(occurrence_id=o.occurrence_id, node_id=o.owner_node_id, usage=usage)
             for o in items
         ]
 
@@ -327,7 +327,7 @@ def render_units(
                 )
                 links.extend(
                     contributors(
-                        [o for o in below(title) if o.text is not None], title, "repeated_context"
+                        [o for o in below(title) if o.text is not None], "repeated_context"
                     )
                 )
             scope = "headings:" + ":".join(titles) if titles else node_id
@@ -339,7 +339,7 @@ def render_units(
                 context.append(f"[section]\n{text(title)}\n[/section]\n")
                 links.extend(
                     contributors(
-                        [o for o in below(title) if o.text is not None], title, "repeated_context"
+                        [o for o in below(title) if o.text is not None], "repeated_context"
                     )
                 )
             elif len(titles) > 1:
@@ -405,7 +405,7 @@ def render_units(
             text(owner),
             context,
             scope,
-            links + contributors(source, owner, "content"),
+            links + contributors(source, "content"),
             [owner],
             _qualifications(source),
         )
@@ -492,7 +492,6 @@ def render_units(
                 relation_links.extend(
                     contributors(
                         [o for o in below(related) if o.text is not None],
-                        related,
                         "repeated_context",
                     )
                 )
@@ -536,7 +535,7 @@ def render_units(
                 usage: ContributorUsage = (
                     "content" if cell in cells and cell.row == row else "repeated_context"
                 )
-                links += contributors(below(cell.node_id), cell.node_id, usage)
+                links += contributors(below(cell.node_id), usage)
             source_ids = [node.node_id, *[c.node_id for c in cells]]
             uncertainty = sorted(
                 set(

@@ -83,7 +83,9 @@ def _host(ctx: Context) -> HostBinding:
     )
 
 
-def gather_all(ctx: Context, policy: ApprovalPolicy | None = None) -> dict[GateId, Gathered]:
+def gather_all(
+    ctx: Context, policy: ApprovalPolicy | None = None, *, g02_hash_only: bool = False
+) -> dict[GateId, Gathered]:
     problem: str | None = None
     release = release_bytes = None
     try:
@@ -92,7 +94,9 @@ def gather_all(ctx: Context, policy: ApprovalPolicy | None = None) -> dict[GateI
         problem = str(error)[:300]
     return {
         "G01_corpus_sources": evidence.corpus_sources(ctx, release, problem),
-        "G02_benchmark_freeze": evidence.benchmark_freeze(ctx, release, release_bytes, problem),
+        "G02_benchmark_freeze": evidence.benchmark_freeze(
+            ctx, release, release_bytes, problem, hash_only=g02_hash_only
+        ),
         "G03_final_test_configuration_freeze": evidence.final_test_freeze(),
         "G04_generator_qualification": evidence.generator_qualification(),
         "G05_model_parser_identities": evidence.model_parser_identities(),
@@ -101,7 +105,7 @@ def gather_all(ctx: Context, policy: ApprovalPolicy | None = None) -> dict[GateI
         "G08_seed_registry": evidence.seed_registry(ctx, release),
         "G09_scientific_source_revision": evidence.scientific_source(ctx),
         "G10_development_restart_recovery": evidence.restart_recovery(),
-        "G11_storage_authorization": evidence.storage_authorization(),
+        "G11_storage_authorization": evidence.storage_authorization(ctx, policy),
         "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(),
         "G13_final_test_history_integrity": evidence.history_integrity(ctx, policy),
     }
@@ -135,9 +139,10 @@ def evaluate(
     *,
     now: Callable[[], str] = utc_now,
     nonce: Callable[[], str] = lambda: secrets.token_hex(16),
+    g02_hash_only: bool = False,
 ) -> Evaluation:
     try:
-        found = gather_all(ctx, policy)
+        found = gather_all(ctx, policy, g02_hash_only=g02_hash_only)
         results: list[GateResult] = [to_result(g, found[g], policy) for g in MANDATORY_GATES]
         report = build_report(
             policy=policy,

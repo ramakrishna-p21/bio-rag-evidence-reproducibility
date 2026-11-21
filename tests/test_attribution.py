@@ -4,6 +4,46 @@ import pytest
 
 from biorag_repro.evaluation.attribution import attribute
 
+
+def test_retrospective_provenance_incomplete_keeps_answer_score() -> None:
+    out = attribute(
+        closed_book=False,
+        stage_a=None,
+        stage_b=None,
+        stage_c="correct",
+        execution="completed",
+        retrospective_provenance_incomplete=True,
+    )
+    assert out.evidence_delivered == "non_evaluable"
+    assert out.evidence_reason == "retrospective_provenance_incomplete"
+    assert out.answer_correct == "yes"
+    assert out.earliest_failure == "incomplete"
+    assert out.correct_without_evidence == "NA"
+
+
+def test_retrospective_provenance_cannot_mask_a_scientific_stage() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="no verified evidence stage"):
+        attribute(
+            closed_book=False,
+            stage_a="scientifically_corrupted",
+            stage_b=None,
+            stage_c="incorrect",
+            execution="completed",
+            retrospective_provenance_incomplete=True,
+        )
+    with pytest.raises(ValueError, match="no verified evidence stage"):
+        attribute(
+            closed_book=True,
+            stage_a=None,
+            stage_b=None,
+            stage_c="correct",
+            execution="completed",
+            retrospective_provenance_incomplete=True,
+        )
+
+
 A_OK = ["preserved", "altered_but_sufficient"]
 A_FAIL = ["scientifically_corrupted", "absent"]
 

@@ -164,7 +164,15 @@ class AnalysisRow(Record):
             stage_b=None if self.stage_b_artifact is None else self.stage_b_status,
             stage_c=self.stage_c_status,
             execution=self.execution_status,
+            retrospective_provenance_incomplete=(
+                self.evidence_reason == "retrospective_provenance_incomplete"
+            ),
         )
+        if (
+            self.evidence_reason == "retrospective_provenance_incomplete"
+            and self.phase != "development"
+        ):
+            raise ValueError("retrospective provenance exception is development-only")
         derived = (
             out.evidence_delivered,
             out.evidence_reason,

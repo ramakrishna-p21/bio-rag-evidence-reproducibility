@@ -13,7 +13,7 @@ from biorag_repro.retrieval.chunking import (
 )
 from biorag_repro.retrieval.models import ConfigurationRef
 from biorag_repro.retrieval.storage import record_ref
-from biorag_repro.retrieval.validation import validate_occurrences
+from biorag_repro.retrieval.validation import validate_chunk_contributors, validate_occurrences
 
 
 def build(xml, budget=192, counter=len):
@@ -86,6 +86,53 @@ def test_sections_lists_captions_and_no_unrelated_section_packing():
     assert sum("C." in unit.text for unit in render_units(doc, result.chunk_set.occurrences)) == 1
     assert sum(o.text == "C." for o in result.chunk_set.occurrences) == 1
     assert any(c.usage == "repeated_context" for chunk in result.chunks for c in chunk.contributors)
+
+
+@pytest.mark.parametrize(
+    "xml",
+    [
+        "<article><body><sec><title>Results</title><list><list-item><p>A <italic>1.2</italic> value.</p></list-item></list><p>See <xref ref-type='table' rid='t1'>Table 1</xref>.</p></sec></body></article>",
+        "<article><body><table-wrap id='t1'><caption><p>Measured <bold>values</bold>.</p></caption><table><tbody><tr><td><p>A <italic>1.2</italic></p></td></tr></tbody></table><table-wrap-foot><fn><p>Footnote <sup>a</sup>.</p></fn></table-wrap-foot></table-wrap></body></article>",
+    ],
+)
+def test_jats_grouped_contributors_name_exact_occurrence_owner(xml):
+    doc, selected, cfgref, cfg, result = build(xml)
+    occurrences = {item.occurrence_id: item for item in result.chunk_set.occurrences}
+    assert any(
+        link.node_id != unit.unit_id
+        for unit in render_units(doc, result.chunk_set.occurrences)
+        for link in unit.contributors
+    )
+    for chunk in result.chunks:
+        for link in chunk.contributors:
+            assert link.node_id == occurrences[link.occurrence_id].owner_node_id
+        validate_chunk_contributors(chunk, doc, result.chunk_set.occurrences)
+    validate_chunking(result, doc, selected, cfgref, cfg, len)
+
+
+def test_jats_ancestor_contributor_remains_invalid_and_changes_chunk_identity():
+    doc, _, _, _, result = build(
+        "<article><body><list><list-item><p>Value <italic>1.2</italic>.</p></list-item></list></body></article>"
+    )
+    unit = next(
+        unit
+        for unit in render_units(doc, result.chunk_set.occurrences)
+        if any(link.node_id != unit.unit_id for link in unit.contributors)
+    )
+    link = next(link for link in unit.contributors if link.node_id != unit.unit_id)
+    chunk = next(
+        chunk
+        for chunk in result.chunks
+        if any(c.occurrence_id == link.occurrence_id for c in chunk.contributors)
+    )
+    historical = chunk.model_copy(deep=True)
+    contributor = next(c for c in historical.contributors if c.occurrence_id == link.occurrence_id)
+    contributor.node_id = unit.unit_id
+    assert historical.rendered_text == chunk.rendered_text
+    assert contributor.occurrence_id == link.occurrence_id
+    assert record_ref(historical) != record_ref(chunk)
+    with pytest.raises(ValueError, match="contributor"):
+        validate_chunk_contributors(historical, doc, result.chunk_set.occurrences)
 
 
 @pytest.mark.parametrize("budget", [192, 384])

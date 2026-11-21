@@ -15,7 +15,11 @@ Earliest = Literal[
     "none", "stage_a", "stage_b", "stage_c", "unresolved", "not_applicable", "incomplete"
 ]
 EvidenceReason = Literal[
-    "stage_a_not_assessed", "stage_a_unresolved", "stage_b_not_assessed", "stage_b_unresolved"
+    "stage_a_not_assessed",
+    "stage_a_unresolved",
+    "stage_b_not_assessed",
+    "stage_b_unresolved",
+    "retrospective_provenance_incomplete",
 ]
 Tri = Literal["TRUE", "FALSE", "NA"]
 
@@ -88,8 +92,15 @@ def attribute(
     stage_b: str | None,
     stage_c: str | None,
     execution: Execution,
+    retrospective_provenance_incomplete: bool = False,
 ) -> Outcomes:
     answer = _answer(stage_c, execution)
+    if retrospective_provenance_incomplete:
+        if closed_book or stage_a is not None or stage_b is not None:
+            raise ValueError("incomplete retrospective provenance has no verified evidence stage")
+        return Outcomes(
+            "non_evaluable", "retrospective_provenance_incomplete", answer, "incomplete", "NA"
+        )
     if closed_book:
         if stage_a is not None or stage_b is not None:
             raise ValueError("Stage A and B do not apply to the closed-book baseline")

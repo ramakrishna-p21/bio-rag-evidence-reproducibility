@@ -128,6 +128,7 @@ class Observation:
     score: StageCScore | None = None
     evidence: Evidence | None = None
     generator_input: GeneratorInput | None = None
+    retrospective_provenance_incomplete: bool = False
 
 
 @dataclass
@@ -161,8 +162,8 @@ def _check_evidence(obs: Observation, evidence: Evidence) -> None:
     ):
         raise ValueError("Stage B was judged from other item, document or Stage A inputs")
     validate_stage_b(b, inputs)
-    if b.configuration.resolved_sha256 != obs.retrieval_config_sha256:
-        raise ValueError("retrieval and context configuration differs from the observation's")
+    if inputs.ranked.configuration.resolved_sha256 != obs.retrieval_config_sha256:
+        raise ValueError("ranked retrieval configuration differs from the observation's")
     expected = ARM_RETRIEVAL.get(obs.matrix_arm)
     if expected is None or (inputs.ranked.scope, inputs.ranked.retriever) != expected:
         raise ValueError("retrieval does not match the matrix arm")
@@ -228,6 +229,13 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
             "a retrieval observation names its retrieval configuration; closed-book has none"
         )
     evidence = obs.evidence
+    if obs.retrospective_provenance_incomplete and (
+        obs.phase != "development"
+        or closed
+        or evidence is not None
+        or obs.generator_input is not None
+    ):
+        raise ValueError("incomplete retrospective provenance is development-only and unverified")
     if evidence is not None:
         _check_evidence(obs, evidence)
     if obs.generator_input is not None:
@@ -285,7 +293,15 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
         stage_c_reason=score.reason if score else None,
         stage_c_basis=score.basis if score else None,
         stage_c_artifact=score_ref(score).artifact_id if score else None,
-        **_outcomes(closed, a, b_status, b, score, _execution(result)),
+        **_outcomes(
+            closed,
+            a,
+            b_status,
+            b,
+            score,
+            _execution(result),
+            obs.retrospective_provenance_incomplete,
+        ),
     )
     return row, _inputs(item, a, b, score, link)
 
@@ -297,6 +313,7 @@ def _outcomes(
     b: StageBJudgment | None,
     score: StageCScore | None,
     execution: Execution,
+    retrospective_provenance_incomplete: bool = False,
 ) -> dict[str, Any]:
     out = attribute(
         closed_book=closed,
@@ -304,6 +321,7 @@ def _outcomes(
         stage_b=b_status if b else None,
         stage_c=score.status if score else None,
         execution=execution,
+        retrospective_provenance_incomplete=retrospective_provenance_incomplete,
     )
     return {
         "evidence_delivered": out.evidence_delivered,

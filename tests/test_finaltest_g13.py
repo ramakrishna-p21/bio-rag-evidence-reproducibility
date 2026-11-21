@@ -91,6 +91,15 @@ def test_verified_empty_final_test_root_passes_under_a_fixture_policy(setup, wor
     assert kinds == {"storage_authorization", "final_test_root_anchor", "final_test_inventory"}
 
 
+def test_g11_uses_the_existing_approved_storage_subject(setup, world):
+    _, policy = setup.approve()
+    gathered = evidence.storage_authorization(world.ctx, policy)
+    result = to_result("G11_storage_authorization", gathered, policy)
+    assert gathered.state == "ok"
+    assert result.status == "passed"
+    assert {ref.kind for ref in result.evidence} == {"storage_authorization", "observed_subject"}
+
+
 def test_passing_g13_report_publishes_and_reads_back(setup, world):
     auth, policy = setup.approve()
     setup.initialize(auth)

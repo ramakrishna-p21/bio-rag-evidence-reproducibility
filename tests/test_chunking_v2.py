@@ -253,7 +253,7 @@ def test_v2_indexes_a_row_that_v1_excludes_at_the_same_budget():
     assert any("IL-6" in c.rendered_text for c in v2.chunks)
 
 
-def test_v1_is_the_default_and_its_pre_change_identity_is_unchanged():
+def test_v1_default_configuration_and_corrected_contributor_identity():
     assert settings().chunking_algorithm == V1
     assert "chunking_algorithm" in settings().model_dump()
     cfg = settings().model_copy(update={"chunk_tokens": 192})
@@ -261,23 +261,24 @@ def test_v1_is_the_default_and_its_pre_change_identity_is_unchanged():
         artifact=ref("configuration"),
         resolved_sha256=sha256_bytes(canonical_json_bytes(cfg.model_dump())),
     )
-    # Recorded from the unmodified implementation before the change.
+    # Contributor correction does not change the scientific configuration.
     assert (
         config_ref.resolved_sha256
         == "bac540837e37ccc7594a323518ede731fc709106e5801cb8d08f0a3e05cb6b21"
     )
     result = chunk_document(parse(TABLE.encode()), selection(), config_ref, cfg, len)
+    assert [chunk.rendered_text for chunk in result.chunks] == ["Trial", "Qualified result."]
     assert result.chunk_set.chunks.artifact_id == (
-        "drv_9934e6b2ab72dcba4242dab6643e2a723318918d03371905e3c12879f5f68fd9"
+        "drv_e629ab1053fe0f3412a903619b13cc3b6a20c41e124494fc17e3e8dd7eadee3a"
     )
     assert result.chunk_set.chunks.sha256 == (
-        "8d9919a2c02cabd53ec31672678863df648d15b6ea16efbc6574783d20b4a17b"
+        "ff8dcc474746c373885e53b9c503a1997f62a74e0dda91fa708c87f1aadae52c"
     )
     assert record_ref(result.chunk_set).artifact_id == (
-        "drv_a1fa24cb048e873f99bf6548080bdbc57b79e83a296c65107105f736900c6d9d"
+        "drv_4f0a32b932253d73ec0f6ded0f662992c0b51caa998d840d0bbc957be8f43bc3"
     )
     assert result.chunk_set.chunks_build_manifest.sha256 == (
-        "53ead00cee9457a331a61314d64c9d7bd78d7dcd8f0fb9e8c0c1e1e60ced3de0"
+        "4294faa71f3362070170e469e30d4d7f1e8658b3fa990c19d3551b2cb7192e8f"
     )
 
 

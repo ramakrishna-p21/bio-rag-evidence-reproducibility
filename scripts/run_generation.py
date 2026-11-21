@@ -43,6 +43,7 @@ import subprocess
 import sys
 import time
 import uuid
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,6 +67,75 @@ from biorag_repro.generation.seeds import (
 )
 
 PHASES = ("development", "qualification")  # final_test is refused; see the module text
+_publication_session: ContextVar[tuple | None] = ContextVar("publication_session", default=None)
+
+
+def validate_final_test_plan(package: dict, plan: list["Planned"]) -> None:
+    """Check the complete frozen final-test roster before any execution is enabled."""
+    header = package.get("header", {})
+    items = header.get("item_ids", [])
+    if (
+        len(items) != 305
+        or len(set(items)) != 305
+        or set(header.get("arms", [])) != set(FROZEN_MATRIX)
+    ):
+        raise Refused("final-test plan requires 305 distinct items and all five frozen arms")
+    if len(plan) != 4575 or len({p.key for p in plan}) != 4575:
+        raise Refused("final-test plan requires 4,575 distinct observations")
+    if {p.record["item_id"] for p in plan} != set(items):
+        raise Refused("final-test observations differ from the declared item roster")
+    if len({p.record["paper_id"] for p in plan}) != 40:
+        raise Refused("final-test plan requires the 40-paper split")
+    expected = {
+        (item, arm, condition, repeat)
+        for item in items
+        for arm, (conditions, repeats) in FROZEN_MATRIX.items()
+        for condition in conditions
+        for repeat in repeats
+    }
+    observed = [
+        (p.record["item_id"], p.record["matrix_arm"], p.record["condition"], p.repeat) for p in plan
+    ]
+    if len(set(observed)) != len(observed) or set(observed) != expected:
+        raise Refused("final-test observations differ from the frozen matrix")
+    if any(p.record["split"] != "final_test" for p in plan):
+        raise Refused("final-test plan contains a non-final-test item")
+
+
+def check_authorized_final_test_roster(data_root: Path, package: dict) -> None:
+    """Bind supplied questions to the already verified frozen benchmark release."""
+    from biorag_repro.benchmark.models import BenchmarkItem
+    from biorag_repro.benchmark.release import BenchmarkRelease
+    from biorag_repro.benchmark.split import PaperSplit
+    from biorag_repro.benchmark.storage import decode_jsonl
+    from biorag_repro.readiness import evidence
+    from biorag_repro.readiness.files import read_regular
+
+    record = BenchmarkRelease.model_validate_json(
+        read_regular(data_root, evidence.BENCHMARK_RELEASE)
+    )
+    data = read_regular(data_root, record.items.logical_ref)
+    if sha256_bytes(data) != record.items.sha256:
+        raise Refused("frozen benchmark items differ from the release")
+    split_bytes = read_regular(data_root, record.split.logical_ref)
+    if sha256_bytes(split_bytes) != record.split.sha256:
+        raise Refused("frozen paper split differs from the release")
+    split = PaperSplit.model_validate_json(split_bytes)
+    final_papers = set(split.final_test_ids)
+    expected = {
+        item.item_id: (item.paper_id, item.question, item.benchmark_version)
+        for item in decode_jsonl(data, BenchmarkItem)
+        if item.paper_id in final_papers
+    }
+    if len(expected) != 305 or set(package["header"]["item_ids"]) != set(expected):
+        raise Refused("supplied final-test roster differs from the frozen benchmark")
+    for supplied in package["records"]:
+        if (
+            supplied["paper_id"],
+            supplied["question"],
+            supplied["benchmark_version"],
+        ) != expected[supplied["item_id"]]:
+            raise Refused("supplied final-test question differs from the frozen benchmark")
 
 
 class Refused(SystemExit):
@@ -87,6 +157,20 @@ def utc_now() -> str:
 
 def write_once(path: Path, data: bytes) -> None:
     """Create `path` with exactly these bytes, or fail if it exists. Never partially visible."""
+    session = _publication_session.get()
+    if session is not None:
+        batch_root, custodian, batch_id, manifest_sha256 = session
+        if not path.is_relative_to(batch_root):
+            raise Refused("publication path is outside its committed batch")
+        if path.exists():
+            raise FileExistsError(path)
+        custodian.commit(
+            batch_id,
+            manifest_sha256,
+            custodian.authoritative_head(),
+            path.relative_to(batch_root).as_posix(),
+            sha256_bytes(data),
+        )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     with open(tmp, "xb") as handle:
@@ -113,11 +197,20 @@ def dump(value: Any) -> bytes:
 
 
 def load_inputs(args: argparse.Namespace) -> tuple[dict, list[Planned], Any, PromptArtifact]:
+    if args.phase == "final_test":
+        raise Refused(
+            "protected final-test inputs require execution authorization; "
+            "this interface is development or qualification only"
+        )
+    return _load_inputs(args)
+
+
+def _load_inputs(args: argparse.Namespace) -> tuple[dict, list[Planned], Any, PromptArtifact]:
     data = args.contexts.read_bytes()
     if sha256_bytes(data) != args.contexts_sha256:
         raise Refused("the contexts file differs from the trusted SHA-256")
     package = json.loads(data)
-    if args.phase not in PHASES:
+    if args.phase not in (*PHASES, "final_test"):
         raise Refused(f"phase {args.phase!r}: this runner executes development or qualification")
     # The expected observations come from the declared eligible items and arms and the frozen
     # matrix, never from the records that happen to be present: a missing context is an
@@ -139,8 +232,10 @@ def load_inputs(args: argparse.Namespace) -> tuple[dict, list[Planned], Any, Pro
     plan = []
     for record in package["records"]:
         arm, condition = record["matrix_arm"], record["condition"]
-        if record["split"] != "development":
-            raise Refused(f"{record['item_id']} is not a development item")
+        if record["split"] != args.phase and not (
+            args.phase == "qualification" and record["split"] == "development"
+        ):
+            raise Refused(f"{record['item_id']} does not belong to {args.phase}")
         conditions, repeats = FROZEN_MATRIX[arm]
         if condition not in conditions:
             raise Refused(f"{arm} has no condition {condition}")
@@ -174,6 +269,8 @@ def load_inputs(args: argparse.Namespace) -> tuple[dict, list[Planned], Any, Pro
     if len(set(keys)) != len(keys):
         raise Refused("the contexts file plans an observation twice")
     plan.sort(key=lambda p: p.repeat)  # every repeat 1 before any repeat 2, as in Dev35
+    if args.phase == "final_test":
+        validate_final_test_plan(package, plan)
     return package, plan, seeds, prompt
 
 
@@ -629,6 +726,26 @@ def check_anchor(out: Path, anchor: Path, anchor_sha256: str) -> None:
             raise Refused(f"{relative} is missing or differs from the sealed anchor")
 
 
+def verify_batch_results(out: Path, plan: list[Planned], renderers: dict, run_id: str) -> int:
+    """Read back every finished result against its plan, attempt history and input receipt."""
+    events = read_events(out)
+    by_key = {p.key: p for p in plan}
+    paths = sorted((out / "results").glob("*.json"))
+    for path in paths:
+        if path.name != f"{path.stem}.json" or path.stem not in by_key:
+            raise Refused("batch contains an unplanned result")
+        planned = by_key[path.stem]
+        check_result(
+            json.loads(path.read_bytes()),
+            planned,
+            renderers[planned.record["matrix_arm"]],
+            run_id,
+            events,
+            out,
+        )
+    return len(paths)
+
+
 # ---- generation --------------------------------------------------------------------------
 
 
@@ -859,14 +976,198 @@ def result_bytes(planned, phase, run_id, attempt_id, raw=None, failure=None, cal
 
 
 def run(args: argparse.Namespace, model: Any = None) -> int:
+    """Production entrypoint; synthetic execution is confined to the private test seam."""
+    return _run(args, model)
+
+
+def _run(args: argparse.Namespace, model: Any = None, *, synthetic: Any = None) -> int:
+    try:
+        return _run_core(args, model, synthetic=synthetic)
+    finally:
+        if synthetic is not None:
+            _publication_session.set(None)
+
+
+def _run_core(args: argparse.Namespace, model: Any = None, *, synthetic: Any = None) -> int:
     """Generate every planned observation that has no result yet; return how many finished."""
     import torch
 
-    if getattr(args, "official", False) and model is not None:
+    final_test = args.phase == "final_test"
+    authorization = None
+    drive_root = None
+    if final_test:
+        if synthetic is None and (not getattr(args, "official", False) or model is not None):
+            raise Refused("final test requires official execution without an injected model")
+        if synthetic is None:
+            from biorag_repro.finaltest.authorization import authorize
+
+            if getattr(args, "custody_mode", "ordinary") == "ordinary":
+                raise Refused("final test requires independently administered recovery custody")
+
+            if not all(
+                getattr(args, name, None)
+                for name in (
+                    "repo",
+                    "data_root",
+                    "expected_head_sha256",
+                    "published_context_root",
+                )
+            ):
+                raise Refused(
+                    "final test requires repository, data root, retained head and context root"
+                )
+            authorization = authorize(
+                args.repo,
+                args.data_root,
+                args.expected_head_sha256,
+                custody_mode=getattr(args, "custody_mode", "ordinary"),
+                pending_batch_id=args.out.name if getattr(args, "out", None) is not None else None,
+            )
+            if authorization.custody_mode != "amended_drive":
+                raise Refused(
+                    "ordinary final test requires independently administered recovery custody"
+                )
+        else:
+            authorization = synthetic.authorization
+        if args.out.parent != authorization.storage_root / "batches" or not re.fullmatch(
+            r"run_[0-9a-f]{32}", args.out.name
+        ):
+            raise Refused("final-test batch path is outside authorized storage")
+        drive_root = (
+            authorization.drive_root if synthetic is None else getattr(args, "drive_root", None)
+        )
+        if drive_root is not None:
+            if getattr(args, "expected_head_sha256", None) != authorization.history_head_sha256:
+                raise Refused("retained researcher head differs from authorized history head")
+            from biorag_repro.finaltest.amended_custody import publish_request, verify_chain
+            from biorag_repro.finaltest.history_v2 import (
+                HistoryRefused,
+                _verify_history,
+                anchor_batch,
+                preview_batch_head,
+                verify_history,
+            )
+            from biorag_repro.finaltest.layout import root_id_for
+
+            pending_head = getattr(authorization, "pending_head_sha256", None)
+            if pending_head is not None:
+                pending_records = verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    pending_head,
+                )
+                prior = pending_records[:-1]
+                for record in prior:
+                    name = f"{root_id_for(authorization.storage_authorization)}.{record['sequence']:06d}.json"
+                    record["anchor_sha256"] = sha256_file(authorization.anchor_dir / name)
+                genesis = (
+                    prior[0]["previous_anchor_sha256"]
+                    if prior
+                    else authorization.history_head_sha256
+                )
+                verify_chain(
+                    authorization.campaign_id,
+                    authorization.storage_root,
+                    drive_root,
+                    prior,
+                    genesis,
+                    authorization.history_head_sha256,
+                    getattr(args, "researcher_acknowledgment", None),
+                    pending_head,
+                )
+                request = publish_request(
+                    authorization.campaign_id,
+                    args.out,
+                    drive_root,
+                    authorization.history_head_sha256,
+                    pending_head,
+                )
+                raise Refused(
+                    f"researcher acknowledgment required for {request}: {sha256_file(request)}"
+                )
+
+            try:
+                records = verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    authorization.history_head_sha256,
+                )
+            except HistoryRefused:
+                records = _verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    authorization.history_head_sha256,
+                    args.out.name,
+                )
+            pending_local = None
+            if args.out.exists():
+                try:
+                    pending_local = preview_batch_head(
+                        authorization.storage_root,
+                        authorization.storage_authorization,
+                        authorization.anchor_dir,
+                        args.out.name,
+                        authorization.history_head_sha256,
+                    )
+                except HistoryRefused:
+                    pass
+            for record in records:
+                name = f"{root_id_for(authorization.storage_authorization)}.{record['sequence']:06d}.json"
+                record["anchor_sha256"] = sha256_file(authorization.anchor_dir / name)
+            genesis = (
+                records[0]["previous_anchor_sha256"]
+                if records
+                else authorization.history_head_sha256
+            )
+            verify_chain(
+                authorization.campaign_id,
+                authorization.storage_root,
+                drive_root,
+                records,
+                genesis,
+                authorization.history_head_sha256,
+                getattr(args, "researcher_acknowledgment", None),
+                pending_local,
+            )
+            if pending_local is not None:
+                previous = authorization.history_head_sha256
+                head = anchor_batch(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    args.out.name,
+                    previous,
+                    before_publish=lambda new_head: publish_request(
+                        authorization.campaign_id, args.out, drive_root, previous, new_head
+                    ),
+                )
+                if synthetic is not None:
+                    authorization.history_head_sha256 = head
+                request = drive_root / "requests" / f"{head}.json"
+                raise Refused(
+                    f"researcher acknowledgment required for {request}: {sha256_file(request)}"
+                )
+    if getattr(args, "official", False) and model is not None and synthetic is None:
         raise Refused("official execution cannot use an injected model")
-    if getattr(args, "official", False):
+    if getattr(args, "official", False) and not final_test:
         preflight(args)
-    package, plan, seeds, prompt = load_inputs(args)
+    package, plan, seeds, prompt = _load_inputs(args) if final_test else load_inputs(args)
+    if final_test and synthetic is None:
+        check_authorized_final_test_roster(args.data_root, package)
+    if final_test and drive_root is not None:
+        planned = {f"{p.key}.json" for p in plan}
+        batches = authorization.storage_root / "batches"
+        for other in batches.iterdir() if batches.exists() else ():
+            if other == args.out:
+                continue
+            if other.is_symlink() or not other.is_dir():
+                raise Refused("campaign contains an invalid batch directory")
+            prior = {p.name for p in (other / "results").glob("obs_*.json")}
+            if planned & prior:
+                raise Refused("campaign contains an observation in two batches")
     configs = {p.record["matrix_arm"]: p.config for p in plan}
     renderers = {a: InputRenderer(args.tokenizer_root, c, prompt) for a, c in configs.items()}
     revisions = {c.settings.model.revision for c in configs.values()}
@@ -875,16 +1176,16 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
     snapshot = inventory_snapshot(args.model_root, revisions.pop())
     official_inventory = None
     session_gpus = None
-    if getattr(args, "official", False):
+    if getattr(args, "official", False) and synthetic is None:
         from biorag_repro.generation import config as policy
         from biorag_repro.generation.environment import system_probes
         from biorag_repro.generation.environment_lock import capture_inventory, verify_environment
 
         if (
-            args.phase != "development"
-            or len(plan) != 1290
+            args.phase not in ("development", "final_test")
+            or len(plan) != (4575 if final_test else 1290)
             or getattr(args, "published_context_root", None) is None
-            or getattr(args, "selection", None) is None
+            or (not final_test and getattr(args, "selection", None) is None)
         ):
             raise Refused(
                 "official development requires full inputs and independent source selection"
@@ -921,14 +1222,23 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
     device = torch.device(args.device)
     identity = batch_identity(args, args.contexts_sha256, plan, seeds, prompt, snapshot,
                               environment(device))  # fmt: skip
+    if authorization is not None:
+        identity["execution_authorization"] = {
+            "source_revision": authorization.source_revision,
+            "policy_sha256": authorization.policy_sha256,
+            "evidence_sha256": authorization.evidence_sha256,
+        }
     if official_inventory is not None:
         identity.update(
             official_execution=True,
             environment_lock_sha256=lock_sha,
-            session_hostname=platform.node(),
-            session_boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
-            session_gpu_inventory=session_gpus["gpus"],
         )
+        if not final_test:
+            identity.update(
+                session_hostname=platform.node(),
+                session_boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                session_gpu_inventory=session_gpus["gpus"],
+            )
         status = subprocess.check_output(
             ["git", "status", "--porcelain", "--untracked-files=normal"], text=True
         ).strip()
@@ -936,11 +1246,66 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
             raise Refused("official execution requires reviewed clean code")
     out = args.out
     out.mkdir(parents=True, exist_ok=True)
+    publication_token = None
+    if synthetic is not None and drive_root is None:
+        from biorag_repro.finaltest.custody import verify_custody
+
+        manifest_sha256 = sha256_bytes(canonical_json_bytes(identity))
+        custody_states = verify_custody(
+            synthetic.custodian,
+            out,
+            out.name,
+            manifest_sha256,
+            args.custody_head_sha256,
+            synthetic.genesis_head,
+            authorization.anchor_dir,
+        )
+        if any(
+            state == "committed_absent" and not path.startswith("external/")
+            for path, state in custody_states.items()
+        ):
+            raise Refused("committed scientific publication is absent; recovery is untrusted")
+        external = [
+            entry
+            for entry in synthetic.custodian.entries()
+            if entry.path.startswith("external/")
+            and custody_states[entry.path] == "published_committed"
+        ]
+        if external and external[-1].content_sha256 != authorization.history_head_sha256:
+            from biorag_repro.finaltest.history_v2 import verify_history
+
+            recovered_head = external[-1].content_sha256
+            external_record = json.loads(
+                (authorization.anchor_dir / Path(external[-1].path).name).read_bytes()
+            )
+            if external_record.get("previous_anchor_sha256") != authorization.history_head_sha256:
+                raise Refused("stale or divergent external checkpoint head")
+            verify_history(
+                authorization.storage_root,
+                authorization.storage_authorization,
+                authorization.anchor_dir,
+                recovered_head,
+            )
+            authorization.history_head_sha256 = recovered_head
+        publication_token = _publication_session.set(
+            (out, synthetic.custodian, out.name, manifest_sha256)
+        )
     lock = out / "batch.lock"
     try:
-        lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        if final_test:
+            import fcntl
+
+            lock_fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW)
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                os.close(lock_fd)
+                raise Refused("final-test batch is already running") from None
+        else:
+            lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
     except FileExistsError:
         raise Refused(f"{lock} exists: another session is running or one crashed") from None
+    finished_normally = False
     try:
         batch_file = out / "batch.json"
         if batch_file.exists():
@@ -949,7 +1314,8 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
                 changed = sorted(k for k in identity if identity[k] != batch["identity"].get(k))
                 raise Refused(f"resume would change the batch identity: {changed}")
         else:
-            batch = {"run_id": "run_" + uuid.uuid4().hex, "created_utc": utc_now(),
+            batch = {"run_id": out.name if final_test else "run_" + uuid.uuid4().hex,
+                     "created_utc": utc_now(),
                      "researcher": "Rama Krishna Pudota", "identity": identity,
                      "model_snapshot": snapshot.model_dump(mode="json"),
                      "contexts_header": package.get("header", {})}  # fmt: skip
@@ -959,7 +1325,11 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
             invocation = len(list((out / "gpu_inventories").glob("*_start.json"))) + 1
             write_once(out / "gpu_inventories" / f"{invocation:06d}_start.json", dump(session_gpus))
             data = dump(official_inventory.model_dump(mode="json"))
-            start = out / "environment_start.json"
+            start = (
+                out / "environment_sessions" / f"{invocation:06d}_start.json"
+                if final_test
+                else out / "environment_start.json"
+            )
             if start.exists():
                 if start.read_bytes() != data:
                     raise Refused("same-session resume environment differs from its start")
@@ -1024,6 +1394,52 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
             check_result(
                 value, planned, renderers[planned.record["matrix_arm"]], run_id, events, out
             )
+        if synthetic is not None and drive_root is None and batch_file.exists():
+            from biorag_repro.finaltest.history_v2 import (
+                HistoryRefused,
+                _files,
+                _verify_history,
+                _verify_internal_seals,
+                anchor_batch,
+                verify_history,
+            )
+
+            try:
+                verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    authorization.history_head_sha256,
+                )
+            except HistoryRefused:
+                _verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    authorization.history_head_sha256,
+                    out.name,
+                )
+                try:
+                    _verify_internal_seals(_files(out), out)
+                except HistoryRefused:
+                    verify_batch_results(out, plan, renderers, run_id)
+                    seal(out)
+                authorization.history_head_sha256 = anchor_batch(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    out.name,
+                    authorization.history_head_sha256,
+                    custodian=synthetic.custodian,
+                    manifest_sha256=manifest_sha256,
+                    custody_genesis_head=synthetic.genesis_head,
+                )
+                verify_history(
+                    authorization.storage_root,
+                    authorization.storage_authorization,
+                    authorization.anchor_dir,
+                    authorization.history_head_sha256,
+                )
         finished = set(stored)
         print(f"run {run_id}: {len(finished)} of {len(plan)} observations finished")
         if model is None:
@@ -1166,6 +1582,9 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
                              observation_key=planned.key, event="completed")  # fmt: skip
                 break
             done += 1
+        if final_test:
+            verify_batch_results(out, plan, renderers, run_id)
+        finished_normally = True
         return done
     finally:
         try:
@@ -1176,7 +1595,11 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
                     raise Refused("GPU UUID inventory changed; retain failure evidence")
                 end = capture_inventory(system_probes(Path.cwd()))
                 data = dump(end.model_dump(mode="json"))
-                target = out / "environment_end.json"
+                target = (
+                    out / "environment_sessions" / f"{invocation:06d}_end.json"
+                    if final_test
+                    else out / "environment_end.json"
+                )
                 if target.exists():
                     if target.read_bytes() != data:
                         raise Refused("end environment changed during this session")
@@ -1186,13 +1609,123 @@ def run(args: argparse.Namespace, model: Any = None) -> int:
                     raise Refused("environment changed during execution; retain failure evidence")
         finally:
             os.close(lock_fd)
-            lock.unlink()
+            if not final_test:
+                lock.unlink()
+        if authorization is not None and finished_normally and (synthetic is None or done > 0):
+            from biorag_repro.finaltest.history_v2 import anchor_batch
+
+            seal(out)
+            drive_root = (
+                authorization.drive_root if synthetic is None else getattr(args, "drive_root", None)
+            )
+            previous_head = authorization.history_head_sha256
+            if drive_root is not None:
+                from biorag_repro.finaltest.drive_publication import publish_drive_batch
+
+                before_publish = lambda new_head: publish_drive_batch(
+                    out, drive_root / "snapshots" / new_head
+                )
+            else:
+                before_publish = None
+            head = anchor_batch(
+                authorization.storage_root,
+                authorization.storage_authorization,
+                authorization.anchor_dir,
+                out.name,
+                authorization.history_head_sha256,
+                custodian=synthetic.custodian
+                if synthetic is not None and drive_root is None
+                else None,
+                manifest_sha256=manifest_sha256
+                if synthetic is not None and drive_root is None
+                else None,
+                custody_genesis_head=synthetic.genesis_head
+                if synthetic is not None and drive_root is None
+                else None,
+                before_publish=before_publish,
+            )
+            if synthetic is not None:
+                authorization.history_head_sha256 = head
+            print(f"FINAL_TEST_HEAD_SHA256={head}")
+            if drive_root is not None:
+                from biorag_repro.finaltest.amended_custody import publish_request
+
+                request = publish_request(
+                    authorization.campaign_id,
+                    out,
+                    drive_root,
+                    previous_head,
+                    head,
+                )
+                raise Refused(
+                    f"researcher acknowledgment required for {request}: {sha256_file(request)}"
+                )
+        if publication_token is not None:
+            _publication_session.reset(publication_token)
 
 
 # ---- qualification aids: GPU inventory and boundary probe --------------------------------
 
 GPU_FIELDS = ("index", "name", "uuid", "memory.total", "driver_version", "compute_cap",
               "pci.bus_id")  # fmt: skip
+
+
+def verify_prior_reconstruction(args: argparse.Namespace, batch: dict) -> None:
+    """Bind a completed original-revision verifier pass to the current sealed batch."""
+    prefix = args.prior_verification_prefix
+    stdout = prefix.with_name(prefix.name + ".stdout.log")
+    stderr = prefix.with_name(prefix.name + ".stderr.log")
+    inputs = prefix.with_name(prefix.name + ".inputs.sha256")
+    start = prefix.with_name(prefix.name + ".start")
+    end = prefix.with_name(prefix.name + ".end")
+    status = prefix.with_name(prefix.name + ".exit_status")
+    if (
+        sha256_file(stdout) != args.prior_stdout_sha256
+        or sha256_file(inputs) != args.prior_inputs_sha256
+        or stderr.read_bytes()
+        or status.read_text().strip() != "0"
+        or "verified 1290 approved development observations; final test remains closed"
+        not in stdout.read_text().splitlines()[-1:]
+    ):
+        raise Refused("prior official verifier result differs from its trusted evidence")
+    start_fields = dict(line.split("=", 1) for line in start.read_text().splitlines())
+    end_fields = dict(line.split("=", 1) for line in end.read_text().splitlines())
+    if (
+        start_fields.get("checkout") != batch["identity"]["git"]["head"]
+        or not start_fields.get("start_utc")
+        or not end_fields.get("end_utc")
+        or end_fields["end_utc"] <= start_fields["start_utc"]
+    ):
+        raise Refused("prior verifier source revision or completion record differs")
+    repository = Path(__file__).resolve().parents[1]
+    package = args.contexts.parent.parent
+    expected = {
+        args.contexts.resolve(),
+        *(p.resolve() for p in args.configs.glob("*.toml")),
+        args.prompt.resolve(),
+        args.seeds.resolve(),
+        args.environment_lock.resolve(),
+        args.selection.resolve(),
+        args.anchor.resolve(),
+        (package / "manifest.json").resolve(),
+    }
+    recorded = {}
+    for line in inputs.read_text().splitlines():
+        digest, name = line.split("  ", 1)
+        path = Path(name)
+        resolved = (path if path.is_absolute() else repository / path).resolve()
+        if resolved in recorded or sha256_file(resolved) != digest:
+            raise Refused("prior verifier input inventory differs from current bytes")
+        recorded[resolved] = digest
+    if set(recorded) != expected or recorded[args.anchor.resolve()] != args.anchor_sha256:
+        raise Refused("prior verifier inputs differ from this evaluation request")
+    if recorded[args.contexts.resolve()] != args.contexts_sha256:
+        raise Refused("prior verifier context identity differs")
+    manifest = json.loads((package / "manifest.json").read_bytes())
+    for name, identity in manifest["files"].items():
+        path = package / name
+        if sha256_file(path) != identity["sha256"] or path.stat().st_size != identity["bytes"]:
+            raise Refused("prior verifier package contents differ")
 
 
 def verify_official_batch(args: argparse.Namespace) -> list[GenerationResult]:
@@ -1290,15 +1823,20 @@ def verify_official_batch(args: argparse.Namespace) -> list[GenerationResult]:
         "seed_registry_sha256"
     ] != seed_registry_sha256(seeds):
         raise Refused("batch prompt or seed registry differs")
-    # Reproduce published lineage from independently supplied source selections. This
-    # does not accept a submitted context's own claimed upstream selection as authority.
-    selection = json.loads(args.selection.read_bytes())
-    with TemporaryDirectory(prefix="biorag-official-contexts-") as temporary:
-        root = Path(temporary)
-        rebuilt = root / "contexts.json"
-        build_published(selection, rebuilt, root / "published")
-        if json.loads(rebuilt.read_bytes()) != package:
-            raise Refused("contexts differ from independently reconstructed scientific lineage")
+    # A previously completed reconstruction may be reused only with its exact
+    # independently retained result and input inventory. All sealed observation,
+    # attempt, receipt, environment and result checks below still run afresh.
+    prior = getattr(args, "prior_verification_prefix", None)
+    if prior is not None:
+        verify_prior_reconstruction(args, batch)
+    else:
+        selection = json.loads(args.selection.read_bytes())
+        with TemporaryDirectory(prefix="biorag-official-contexts-") as temporary:
+            root = Path(temporary)
+            rebuilt = root / "contexts.json"
+            build_published(selection, rebuilt, root / "published")
+            if json.loads(rebuilt.read_bytes()) != package:
+                raise Refused("contexts differ from independently reconstructed scientific lineage")
     events = read_events(args.out)
     expected_set = set(expected_keys)
     if {p.stem for p in (args.out / "results").glob("obs_*.json")} != expected_set:
@@ -1593,6 +2131,7 @@ def seal(out: Path) -> str:
             ("raw", "**/*.txt"),
             ("receipts", "**/*.json"),
             ("environments", "*.json"),
+            ("environment_sessions", "*.json"),
             ("gpu_inventories", "*.json"),
         )
         for p in sorted((out / folder).glob(pattern))
@@ -1624,6 +2163,11 @@ def main(argv: list[str] | None = None) -> None:
     go.add_argument("--device", required=True, help="explicit device, for example cuda:0")
     go.add_argument("--anchor", type=Path)
     go.add_argument("--anchor-sha256")
+    go.add_argument("--repo", type=Path)
+    go.add_argument("--data-root", type=Path)
+    go.add_argument("--expected-head-sha256")
+    go.add_argument("--custody-mode", choices=("ordinary", "amended_drive"), default="ordinary")
+    go.add_argument("--researcher-acknowledgment", type=Path)
     go.add_argument("--stop-after", type=int)
     check_inputs = commands.add_parser("preflight")
     for name in (

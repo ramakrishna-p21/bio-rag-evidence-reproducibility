@@ -255,6 +255,302 @@ def batch_with(batch: Namespace, **changes) -> Namespace:
     return Namespace(**(vars(batch) | changes))
 
 
+def test_synthetic_final_test_runner_lifecycle(batch, tmp_path, monkeypatch):
+    """Exercise the guarded runner's private seam with all frozen matrix coordinates."""
+    from types import SimpleNamespace
+
+    from test_finaltest_history_v2 import root_fixture
+
+    from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
+    from biorag_repro.finaltest.custody import SyntheticCustodian
+    from biorag_repro.finaltest.history_v2 import verify_history
+
+    (tmp_path / "custody").mkdir()
+    root, storage, anchors, genesis = root_fixture(tmp_path / "custody")
+    package = json.loads(batch.contexts.read_bytes())
+    package["header"] = {
+        "item_ids": [f"synthetic_{n:03d}" for n in range(305)],
+        "arms": list(FROZEN_MATRIX),
+    }
+    base = package["records"][0]
+    package["records"] = [
+        {
+            **base,
+            "item_id": item,
+            "paper_id": f"synthetic_paper_{index % 40:02d}",
+            "matrix_arm": arm,
+            "condition": condition,
+            "split": "final_test",
+            "context": None if arm == "closed_book" else base["context"],
+            "context_sha256": None if arm == "closed_book" else base["context_sha256"],
+            "context_tokens": None if arm == "closed_book" else base["context_tokens"],
+            "retrieval_config_sha256": None if arm == "closed_book" else SHA_A,
+        }
+        for index, item in enumerate(package["header"]["item_ids"])
+        for arm, (conditions, _) in FROZEN_MATRIX.items()
+        for condition in conditions
+    ]
+    batch.contexts.write_bytes(json.dumps(package).encode())
+    for arm in ("dense_robustness", "chunk_robustness"):
+        settings = synthetic_settings() | {
+            "matrix_arm": arm,
+            "prompt_sha256": prompt_sha256(artifact()),
+            "output_schema_sha256": output_schema_sha256(artifact()),
+            "seed_registry_version": SEEDS.registry_version,
+            "seed_registry_sha256": seed_registry_sha256(SEEDS),
+        }
+        (batch.configs / f"{arm}.toml").write_text(to_toml(settings))
+    authorization = SimpleNamespace(
+        source_revision="synthetic",
+        policy_sha256="a" * 64,
+        evidence_sha256="b" * 64,
+        storage_root=root,
+        storage_authorization=storage,
+        anchor_dir=anchors,
+        history_head_sha256=genesis,
+        campaign_id="rk_capstone_final_test_2026",
+    )
+    custody = SyntheticCustodian(genesis)
+    seam = SimpleNamespace(authorization=authorization, custodian=custody, genesis_head=genesis)
+    args = batch_with(
+        batch,
+        contexts_sha256=sha256_bytes(batch.contexts.read_bytes()),
+        phase="final_test",
+        out=root / "batches" / ("run_" + "d" * 32),
+        custody_head_sha256=custody.authoritative_head(),
+        expected_head_sha256=genesis,
+        drive_root=tmp_path / "synthetic_drive",
+    )
+
+    def acknowledge():
+        from biorag_repro.core.hashing import sha256_file
+
+        head = authorization.history_head_sha256
+        request = args.drive_root / "requests" / f"{head}.json"
+        retained = tmp_path / "retained_heads"
+        retained.mkdir(exist_ok=True)
+        target = retained / f"simulated_{head}.json"
+        target.write_text(
+            json.dumps(
+                {
+                    "schema_version": "researcher_head_ack_v1",
+                    "researcher": "Rama Krishna Pudota",
+                    "request_sha256": sha256_file(request),
+                    "campaign_id": authorization.campaign_id,
+                    "batch_id": args.out.name,
+                    "new_head_sha256": head,
+                }
+            )
+        )
+        args.expected_head_sha256 = head
+        args.researcher_acknowledgment = target
+
+    def synthetic_generate(_model, _tokenizer, rendered, _ids, _planned, _seeds, **_):
+        return {
+            "raw": '{"answer":"synthetic","abstained":false}',
+            "rendered_sha256": rendered.rendered_sha256,
+            "input_tokens": rendered.input_tokens,
+            "input_token_ids_sha256": rendered.input_token_ids_sha256,
+            "output_tokens": 1,
+            "output_token_ids_sha256": sha256_bytes(b"synthetic"),
+            "stop_reason": "eos",
+            "seed": None,
+            "generation_ns": 1,
+            "cuda_memory": {"status": "synthetic"},
+        }
+
+    monkeypatch.setattr(rg, "generate", synthetic_generate)
+    with pytest.raises(rg.Refused, match="researcher acknowledgment required"):
+        rg._run(batch_with(args, stop_after=2), model=object(), synthetic=seam)
+    acknowledge()
+    args.custody_head_sha256 = custody.authoritative_head()
+    original_write = rg.write_once
+
+    def interrupted_write(path, data):
+        original_write(path, data)
+        if path.parent.name == "results":
+            raise KeyboardInterrupt("synthetic termination after result publication")
+
+    monkeypatch.setattr(rg, "write_once", interrupted_write)
+    with pytest.raises(KeyboardInterrupt, match="synthetic termination"):
+        rg._run(batch_with(args, stop_after=1), model=object(), synthetic=seam)
+    monkeypatch.setattr(rg, "write_once", original_write)
+    args.custody_head_sha256 = custody.authoritative_head()
+    with pytest.raises(rg.Refused, match="researcher acknowledgment required"):
+        rg._run(args, model=object(), synthetic=seam)
+    acknowledge()
+    args.custody_head_sha256 = custody.authoritative_head()
+    assert rg._run(args, model=object(), synthetic=seam) == 0
+    assert len(list((args.out / "results").glob("obs_*.json"))) == 4575
+    assert len(verify_history(root, storage, anchors, authorization.history_head_sha256)) == 2
+
+
+def test_small_amended_drive_runner_ack_and_restart(batch, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from test_finaltest_history_v2 import root_fixture
+
+    from biorag_repro.core.hashing import sha256_file
+    from biorag_repro.finaltest.custody import SyntheticCustodian
+
+    root, storage, anchors, genesis = root_fixture(tmp_path)
+    package = json.loads(batch.contexts.read_bytes())
+    for record in package["records"]:
+        record["split"] = "final_test"
+    batch.contexts.write_text(json.dumps(package))
+    monkeypatch.setattr(rg, "validate_final_test_plan", lambda _package, _plan: None)
+    authorization = SimpleNamespace(
+        source_revision="synthetic",
+        policy_sha256="a" * 64,
+        evidence_sha256="b" * 64,
+        storage_root=root,
+        storage_authorization=storage,
+        anchor_dir=anchors,
+        history_head_sha256=genesis,
+        campaign_id="rk_capstone_final_test_2026",
+    )
+    custodian = SyntheticCustodian(genesis)
+    seam = SimpleNamespace(authorization=authorization, custodian=custodian, genesis_head=genesis)
+    drive = Path(os.environ.get("BIORAG_SYNTHETIC_DRIVE_ROOT", tmp_path / "drive"))
+    retained = tmp_path / "retained"
+    retained.mkdir()
+
+    def fake_generate(_model, _tokenizer, rendered, _ids, _planned, _seeds, **_):
+        return {
+            "raw": '{"answer":"synthetic","abstained":false}',
+            "rendered_sha256": rendered.rendered_sha256,
+            "input_tokens": rendered.input_tokens,
+            "input_token_ids_sha256": rendered.input_token_ids_sha256,
+            "output_tokens": 1,
+            "output_token_ids_sha256": sha256_bytes(b"synthetic"),
+            "stop_reason": "eos",
+            "seed": None,
+            "generation_ns": 1,
+            "cuda_memory": {"status": "synthetic"},
+        }
+
+    monkeypatch.setattr(rg, "generate", fake_generate)
+    first = batch_with(
+        batch,
+        phase="final_test",
+        contexts_sha256=sha256_bytes(batch.contexts.read_bytes()),
+        out=root / "batches" / ("run_" + "a" * 32),
+        drive_root=drive,
+        custody_head_sha256=custodian.authoritative_head(),
+        stop_after=1,
+        expected_head_sha256=genesis,
+    )
+    with pytest.raises(rg.Refused, match="researcher acknowledgment required"):
+        rg._run(first, model=object(), synthetic=seam)
+    head = authorization.history_head_sha256
+    request = drive / "requests" / f"{head}.json"
+    acknowledgment = retained / f"simulated_{head}.json"
+    acknowledgment.write_text(
+        json.dumps(
+            {
+                "schema_version": "researcher_head_ack_v1",
+                "researcher": "Rama Krishna Pudota",
+                "request_sha256": sha256_file(request),
+                "campaign_id": authorization.campaign_id,
+                "batch_id": first.out.name,
+                "new_head_sha256": head,
+            }
+        )
+    )
+    second_package = json.loads(first.contexts.read_bytes())
+    second_package["header"]["item_ids"] = ["q_2"]
+    for record in second_package["records"]:
+        record["item_id"] = "q_2"
+        record["question"] = "What is measured in q_2?"
+    second_contexts = tmp_path / "second_contexts.json"
+    second_contexts.write_text(json.dumps(second_package))
+    second = batch_with(
+        first,
+        contexts=second_contexts,
+        contexts_sha256=sha256_bytes(second_contexts.read_bytes()),
+        out=root / "batches" / ("run_" + "b" * 32),
+        researcher_acknowledgment=acknowledgment,
+        custody_head_sha256=custodian.authoritative_head(),
+        expected_head_sha256=head,
+    )
+    with pytest.raises(rg.Refused, match="observation in two batches"):
+        rg._run(
+            batch_with(
+                first,
+                out=second.out,
+                researcher_acknowledgment=acknowledgment,
+                expected_head_sha256=head,
+            ),
+            model=object(),
+            synthetic=seam,
+        )
+    original = rg.write_once
+
+    def interrupt(path, data):
+        original(path, data)
+        if path.parent.name == "results":
+            raise KeyboardInterrupt("synthetic interruption")
+
+    monkeypatch.setattr(rg, "write_once", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="synthetic interruption"):
+        rg._run(second, model=object(), synthetic=seam)
+    monkeypatch.setattr(rg, "write_once", original)
+    from biorag_repro.finaltest import history_v2
+
+    original_publish = history_v2.publish_bytes
+
+    def interrupt_anchor(path, *args, **kwargs):
+        if path.parent == anchors:
+            raise KeyboardInterrupt("synthetic interruption after Drive manifest")
+        return original_publish(path, *args, **kwargs)
+
+    monkeypatch.setattr(history_v2, "publish_bytes", interrupt_anchor)
+    with pytest.raises(KeyboardInterrupt, match="after Drive manifest"):
+        rg._run(second, model=object(), synthetic=seam)
+    monkeypatch.setattr(history_v2, "publish_bytes", original_publish)
+    with pytest.raises(rg.Refused, match="researcher acknowledgment required"):
+        rg._run(second, model=object(), synthetic=seam)
+    assert len(list((second.out / "results").glob("obs_*.json"))) == 2
+    second_head = authorization.history_head_sha256
+    second_request = drive / "requests" / f"{second_head}.json"
+    second_ack = retained / f"simulated_{second_head}.json"
+    second_ack.write_text(
+        json.dumps(
+            {
+                "schema_version": "researcher_head_ack_v1",
+                "researcher": "Rama Krishna Pudota",
+                "request_sha256": sha256_file(second_request),
+                "campaign_id": authorization.campaign_id,
+                "batch_id": second.out.name,
+                "new_head_sha256": second_head,
+            }
+        )
+    )
+    second = batch_with(
+        second,
+        expected_head_sha256=second_head,
+        researcher_acknowledgment=second_ack,
+        stop_after=None,
+    )
+    from biorag_repro.finaltest import amended_custody
+
+    original_request = amended_custody.publish_request
+
+    def interrupt_request(*_args, **_kwargs):
+        raise KeyboardInterrupt("synthetic interruption after external anchor")
+
+    monkeypatch.setattr(amended_custody, "publish_request", interrupt_request)
+    with pytest.raises(KeyboardInterrupt, match="after external anchor"):
+        rg._run(second, model=object(), synthetic=seam)
+    monkeypatch.setattr(amended_custody, "publish_request", original_request)
+    pending = authorization.history_head_sha256
+    authorization.history_head_sha256 = second_head
+    authorization.pending_head_sha256 = pending
+    with pytest.raises(rg.Refused, match="researcher acknowledgment required"):
+        rg._run(second, model=object(), synthetic=seam)
+    assert len(list((second.out / "results").glob("obs_*.json"))) == 11
+
+
 @pytest.mark.parametrize("field", ["input_tokens", "input_token_ids_sha256"])
 def test_a_generation_input_unlike_the_rendered_input_stops_before_any_attempt(
     batch, monkeypatch, field

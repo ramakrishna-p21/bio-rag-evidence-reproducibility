@@ -57,6 +57,8 @@ def publish_record(
     dependencies: Dependencies,
     transformation_id: str,
     root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     """Write the record and its build manifest; returns (record, build manifest) references."""
     model = type(value)
@@ -67,6 +69,7 @@ def publish_record(
         serialize_project_json(value, model),
         ref.sha256,
         validate_temp=lambda path: read_project_json(path, ref.sha256, model),
+        reuse_identical=reuse_identical,
     )
     manifest = BuildManifest(
         schema_version="1",
@@ -85,7 +88,12 @@ def publish_record(
     )
     logical_ref = f"evaluation/{stage}/build/{ref.artifact_id}.build.json"
     (root / logical_ref).parent.mkdir(parents=True, exist_ok=True)
-    digest = publish_manifest(manifest, root / logical_ref, {ref.logical_ref: target})
+    digest = publish_manifest(
+        manifest,
+        root / logical_ref,
+        {ref.logical_ref: target},
+        reuse_identical=reuse_identical,
+    )
     return ref, ArtifactRef(artifact_id="build_" + digest, logical_ref=logical_ref, sha256=digest)
 
 
