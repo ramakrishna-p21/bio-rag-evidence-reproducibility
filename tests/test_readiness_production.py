@@ -166,10 +166,7 @@ def _subject():
         "renv_lock_sha256": sha256_bytes(data),
         "analysis_sources_sha256": sources,
         "r_version": lock["R"]["Version"],
-        "packages": {
-            name: {"version": pkg["Version"], "library_index": "1"}
-            for name, pkg in lock["Packages"].items()
-        },
+        "packages": {name: {"version": pkg["Version"]} for name, pkg in lock["Packages"].items()},
         "blas_execution_pin": {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"},
     }
 
@@ -183,6 +180,9 @@ def _record(**changes):
         "execution_source_identity_sha256": IDENTITY,
         "subject": subject,
         "subject_sha256": sha256_bytes(canonical_json_bytes(subject)),
+        "observed_packages": {
+            n: {**p, "library_index": "1"} for n, p in subject["packages"].items()
+        },
     }
     return {**value, **changes}
 
@@ -236,7 +236,7 @@ def _altered_subject(**changes):
 def _altered_package():
     subject = _subject()
     name = next(iter(subject["packages"]))
-    subject["packages"][name] = {"version": "0.0.0", "library_index": "1"}
+    subject["packages"][name] = {"version": "0.0.0"}
     return subject
 
 
@@ -339,3 +339,41 @@ def test_the_designated_host_exports_evidence_that_the_generation_host_accepts(
     monkeypatch.setattr(production.socket, "gethostname", lambda: "colab-l4")
     g = evidence.r_environment(live, _source())
     assert (g.state, g.reason) == ("ok", "checks_passed")
+
+
+def _live_designated(tmp_path, monkeypatch, *, index=None, version=None):
+    """Live G07 on the designated host with a fake R session; one package can be changed."""
+    _, lock, _ = _lock()
+    library = str((REPO / "analysis/renv/library").resolve())
+    lines = [f"BIORAG\tlibpaths\t{library}", f"BIORAG\trversion\t{lock['R']['Version']}"]
+    for n, p in lock["Packages"].items():
+        v, i = p["Version"], "1"
+        if n == "lattice":
+            v, i = version or v, index or i
+        lines.append(f"BIORAG\tpkg\t{n}\t{v}\t{i}")
+    ctx = _colab(tmp_path, monkeypatch)
+    ctx = replace(ctx, probes=replace(ctx.probes, r_runtime=lambda d, p: "\n".join(lines)))
+    monkeypatch.setattr(production.socket, "gethostname", lambda: "YOGA-C940")
+    monkeypatch.setattr(production.platform, "release", lambda: "6.0-microsoft-standard-WSL2")
+    monkeypatch.setattr(
+        production.Path,
+        "read_text",
+        lambda self, *a, **k: 'VERSION_ID="22.04"' if str(self) == "/etc/os-release" else "",
+    )
+    return evidence.r_environment(ctx, _source())
+
+
+def test_g07_library_positions_are_diagnostic_and_not_identity(tmp_path, monkeypatch):
+    first = _live_designated(tmp_path, monkeypatch, index="4")
+    monkeypatch.undo()
+    second = _live_designated(tmp_path, monkeypatch, index="2")
+    assert (first.state, second.state) == ("ok", "ok")
+    assert first.subject == second.subject == _subject()
+    assert first.facts["observed_packages"]["lattice"]["library_index"] == "4"
+    assert second.facts["observed_packages"]["lattice"]["library_index"] == "2"
+
+
+def test_g07_a_changed_locked_package_version_still_fails(tmp_path, monkeypatch):
+    g = _live_designated(tmp_path, monkeypatch, version="0.0.1")
+    assert (g.state, g.reason) == ("failed", "installed_r_packages_differ_from_lock")
+    assert g.subject is None

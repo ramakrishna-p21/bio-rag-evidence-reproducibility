@@ -573,6 +573,7 @@ class AnalysisHostEvidence(Record):
     execution_source_identity_sha256: Sha256
     subject: dict[str, Any]
     subject_sha256: Sha256
+    observed_packages: dict[str, Any]  # diagnostic only, including library positions
 
 
 def export_analysis_host_evidence(ctx: Context, source: Gathered) -> bytes:
@@ -596,6 +597,7 @@ def export_analysis_host_evidence(ctx: Context, source: Gathered) -> bytes:
             execution_source_identity_sha256=identity,
             subject=live.subject,
             subject_sha256=sha256_bytes(canonical_json_bytes(live.subject)),
+            observed_packages=live.facts["observed_packages"],
         ).model_dump(mode="json")
     )
 
@@ -773,6 +775,7 @@ def r_environment(ctx: Context, source: Gathered | None = None) -> Gathered:
                 )
             )
             out.state, out.reason = "ok", "checks_passed"
+            out.facts["observed_packages"] = observed["packages"]
             out.subject = {
                 "kind": "designated_analysis_environment_v1",
                 "designation_sha256": sha256_bytes(designation_bytes),
@@ -780,7 +783,9 @@ def r_environment(ctx: Context, source: Gathered | None = None) -> Gathered:
                 "renv_lock_sha256": sha256_bytes(lock_bytes),
                 "analysis_sources_sha256": sources,
                 "r_version": observed["rversion"],
-                "packages": observed["packages"],
+                # Versions only: a package's position in .libPaths() depends on renv sandbox
+                # state, so it is kept as diagnostic evidence (r_inspection) and not identity.
+                "packages": {n: {"version": p["version"]} for n, p in observed["packages"].items()},
                 "blas_execution_pin": {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"},
             }
             out.detail = (
