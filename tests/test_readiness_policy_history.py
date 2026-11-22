@@ -168,6 +168,30 @@ def test_a_commit_that_restores_the_same_content_restores_the_same_scope_identit
     assert git_state.probe(repo).entries == before.entries
 
 
+def test_a_prior_revision_remains_the_execution_identity_when_only_the_decision_is_added(repo):
+    source_revision = git(repo, "rev-parse", "HEAD").strip()
+    decision = repo / git_state.EXECUTION_DECISION_FILE
+    decision.parent.mkdir()
+    decision.write_text("{}\n")
+    git(repo, "add", str(decision.relative_to(repo)))
+    git(repo, "commit", "-q", "-m", "decision")
+    state = git_state.probe(repo)
+    git_state.verify_execution_revision(repo, state, source_revision)
+    assert any(entry[2] == git_state.EXECUTION_DECISION_FILE for entry in state.entries)
+
+
+def test_execution_revision_rejects_changed_source_and_forged_revisions(repo):
+    source_revision = git(repo, "rev-parse", "HEAD").strip()
+    (repo / "src/a.py").write_text("a = 2\n")
+    git(repo, "commit", "-qam", "source change")
+    with pytest.raises(git_state.GitUnavailable, match="changed"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), source_revision)
+    with pytest.raises(git_state.GitUnavailable, match="ancestor"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), "f" * 40)
+    with pytest.raises(git_state.GitUnavailable, match="ancestor"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), "short")
+
+
 def test_the_scientific_scope_contains_the_policy_and_the_evaluator():
     """Recorded because it constrains any design that commits an approval between batches.
 

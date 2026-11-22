@@ -742,6 +742,14 @@ def scientific_source(ctx: Context) -> Gathered:
             str(error),
         )
         return out
+    execution_subject = {
+        "kind": "scientific_source_v1",
+        "tracked_scope": [list(e) for e in git_state.execution_entries(state.entries)],
+        "frozen_specifications": specs,
+    }
+    out.facts["execution_source_identity_sha256"] = sha256_bytes(
+        canonical_json_bytes(execution_subject)
+    )
     out.subject = {
         "kind": "scientific_source_v1",
         "tracked_scope": [list(e) for e in state.entries],

@@ -21,9 +21,9 @@ directory during a check. `registry_lock` is `flock`: it excludes other holders 
 and says nothing about network or shared file systems; supporting concurrent writers on the
 execution host's file system needs an explicit, separately approved arrangement.
 
-Initialization is for rehearsal roots only. The `final_test` contract is: the same three
-publications in the same order, authorized by an approved G11 artifact and performed by a
-separately reviewed act that does not exist yet.
+The general initializer is for rehearsal roots only. Production final-test genesis uses the
+same private publication sequence only through `finaltest.genesis`, after live readiness,
+the approved G11 artifact and the exact researcher decision have all been verified.
 """
 
 import fcntl
@@ -88,6 +88,13 @@ class RootVerdict:
     anchor_sha256: str | None
     inventory: dict[str, Any]  # canonical-JSON snapshot of the complete inventory
     problems: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class GenesisRecords:
+    root: bytes
+    event: bytes
+    anchor: bytes
 
 
 # ---- enumeration ---------------------------------------------------------------------------
@@ -450,6 +457,49 @@ def _publish(target: Path, data: bytes) -> None:
     target.chmod(0o444)
 
 
+def genesis_records(authorization: StorageAuthorization, created_utc: str) -> GenesisRecords:
+    """Render the exact immutable genesis publications without touching storage."""
+    root_id = layout.root_id_for(authorization)
+    authorization_sha = layout.authorization_sha256(authorization)
+    root_bytes = layout.serialize(
+        RootRecord(
+            layout_version=layout.LAYOUT_VERSION,
+            root_kind=authorization.root_kind,
+            root_id=root_id,
+            authorization_sha256=authorization_sha,
+            corpus_content_sha256=authorization.corpus_content_sha256,
+            benchmark_release_sha256=authorization.benchmark_release_sha256,
+            matrix_id=authorization.matrix_id,
+            created_utc=created_utc,
+        )
+    )
+    event_bytes = layout.serialize(
+        layout.make_event(
+            root_id=root_id,
+            sequence=1,
+            event_type="root_initialized",
+            previous_event_sha256=None,
+            evidence=[
+                EvidenceCitation(role="root_file", sha256=sha256_bytes(root_bytes)),
+                EvidenceCitation(role="storage_authorization", sha256=authorization_sha),
+            ],
+            created_utc=created_utc,
+        )
+    )
+    anchor_bytes = layout.serialize(
+        RootAnchor(
+            layout_version=layout.LAYOUT_VERSION,
+            root_kind=authorization.root_kind,
+            root_id=root_id,
+            authorization_sha256=authorization_sha,
+            root_file_sha256=sha256_bytes(root_bytes),
+            genesis_event_sha256=sha256_bytes(event_bytes),
+            created_utc=created_utc,
+        )
+    )
+    return GenesisRecords(root=root_bytes, event=event_bytes, anchor=anchor_bytes)
+
+
 def initialize_root(
     root: Path,
     authorization: StorageAuthorization,
@@ -465,8 +515,8 @@ def initialize_root(
     """
     if authorization.root_kind != "rehearsal":
         raise InitializationRefused(
-            "only a rehearsal root can be initialized in this pass; a final_test root needs an "
-            "approved G11 artifact and a separately reviewed act"
+            "this entry point initializes rehearsal roots only; final_test genesis requires "
+            "the authorized production procedure"
         )
     return _initialize(root, authorization, anchor_dir, now)
 
@@ -477,8 +527,7 @@ def _initialize(
     anchor_dir: Path,
     now: Callable[[], str],
 ) -> RootVerdict:
-    """The initialization steps, for any kind. Not exported: tests build synthetic `final_test`
-    roots with it, production code has no caller."""
+    """The common publication steps for tests and the guarded production genesis procedure."""
     if str(root) != authorization.authorized_root:
         raise InitializationRefused("the root is not at the approved location")
     anchors = Path(os.path.abspath(anchor_dir))
@@ -504,50 +553,14 @@ def _initialize(
     (root / layout.REGISTRY_DIR).mkdir()
     (root / layout.LOCKS_DIR).mkdir()
 
-    root_id = layout.root_id_for(authorization)
-    authorization_sha = layout.authorization_sha256(authorization)
     stamp = now()
-    root_bytes = layout.serialize(
-        RootRecord(
-            layout_version=layout.LAYOUT_VERSION,
-            root_kind=authorization.root_kind,
-            root_id=root_id,
-            authorization_sha256=authorization_sha,
-            corpus_content_sha256=authorization.corpus_content_sha256,
-            benchmark_release_sha256=authorization.benchmark_release_sha256,
-            matrix_id=authorization.matrix_id,
-            created_utc=stamp,
-        )
-    )
-    event_bytes = layout.serialize(
-        layout.make_event(
-            root_id=root_id,
-            sequence=1,
-            event_type="root_initialized",
-            previous_event_sha256=None,
-            evidence=[
-                EvidenceCitation(role="root_file", sha256=sha256_bytes(root_bytes)),
-                EvidenceCitation(role="storage_authorization", sha256=authorization_sha),
-            ],
-            created_utc=stamp,
-        )
-    )
-    anchor_bytes = layout.serialize(
-        RootAnchor(
-            layout_version=layout.LAYOUT_VERSION,
-            root_kind=authorization.root_kind,
-            root_id=root_id,
-            authorization_sha256=authorization_sha,
-            root_file_sha256=sha256_bytes(root_bytes),
-            genesis_event_sha256=sha256_bytes(event_bytes),
-            created_utc=stamp,
-        )
-    )
+    records = genesis_records(authorization, stamp)
+    root_id = layout.root_id_for(authorization)
     with registry_lock(root):
-        _publish(root / layout.ROOT_FILE, root_bytes)
-        _publish(root / layout.REGISTRY_DIR / "000001.json", event_bytes)
+        _publish(root / layout.ROOT_FILE, records.root)
+        _publish(root / layout.REGISTRY_DIR / "000001.json", records.event)
         anchors.mkdir(parents=True, exist_ok=True)
-        _publish(anchors / (root_id + layout.ANCHOR_SUFFIX), anchor_bytes)
+        _publish(anchors / (root_id + layout.ANCHOR_SUFFIX), records.anchor)
     verdict = verify_root(root, authorization, anchors)
     if verdict.code != NO_PRIOR:
         raise InitializationRefused(f"the new root does not verify: {verdict.code}")
@@ -562,6 +575,7 @@ __all__ = [
     "RegistryBusy",
     "RootVerdict",
     "check_registry",
+    "genesis_records",
     "initialize_root",
     "registry_lock",
     "verify_root",

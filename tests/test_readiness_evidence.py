@@ -399,6 +399,22 @@ def test_g09_descendant_commit_with_other_content_is_a_different_identity(world)
     assert g.state == "ok" and subject_digest(g) != first and g.facts["head_sha"] != world.commit
 
 
+def test_g09_keeps_the_decision_in_its_subject_but_not_in_execution_source_identity(world):
+    before = gathered(world, "G09_scientific_source_revision")
+    before_subject = subject_digest(before)
+    before_execution = before.facts["execution_source_identity_sha256"]
+    write(world.repo / "approvals/final_test_execution.json", "{}\n")
+    git(world.repo, "add", "approvals/final_test_execution.json")
+    git(world.repo, "commit", "-qm", "decision")
+    after = gathered(world, "G09_scientific_source_revision")
+    assert subject_digest(after) != before_subject
+    assert after.facts["execution_source_identity_sha256"] == before_execution
+    assert any(
+        entry[2] == "approvals/final_test_execution.json"
+        for entry in after.subject["tracked_scope"]
+    )
+
+
 def test_g09_untracked_and_modified_scientific_source_fail(world):
     write(world.repo / "src/odd nameé.py", "z = 1\n")
     g = gathered(world, "G09_scientific_source_revision")
@@ -600,3 +616,27 @@ def test_g07_recognises_the_project_library_when_the_repository_is_given_as_a_re
     ctx = replace(ctx, repo=pathlib.Path("."))
     g = evidence.r_environment(ctx)
     assert g.reason == "analysis_designation_missing", g.detail
+
+
+def test_g09_authenticates_decision_bytes_and_execution_identity_tracks_code(world):
+    path = world.repo / "approvals/final_test_execution.json"
+    write(path, "{}\n")
+    git(world.repo, "add", "approvals/final_test_execution.json")
+    git(world.repo, "commit", "-qm", "decision")
+    first = gathered(world, "G09_scientific_source_revision")
+    write(path, '{"edited": true}\n')
+    git(world.repo, "commit", "-qam", "edit decision")
+    edited = gathered(world, "G09_scientific_source_revision")
+    assert subject_digest(edited) != subject_digest(first)
+    assert (
+        edited.facts["execution_source_identity_sha256"]
+        == first.facts["execution_source_identity_sha256"]
+    )
+    write(world.repo / "src/changed.py", "x = 1\n")
+    git(world.repo, "add", "src/changed.py")
+    git(world.repo, "commit", "-qm", "code")
+    code = gathered(world, "G09_scientific_source_revision")
+    assert (
+        code.facts["execution_source_identity_sha256"]
+        != first.facts["execution_source_identity_sha256"]
+    )

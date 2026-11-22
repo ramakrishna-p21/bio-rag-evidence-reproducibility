@@ -4,7 +4,7 @@ import platform
 import socket
 from pathlib import Path
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, sha256_file
+from biorag_repro.core.hashing import sha256_bytes, sha256_file
 from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
 from biorag_repro.generation import config as generator_config
 from biorag_repro.generation.config import require_qualified_settings, resolve_generator_config
@@ -200,8 +200,11 @@ def production_freeze(ctx, source: Gathered) -> Gathered:
             return out
         if source.state != "ok" or source.subject is None:
             raise FileProblem("execution source has no verified G09 subject")
-        if sha256_bytes(canonical_json_bytes(source.subject)) != record["execution_source_sha256"]:
-            raise FileProblem("execution source differs from G09")
+        if (
+            source.facts.get("execution_source_identity_sha256")
+            != record["execution_source_sha256"]
+        ):
+            raise FileProblem("execution source differs from the frozen execution identity")
         out.state, out.reason, out.subject = "ok", "checks_passed", record
         return out
     except FileMissing as error:
