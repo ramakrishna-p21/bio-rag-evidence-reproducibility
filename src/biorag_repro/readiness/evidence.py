@@ -561,7 +561,119 @@ def parse_r_runtime(text: str) -> dict[str, Any]:
     return result
 
 
-def r_environment(ctx: Context) -> Gathered:
+G07_HOST_RECORD = "readiness/hosts/g07_analysis_host_v1.json"
+
+
+class AnalysisHostEvidence(Record):
+    """G07 as observed on the designated analysis host, retained for another host to check."""
+
+    schema_version: Literal["g07_analysis_host_evidence_v1"]
+    producing_host: str
+    platform: str
+    execution_source_identity_sha256: Sha256
+    subject: dict[str, Any]
+    subject_sha256: Sha256
+
+
+def export_analysis_host_evidence(ctx: Context, source: Gathered) -> bytes:
+    """Serialize a live, fully passing G07 result of the designated host (refused elsewhere)."""
+    live = r_environment(ctx)
+    identity = source.facts.get("execution_source_identity_sha256")
+    if live.state != "ok" or live.subject is None or identity is None:
+        raise ValueError(f"G07 does not pass live on this host ({live.reason})")
+    from biorag_repro.readiness.production import designated_host, host_designation
+
+    if not designated_host():
+        raise ValueError("evidence can only be exported from the designated analysis host")
+    designation = host_designation(
+        ctx, live.subject["analysis_sources_sha256"], live.facts["renv_lock_sha256"]
+    )
+    return canonical_json_bytes(
+        AnalysisHostEvidence(
+            schema_version="g07_analysis_host_evidence_v1",
+            producing_host=designation["designation"]["host"],
+            platform=designation["designation"]["platform"],
+            execution_source_identity_sha256=identity,
+            subject=live.subject,
+            subject_sha256=sha256_bytes(canonical_json_bytes(live.subject)),
+        ).model_dump(mode="json")
+    )
+
+
+def _retained_analysis_host(
+    ctx: Context,
+    record_bytes: bytes,
+    source: Gathered | None,
+    lock_bytes: bytes,
+    locked: dict[str, str],
+    locked_r: str,
+    sources: dict[str, str],
+    out: Gathered,
+) -> Gathered:
+    """Accept G07 evidence made on the designated host when this host is not that host.
+
+    Everything that does not need R is re-derived here: the designation, lock, analysis
+    sources, locked versions and BLAS pin. The record must also name the same execution source
+    identity as this checkout, so it cannot outlive a source change. G06 is never read from it.
+    """
+    from biorag_repro.readiness.production import host_designation
+
+    out.refs.append(file_ref("analysis_host_evidence", "data/" + G07_HOST_RECORD, record_bytes))
+    try:
+        record = AnalysisHostEvidence.model_validate(loads_strict(record_bytes), strict=True)
+        designation = host_designation(
+            ctx, sources, sha256_bytes(lock_bytes), evaluating_host=False
+        )
+        designation_bytes = read_regular(
+            ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
+        )
+        subject = record.subject
+        if record.subject_sha256 != sha256_bytes(canonical_json_bytes(subject)):
+            raise ValueError("subject differs from its recorded hash")
+        host = designation["designation"]["host"]
+        if (record.producing_host, record.platform, subject.get("host")) != (
+            host,
+            designation["designation"]["platform"],
+            host,
+        ):
+            raise ValueError("evidence was not produced on the designated analysis host")
+        identity = source.facts.get("execution_source_identity_sha256") if source else None
+        if source is None or source.state != "ok" or identity is None:
+            raise ValueError("this checkout has no verified execution source identity")
+        if record.execution_source_identity_sha256 != identity:
+            out.state, out.reason = "failed", "analysis_host_evidence_stale"
+            out.detail = "evidence names another execution source identity"
+            return out
+        packages = subject.get("packages")
+        if (
+            subject.get("kind") != "designated_analysis_environment_v1"
+            or subject.get("designation_sha256") != sha256_bytes(designation_bytes)
+            or subject.get("renv_lock_sha256") != sha256_bytes(lock_bytes)
+            or subject.get("analysis_sources_sha256") != sources
+            or subject.get("r_version") != locked_r
+            or not isinstance(packages, dict)
+            or {n: p.get("version") for n, p in packages.items()} != locked
+            or subject.get("blas_execution_pin")
+            != {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"}
+        ):
+            raise ValueError("evidence subject differs from the locked analysis environment")
+    except (FileProblem, ValueError, ValidationError, KeyError, AttributeError, TypeError) as error:
+        out.state, out.reason = "failed", "analysis_host_evidence_invalid"
+        out.detail = str(error)[:300]
+        return out
+    out.refs.append(
+        file_ref(
+            "analysis_designation",
+            "repo/docs/reports/g07_researcher_designation_evidence_2026_11_20.json",
+            designation_bytes,
+        )
+    )
+    out.state, out.reason, out.subject = "ok", "checks_passed", subject
+    out.detail = "retained evidence from the designated analysis host; this host was not probed"
+    return out
+
+
+def r_environment(ctx: Context, source: Gathered | None = None) -> Gathered:
     scope = "analysis lock and the R session the project resolves on the evaluating host"
     out = Gathered("absent", "analysis_host_not_designated", scope)
     try:
@@ -580,6 +692,24 @@ def r_environment(ctx: Context) -> Gathered:
     out.refs.append(file_ref("renv_lock", "repo/" + RENV_LOCK, lock_bytes))
     out.facts = {"renv_lock_sha256": sha256_bytes(lock_bytes)}
     out.add_snapshot("analysis_sources", {"kind": "analysis_sources", "sha256": sources})
+    from biorag_repro.readiness.production import designated_host
+
+    if not designated_host():
+        try:
+            record_bytes = read_regular(ctx.data_root, G07_HOST_RECORD)
+        except FileMissing:
+            pass  # no retained evidence: the live probe below reports what this host can show
+        except FileProblem as error:
+            out.state, out.reason, out.detail = (
+                "failed",
+                "analysis_host_evidence_invalid",
+                str(error)[:300],
+            )
+            return out
+        else:
+            return _retained_analysis_host(
+                ctx, record_bytes, source, lock_bytes, locked, locked_r, sources, out
+            )
     try:
         observed = parse_r_runtime(ctx.probes.r_runtime(ctx.repo / "analysis", sorted(locked)))
     except (OSError, subprocess.SubprocessError, ValueError) as error:

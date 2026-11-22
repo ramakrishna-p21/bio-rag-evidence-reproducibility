@@ -405,7 +405,19 @@ def model_parser(ctx) -> Gathered:
         return Gathered("failed", "model_parser_evidence_invalid", scope, str(error)[:300])
 
 
-def host_designation(ctx, sources: dict[str, str], lock_sha256: str) -> dict:
+def designated_host() -> bool:
+    return socket.gethostname().upper() == "YOGA-C940" and "microsoft" in platform.release().lower()
+
+
+def host_designation(
+    ctx, sources: dict[str, str], lock_sha256: str, *, evaluating_host: bool = True
+) -> dict:
+    """Validate the researcher's analysis-host designation.
+
+    With `evaluating_host` the live host must be the designated WSL host. Retained evidence
+    from that host is checked with `evaluating_host=False`: the designation, lock, sources and
+    BLAS enforcement are still validated here, and the host is checked against the record.
+    """
     data = read_regular(
         ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
     )
@@ -424,11 +436,12 @@ def host_designation(ctx, sources: dict[str, str], lock_sha256: str) -> dict:
         lock_sha256,
     ) or value["analysis_sources_sha256"] != sources:
         raise FileProblem("analysis designation or source identity differs")
-    if socket.gethostname().upper() != "YOGA-C940" or "microsoft" not in platform.release().lower():
-        raise FileProblem("evaluating host is not designated WSL host")
-    os_release = Path("/etc/os-release").read_text()
-    if 'VERSION_ID="22.04"' not in os_release and "VERSION_ID=22.04" not in os_release:
-        raise FileProblem("evaluating Ubuntu release differs")
+    if evaluating_host:
+        if not designated_host():
+            raise FileProblem("evaluating host is not designated WSL host")
+        os_release = Path("/etc/os-release").read_text()
+        if 'VERSION_ID="22.04"' not in os_release and "VERSION_ID=22.04" not in os_release:
+            raise FileProblem("evaluating Ubuntu release differs")
     entry = read_regular(ctx.repo, "analysis/run_analysis.R").decode()
     if not all(
         x in entry

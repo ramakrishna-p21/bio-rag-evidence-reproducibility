@@ -102,7 +102,7 @@ def gather_all(
         "G04_generator_qualification": production.qualification(ctx),
         "G05_model_parser_identities": production.model_parser(ctx),
         "G06_python_environment": evidence.python_environment(ctx),
-        "G07_r_analysis_environment": evidence.r_environment(ctx),
+        "G07_r_analysis_environment": evidence.r_environment(ctx, source),
         "G08_seed_registry": evidence.seed_registry(ctx, release),
         "G09_scientific_source_revision": source,
         "G10_development_restart_recovery": evidence.restart_recovery(ctx),
