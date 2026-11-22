@@ -371,7 +371,7 @@ def _result(
     hostname: str,
     snapshot: ModelSnapshot,
     planned_input: dict,
-) -> tuple[GenerationResult, str]:
+) -> tuple[GenerationResult, str, dict]:
     relative = f"results/{key}.json"
     value = loads_strict(read_regular(root, _join(batch_root, relative)))
     result = GenerationResult.model_validate(value["generation_result"], strict=True)
@@ -440,7 +440,8 @@ def _result(
         or environment.hostname != hostname
     ):
         raise ValueError("official model, tokenizer or execution environment differs")
-    return result, receipt.environment_sha256
+    # captured_utc is when the record was taken, so two invocations of one environment differ in it.
+    return result, receipt.environment_sha256, environment.model_dump(exclude={"captured_utc"})
 
 
 def _custody(
@@ -579,7 +580,7 @@ def restart_recovery(data_root: Path, contract: RestartContract = PRODUCTION_CON
         ):
             raise ValueError("interruption seal has the wrong completed-result boundary")
         hostname = identity.get("session_hostname")
-        first, first_env = _result(
+        first, first_env, first_identity = _result(
             data_root,
             evidence.execution.batch_root,
             recovery["files"],
@@ -592,7 +593,7 @@ def restart_recovery(data_root: Path, contract: RestartContract = PRODUCTION_CON
             snapshot,
             planned["inputs"][first_key],
         )
-        recovered, recovered_env = _result(
+        recovered, _, recovered_identity = _result(
             data_root,
             evidence.execution.batch_root,
             recovery["files"],
@@ -605,7 +606,7 @@ def restart_recovery(data_root: Path, contract: RestartContract = PRODUCTION_CON
             snapshot,
             planned["inputs"][recovered_key],
         )
-        if first_env != recovered_env:
+        if first_identity != recovered_identity:
             raise ValueError("recovery used a different execution environment")
         lock = read_regular(
             data_root,

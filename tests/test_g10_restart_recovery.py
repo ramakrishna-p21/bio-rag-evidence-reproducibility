@@ -583,6 +583,26 @@ class RecoveryFixture:
         self.refresh_execution_ref("process_record", "g10/process.json")
         self.reseal_both()
 
+    def give_recovery_own_environment(self, **update):
+        """The recovery invocation records its own environment, as a real second run does."""
+        old = EnvironmentRecord.model_validate_json(
+            (self.root / self.batch / f"environments/{self.env_sha}.json").read_bytes()
+        )
+        data = serialize_project_json(old.model_copy(update=update), EnvironmentRecord)
+        env_sha = sha256_bytes(data)
+        write(self.root, f"{self.batch}/environments/{env_sha}.json", data)
+        result_path = f"{self.batch}/results/{self.recovered_key}.json"
+        value = self.json(result_path)
+        receipt_ref = value["execution_receipt"]
+        receipt_path = self.root / self.batch / receipt_ref["logical_ref"]
+        receipt = ExecutionReceipt.model_validate_json(receipt_path.read_bytes())
+        receipt = receipt.model_copy(update={"environment_sha256": env_sha})
+        receipt_data = serialize_project_json(receipt, ExecutionReceipt)
+        receipt_path.write_bytes(receipt_data)
+        receipt_ref["sha256"] = sha256_bytes(receipt_data)
+        write(self.root, result_path, dump(value))
+        self.reseal_both()
+
     def change_execution_revision(self, revision: str):
         batch_path = f"{self.batch}/batch.json"
         batch = self.json(batch_path)
@@ -791,6 +811,18 @@ def test_changed_model_tokenizer_or_environment_fails_closed(recovery, change):
 
     recovery.replace_json(path, mutate)
     recovery.reseal_recovery()
+    assert verify(recovery).state == "failed"
+
+
+def test_recovery_environment_differing_only_in_capture_time_is_the_same_environment(recovery):
+    recovery.give_recovery_own_environment(captured_utc="2026-11-21T10:00:06Z")
+    assert verify(recovery).state == "ok"
+
+
+def test_recovery_environment_with_a_changed_identity_field_fails_closed(recovery):
+    recovery.give_recovery_own_environment(
+        captured_utc="2026-11-21T10:00:06Z", packages={"torch": "2.15.0+other"}
+    )
     assert verify(recovery).state == "failed"
 
 
