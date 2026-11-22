@@ -12,7 +12,7 @@ from readiness_support import REAL_POLICY, digest
 from readiness_world import R_OUTPUT, build_world, git, write
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.readiness import evidence
+from biorag_repro.readiness import evidence, production
 from biorag_repro.readiness.evaluate import gather_all
 from biorag_repro.readiness.gather import to_result
 from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots
@@ -88,6 +88,137 @@ def test_g01_altered_release_record_fails(world):
 def test_g01_self_consistent_fixture_differs_from_real_approval(world):
     result = to_result("G01_corpus_sources", gathered(world, "G01_corpus_sources"), REAL_POLICY)
     assert result.status == "failed" and result.reason_code == "policy_mismatch"
+
+
+def _source_host_record(world, **changes):
+    """The record the authorized source host exports; the raw files are then removed."""
+    source = gather_all(world.ctx)["G09_scientific_source_revision"]
+    value = json.loads(evidence.export_corpus_host_evidence(world.ctx, source))
+    return world, source, {**value, **changes}
+
+
+def _on_generation_host(world, monkeypatch, value, *, drop_raw=True):
+    if drop_raw:
+        shutil.rmtree(world.data / "corpus/raw")
+    monkeypatch.setattr(production.socket, "gethostname", lambda: "colab-l4")
+    path = world.data / evidence.G01_HOST_RECORD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(canonical_json_bytes(value))
+    return gathered(world, "G01_corpus_sources")
+
+
+def test_g01_retained_source_host_evidence_replaces_raw_files_on_another_host(world, monkeypatch):
+    strict = gathered(world, "G01_corpus_sources")
+    _, _, value = _source_host_record(world)
+    g = _on_generation_host(world, monkeypatch, value)
+    assert (g.state, g.reason) == ("ok", "checks_passed")
+    assert subject_digest(g) == subject_digest(strict)
+    assert len(value["source_files"]) == 100
+    assert not any(r.kind.startswith("corpus_source_") for r in g.refs)
+
+
+def test_g01_ignores_retained_evidence_on_the_source_host(world, monkeypatch):
+    _, _, value = _source_host_record(world)
+    shutil.rmtree(world.data / "corpus/raw")
+    path = world.data / evidence.G01_HOST_RECORD
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(canonical_json_bytes(value))
+    assert gathered(world, "G01_corpus_sources").reason == "corpus_artifact_missing"
+
+
+def test_g01_off_host_without_evidence_still_needs_the_raw_files(world, monkeypatch):
+    shutil.rmtree(world.data / "corpus/raw")
+    monkeypatch.setattr(production.socket, "gethostname", lambda: "colab-l4")
+    assert gathered(world, "G01_corpus_sources").reason == "corpus_artifact_missing"
+
+
+def test_g01_evidence_cannot_be_exported_from_another_host(world, monkeypatch):
+    source = gather_all(world.ctx)["G09_scientific_source_revision"]
+    monkeypatch.setattr(production.socket, "gethostname", lambda: "colab-l4")
+    with pytest.raises(ValueError):
+        evidence.export_corpus_host_evidence(world.ctx, source)
+
+
+def _drop_file(v):
+    v["source_files"] = v["source_files"][1:]
+
+
+def _extra_file(v):
+    v["source_files"] = [*v["source_files"], v["source_files"][0]]
+
+
+def _swap_files(v):
+    v["source_files"][0], v["source_files"][1] = v["source_files"][1], v["source_files"][0]
+
+
+def _alter_file_hash(v):
+    v["source_files"][0]["sha256"] = "0" * 64
+
+
+def _alter_subject(v):
+    v["subject"]["sources"][0][1] = "0" * 64
+
+
+def _forged_subject(v):
+    v["subject"]["sources"][0][1] = "0" * 64
+    v["subject_sha256"] = sha256_bytes(canonical_json_bytes(v["subject"]))
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda v: v.update(producing_host="colab-l4"),
+        lambda v: v.update(platform="Linux"),
+        lambda v: v.update(release_record_sha256="0" * 64),
+        lambda v: v.update(manifest_csv_sha256="0" * 64),
+        lambda v: v.update(validation_report_sha256="0" * 64),
+        lambda v: v.update(subject_sha256="0" * 64),
+        lambda v: v.update(schema_version="g01_corpus_host_evidence_v2"),
+        lambda v: v.update(extra=1),
+        _drop_file,
+        _extra_file,
+        _swap_files,
+        _alter_file_hash,
+        _alter_subject,
+        _forged_subject,
+    ],
+    ids=[
+        "wrong_host",
+        "wrong_platform",
+        "other_release",
+        "other_manifest",
+        "other_validation_report",
+        "subject_hash",
+        "unsupported_schema",
+        "unknown_field",
+        "missing_source",
+        "extra_source",
+        "reordered_sources",
+        "altered_source_hash",
+        "altered_subject",
+        "self_consistent_forged_subject",
+    ],
+)
+def test_g01_rejects_altered_substituted_or_incomplete_evidence(world, monkeypatch, mutate):
+    _, _, value = _source_host_record(world)
+    mutate(value)
+    g = _on_generation_host(world, monkeypatch, value)
+    assert (g.state, g.reason) == ("failed", "corpus_host_evidence_invalid")
+    assert g.subject is None
+
+
+def test_g01_rejects_evidence_for_another_execution_source(world, monkeypatch):
+    _, _, value = _source_host_record(world, execution_source_identity_sha256="b" * 64)
+    g = _on_generation_host(world, monkeypatch, value)
+    assert (g.state, g.reason) == ("failed", "corpus_host_evidence_stale")
+
+
+def test_g01_evidence_needs_a_verified_source_identity(world, monkeypatch):
+    _, _, value = _source_host_record(world)
+    _on_generation_host(world, monkeypatch, value)
+    release, _ = evidence.read_benchmark_record(world.ctx)
+    g = evidence.corpus_sources(world.ctx, release, None, None)
+    assert g.reason == "corpus_host_evidence_invalid"
 
 
 # ---- G02 ----------------------------------------------------------------------------------
