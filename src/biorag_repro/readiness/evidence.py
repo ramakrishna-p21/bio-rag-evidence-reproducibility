@@ -140,78 +140,7 @@ def read_benchmark_record(ctx: Context) -> tuple[BenchmarkRelease, bytes]:
     return _json_model(data, BenchmarkRelease), data
 
 
-G01_HOST_RECORD = "readiness/hosts/g01_corpus_host_v1.json"
-SOURCE_HOST = "YOGA-C940"
-SOURCE_HOST_PLATFORM = "WSL Ubuntu 22.04.5"
-
-
-class SourceFileEvidence(Record):
-    logical_ref: str
-    sha256: Sha256
-    bytes: int
-
-
-class CorpusHostEvidence(Record):
-    """G01 as verified on the host that holds the raw publications, for another host to check."""
-
-    schema_version: Literal["g01_corpus_host_evidence_v1"]
-    producing_host: str
-    platform: str
-    execution_source_identity_sha256: Sha256
-    release_record_sha256: Sha256
-    manifest_csv_sha256: Sha256
-    validation_report_sha256: Sha256
-    source_files: list[SourceFileEvidence]
-    subject: dict[str, Any]
-    subject_sha256: Sha256
-
-
-class _StaleEvidence(ValueError):
-    pass
-
-
-def _check_retained_corpus(
-    record_bytes: bytes,
-    source: Gathered | None,
-    expected_files: list[tuple[str, str]],
-    subject: dict[str, Any],
-    local: dict[str, str],
-) -> None:
-    """Accept the raw-source verification of the source host without the raw files.
-
-    Release, manifest and validation report are the local bytes, re-validated by the caller;
-    the retained record must bind those exact bytes, the exact source files named by the
-    manifest and this checkout's execution source identity. The byte, media-type and XML
-    checks themselves were made on the source host and are not repeated here.
-    """
-    record = CorpusHostEvidence.model_validate(loads_strict(record_bytes), strict=True)
-    if record.subject_sha256 != sha256_bytes(canonical_json_bytes(record.subject)):
-        raise ValueError("subject differs from its recorded hash")
-    if (record.producing_host, record.platform) != (SOURCE_HOST, SOURCE_HOST_PLATFORM):
-        raise ValueError("evidence was not produced on the authorized source host")
-    identity = source.facts.get("execution_source_identity_sha256") if source else None
-    if source is None or source.state != "ok" or identity is None:
-        raise ValueError("this checkout has no verified execution source identity")
-    if record.execution_source_identity_sha256 != identity:
-        raise _StaleEvidence("evidence names another execution source identity")
-    if (
-        record.release_record_sha256 != local["release_record"]
-        or record.manifest_csv_sha256 != local["manifest_csv"]
-        or record.validation_report_sha256 != local["validation_report"]
-    ):
-        raise ValueError("evidence names other corpus release, manifest or validation bytes")
-    if [(f.logical_ref, f.sha256) for f in record.source_files] != expected_files:
-        raise ValueError("evidence does not cover exactly the sources named by the manifest")
-    if record.subject != subject:
-        raise ValueError("evidence subject differs from the one this host derives")
-
-
-def corpus_sources(
-    ctx: Context,
-    release: BenchmarkRelease | None,
-    problem: str | None,
-    source: Gathered | None = None,
-) -> Gathered:
+def corpus_sources(ctx: Context, release: BenchmarkRelease | None, problem: str | None) -> Gathered:
     scope = "data root: corpus release cited by the frozen benchmark"
     if release is None:
         return Gathered("unavailable", "corpus_release_reference_unavailable", scope, problem)
@@ -239,37 +168,23 @@ def corpus_sources(
         hard = [f for f in validate_corpus(manifest).findings if f.severity == "hard_error"]
         if hard:
             return Gathered("failed", "corpus_validation_failed", scope, f"{len(hard)} hard errors")
-        from biorag_repro.readiness.production import designated_host
-
-        retained = None
-        if not designated_host():
-            try:
-                retained = read_regular(ctx.data_root, G01_HOST_RECORD)
-            except FileMissing:
-                pass  # no retained evidence: the strict check below needs the raw files
-        papers = sorted(manifest.papers, key=lambda p: p.paper_id)
         sources: list[list[str]] = []
-        files: list[SourceFileEvidence] = []
-        for paper in papers:
-            for kind, src in (("jats", paper.jats), ("pdf", paper.pdf)):
-                logical = "corpus/raw/" + src.logical_ref
-                if retained is None:
-                    data = read_regular(ctx.data_root, logical)
-                    if sha256_bytes(data) != src.sha256:
-                        return Gathered(
-                            "failed", "source_bytes_differ", scope, f"{paper.paper_id} {kind}"
-                        )
-                    verify_source_bytes(paper, kind, ctx.data_root / logical)  # type: ignore[arg-type]
-                    out.refs.append(file_ref(f"corpus_source_{kind}", "data/" + logical, data))
-                    files.append(
-                        SourceFileEvidence(logical_ref=logical, sha256=src.sha256, bytes=len(data))
+        for paper in sorted(manifest.papers, key=lambda p: p.paper_id):
+            for kind, source in (("jats", paper.jats), ("pdf", paper.pdf)):
+                logical = "corpus/raw/" + source.logical_ref
+                data = read_regular(ctx.data_root, logical)
+                if sha256_bytes(data) != source.sha256:
+                    return Gathered(
+                        "failed", "source_bytes_differ", scope, f"{paper.paper_id} {kind}"
                     )
-                sources.append([src.artifact_id, src.sha256])
+                verify_source_bytes(paper, kind, ctx.data_root / logical)  # type: ignore[arg-type]
+                out.refs.append(file_ref(f"corpus_source_{kind}", "data/" + logical, data))
+                sources.append([source.artifact_id, source.sha256])
     except FileMissing as error:
         return Gathered("failed", "corpus_artifact_missing", scope, str(error))
     except (FileProblem, ValueError, ValidationError, OSError) as error:
         return Gathered("failed", "corpus_artifact_invalid", scope, str(error)[:300])
-    subject = {
+    out.subject = {
         "kind": "corpus_sources_v1",
         "corpus_version": record.corpus_version,
         "release_record_sha256": sha256_bytes(record_bytes),
@@ -278,74 +193,9 @@ def corpus_sources(
         "manifest_csv_sha256": record.csv_sha256,
         "sources": sources,
     }
-    local = {
-        "release_record": sha256_bytes(record_bytes),
-        "manifest_csv": sha256_bytes(csv_bytes),
-        "validation_report": report_ref.sha256,
-    }
-    if retained is not None:
-        expected = [
-            ("corpus/raw/" + src.logical_ref, src.sha256)
-            for paper in papers
-            for src in (paper.jats, paper.pdf)
-        ]
-        out.refs.append(file_ref("corpus_host_evidence", "data/" + G01_HOST_RECORD, retained))
-        try:
-            _check_retained_corpus(retained, source, expected, subject, local)
-        except _StaleEvidence as error:
-            return Gathered(
-                "failed", "corpus_host_evidence_stale", scope, str(error), refs=out.refs
-            )
-        except (FileProblem, ValueError, ValidationError) as error:
-            return Gathered(
-                "failed", "corpus_host_evidence_invalid", scope, str(error)[:300], refs=out.refs
-            )
-        out.detail = (
-            f"{len(manifest.papers)} papers, {len(sources)} source files; raw files were verified "
-            "on the authorized source host and are not present here"
-        )
-    else:
-        out.detail = f"{len(manifest.papers)} papers, {len(sources)} source files"
-        out.facts = {
-            "source_files": [f.model_dump(mode="json") for f in files],
-            "validation_report_sha256": local["validation_report"],
-            "manifest_csv_sha256": local["manifest_csv"],
-        }
-    out.subject = subject
-    out.facts["corpus_content_sha256"] = record.corpus_content_sha256
+    out.facts = {"corpus_content_sha256": record.corpus_content_sha256}
+    out.detail = f"{len(manifest.papers)} papers, {len(sources)} source files"
     return out
-
-
-def export_corpus_host_evidence(ctx: Context, source: Gathered) -> bytes:
-    """Serialize a strict G01 pass made on the source host (refused elsewhere)."""
-    from biorag_repro.readiness.production import designated_host
-
-    if not designated_host():
-        raise ValueError("evidence can only be exported from the authorized source host")
-    release, _ = read_benchmark_record(ctx)
-    live = corpus_sources(ctx, release, None, source)
-    identity = source.facts.get("execution_source_identity_sha256")
-    if (
-        live.state != "ok"
-        or live.subject is None
-        or identity is None
-        or not live.facts.get("source_files")
-    ):
-        raise ValueError(f"G01 does not pass strictly on this host ({live.reason})")
-    return canonical_json_bytes(
-        CorpusHostEvidence(
-            schema_version="g01_corpus_host_evidence_v1",
-            producing_host=SOURCE_HOST,
-            platform=SOURCE_HOST_PLATFORM,
-            execution_source_identity_sha256=identity,
-            release_record_sha256=live.subject["release_record_sha256"],
-            manifest_csv_sha256=live.facts["manifest_csv_sha256"],
-            validation_report_sha256=live.facts["validation_report_sha256"],
-            source_files=[SourceFileEvidence(**f) for f in live.facts["source_files"]],
-            subject=live.subject,
-            subject_sha256=sha256_bytes(canonical_json_bytes(live.subject)),
-        ).model_dump(mode="json")
-    )
 
 
 def benchmark_freeze(

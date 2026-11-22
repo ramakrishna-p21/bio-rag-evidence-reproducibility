@@ -94,7 +94,7 @@ def gather_all(
         problem = str(error)[:300]
     source = evidence.scientific_source(ctx)
     return {
-        "G01_corpus_sources": evidence.corpus_sources(ctx, release, problem, source),
+        "G01_corpus_sources": evidence.corpus_sources(ctx, release, problem),
         "G02_benchmark_freeze": evidence.benchmark_freeze(
             ctx, release, release_bytes, problem, hash_only=g02_hash_only
         ),
