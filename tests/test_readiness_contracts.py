@@ -85,7 +85,10 @@ def test_slots_are_mapped_one_to_one_and_open_gates_remain_unset_in_the_real_pol
     assert policy.GATE_SLOT[GATE13] is None
     slots = [policy.GATE_SLOT[g] for g in MANDATORY_GATES if policy.GATE_SLOT[g]]
     assert sorted(slots) == sorted(policy.SLOT_NAMES)
-    assert REAL_POLICY.slots.restart_evidence_acceptance is None
+    assert (
+        REAL_POLICY.slots.restart_evidence_acceptance
+        == "35f359654ebda42f3ce85f99aa7d515d3ef585269f9730bca8925a371e755bc4"
+    )
     assert REAL_POLICY.policy_version == "3"
 
 

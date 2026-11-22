@@ -41,7 +41,10 @@ def test_exact_checkpoint_seed_and_environment_registration():
         {"96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a"}
     )
     policy = load_policy(ROOT)
-    assert policy.slots.restart_evidence_acceptance is None
+    assert (
+        policy.slots.restart_evidence_acceptance
+        == "35f359654ebda42f3ce85f99aa7d515d3ef585269f9730bca8925a371e755bc4"
+    )
     assert policy.policy_version == "3"
     assert len(APPROVED_REGISTRY_SHA256) == 64
 

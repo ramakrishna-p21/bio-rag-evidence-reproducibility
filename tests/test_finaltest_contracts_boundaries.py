@@ -51,7 +51,10 @@ def test_the_guard_still_has_no_caller_in_the_package():
 
 def test_run_phase_and_the_real_policy_are_untouched():
     assert typing.get_args(RunPhase) == ("development", "qualification")
-    assert REAL_POLICY.slots.restart_evidence_acceptance is None
+    assert (
+        REAL_POLICY.slots.restart_evidence_acceptance
+        == "35f359654ebda42f3ce85f99aa7d515d3ef585269f9730bca8925a371e755bc4"
+    )
     assert REAL_POLICY.policy_version == "3"
 
 
