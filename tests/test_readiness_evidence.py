@@ -200,9 +200,12 @@ def test_g02_hash_only_requires_exact_approved_witness_without_decoding(world, m
 # ---- G06 ----------------------------------------------------------------------------------
 
 
-def test_g06_provisional_lock_is_pending_with_inventory_snapshot(world):
+def test_g06_approved_lock_rejects_a_different_inventory_with_snapshot(world):
     g = gathered(world, "G06_python_environment")
-    assert (g.state, g.reason) == ("absent", "environment_lock_not_approved")
+    assert (g.state, g.reason) == (
+        "failed",
+        "installed_environment_differs_from_approved_lock",
+    )
     assert {"python_inventory", "environment_verification", "environment_spec"} <= {
         r.kind for r in g.refs
     }
@@ -350,7 +353,7 @@ def test_g09_clean_tree_records_tracked_and_frozen_identities(world):
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and g.facts["head_sha"] == world.commit
     names = {r.locator for r in g.refs if r.kind == "frozen_specification"}
-    assert len(names) == 13 and all(n.startswith("repo/docs/frozen/") for n in names)
+    assert len(names) == 14 and all(n.startswith("repo/docs/frozen/") for n in names)
     assert g.subject["frozen_specifications"]["ARCHITECTURE.md"] == sha256_bytes(
         b"frozen ARCHITECTURE\n"
     )
@@ -429,7 +432,6 @@ NO_EVIDENCE = {
     "G04_generator_qualification": "qualification_evidence_missing",
     "G05_model_parser_identities": "model_parser_evidence_missing",
     "G10_development_restart_recovery": "official_restart_evidence_absent",
-    "G12_shared_gpu_authorization": "gpu_authorization_absent",
 }
 
 
@@ -443,14 +445,6 @@ def test_unevidenced_gates_stay_pending_even_when_their_slot_is_populated(world,
         policy_version="t", slots=ApprovalSlots(**{GATE_SLOT[gate]: digest("approved")})
     )
     assert to_result(gate, g, populated).status == "pending"
-
-
-def test_local_gpu_hardware_never_approves_the_shared_gpu_gate(world):
-    from synthetic_environment import inventory
-
-    world.ctx = world.probes(inventory=lambda: inventory())  # reports a GPU
-    g = gathered(world, "G12_shared_gpu_authorization")
-    assert to_result("G12_shared_gpu_authorization", g, REAL_POLICY).status == "pending"
 
 
 def test_g11_without_approved_record_fails_closed(world):

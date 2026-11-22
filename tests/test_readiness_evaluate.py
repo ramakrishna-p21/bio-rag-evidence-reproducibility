@@ -6,7 +6,12 @@ from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import evidence
 from biorag_repro.readiness.evaluate import EvaluationError, evaluate, evaluator_identity
 from biorag_repro.readiness.models import MANDATORY_GATES
-from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots, policy_sha256
+from biorag_repro.readiness.policy import (
+    ApprovalPolicy,
+    ApprovalSlots,
+    policy_payload,
+    policy_sha256,
+)
 
 
 @pytest.fixture
@@ -23,7 +28,7 @@ def test_real_policy_gives_a_complete_not_ready_report(world):
     report = result.report
     assert report.decision == "NOT_READY"
     assert [g.gate_id for g in report.gates] == list(MANDATORY_GATES)
-    assert len(report.blockers) == 13  # fixture identities differ from the real approvals
+    assert len(report.blockers) == 12  # fixture identities differ from the real approvals
     got = statuses(report)
     assert got["G01_corpus_sources"] == ("failed", "policy_mismatch")
     assert got["G02_benchmark_freeze"] == ("failed", "policy_mismatch")
@@ -46,13 +51,16 @@ def test_candidate_records_what_was_read(world):
     assert candidate.benchmark_release_sha256 == sha256_bytes(
         (world.data / evidence.BENCHMARK_RELEASE).read_bytes()
     )
-    assert candidate.freeze_record_sha256 is None and candidate.python_lock_sha256 is None
+    assert candidate.freeze_record_sha256 is None
+    assert candidate.python_lock_sha256 == sha256_bytes(
+        (world.repo / "configs/environment.toml").read_bytes()
+    )
 
 
 def test_policy_copy_and_observations_are_captured(world):
     result = evaluate(world.ctx, REAL_POLICY)
     assert result.snapshots[policy_sha256(REAL_POLICY)] == canonical_json_bytes(
-        REAL_POLICY.model_dump(mode="json")
+        policy_payload(REAL_POLICY)
     )
     cited = {
         r.sha256

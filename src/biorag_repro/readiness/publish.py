@@ -51,7 +51,13 @@ from biorag_repro.readiness.decide import Outcome, ReportInvalid, verify_report
 from biorag_repro.readiness.evaluate import Evaluation
 from biorag_repro.readiness.files import FileMissing, FileProblem, loads_strict, read_regular
 from biorag_repro.readiness.models import Blocker, Decision, ReadinessReport
-from biorag_repro.readiness.policy import SLOT_NAMES, ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import (
+    LEGACY_SLOT_NAMES,
+    SLOT_NAMES,
+    ApprovalPolicy,
+    policy_payload,
+    policy_sha256,
+)
 
 TRANSFORMATION = "readiness_report_v1"
 ROOT = "readiness"
@@ -277,7 +283,7 @@ def read_report(data_root: Path, report_sha256: str, policy: ApprovalPolicy) -> 
         stored_policy = read_regular(data_root, policy_path)
     except FileProblem as error:
         raise ReadbackError(f"policy copy is unavailable: {error}") from error
-    if stored_policy != canonical_json_bytes(policy.model_dump(mode="json")):
+    if stored_policy != canonical_json_bytes(policy_payload(policy)):
         raise ReadbackError("stored policy copy differs from the policy used for verification")
     return Readback(report, outcome, sha256_bytes(manifest_bytes), verified, gone, not_historical)
 
@@ -321,7 +327,7 @@ class HistoricalEvidenceIncomplete(ReadbackError):
 
 # Fixed here on purpose: it names the schema this reader can interpret and must not follow
 # the version of the policy currently in force.
-HISTORICAL_POLICY_VERSIONS = frozenset({"1", "2"})
+HISTORICAL_POLICY_VERSIONS = frozenset({"1", "2", "3"})
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -369,8 +375,9 @@ def _retained_policy(data_root: Path, claimed: str) -> ApprovalPolicy:
             f"retained policy version {version!r} is not a supported historical version"
         )
     slots = value.get("slots")
+    expected = set(SLOT_NAMES if version == "3" else LEGACY_SLOT_NAMES)
     # a missing slot would otherwise default to unset and read as "nothing approved"
-    if not isinstance(slots, dict) or set(SLOT_NAMES) - set(slots):
+    if not isinstance(slots, dict) or set(slots) != expected:
         raise UnsupportedHistoricalPolicy("retained policy does not have the current schema")
     try:
         policy = ApprovalPolicy.model_validate(value, strict=True)
@@ -378,7 +385,7 @@ def _retained_policy(data_root: Path, claimed: str) -> ApprovalPolicy:
         raise UnsupportedHistoricalPolicy(
             f"retained policy does not have the current schema: {str(error)[:300]}"
         ) from error
-    if canonical_json_bytes(policy.model_dump(mode="json")) != content:
+    if canonical_json_bytes(policy_payload(policy)) != content:
         raise HistoricalPolicyError("retained policy is not in canonical form")
     return policy
 

@@ -24,7 +24,7 @@ from biorag_repro.readiness.models import (
     GateResult,
     evidence_digest,
 )
-from biorag_repro.readiness.policy import GATE_SLOT, ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import GATE_SLOT, ApprovalPolicy, policy_payload, policy_sha256
 
 
 def build(policy: ApprovalPolicy, *, tag: str = "", blocked: dict[str, str] | None = None, **parts):
@@ -70,7 +70,7 @@ def build(policy: ApprovalPolicy, *, tag: str = "", blocked: dict[str, str] | No
             )
         )
     report = support.report(policy, results, **parts)
-    snapshots[policy_sha256(policy)] = canonical_json_bytes(policy.model_dump(mode="json"))
+    snapshots[policy_sha256(policy)] = canonical_json_bytes(policy_payload(policy))
     return Evaluation(report, snapshots)
 
 
@@ -203,7 +203,7 @@ def _tampered(fx, change):
 
 def test_forged_ready_field_on_a_not_ready_report(tmp_path):
     fx = Fixture(tmp_path)
-    stored = build(fx.policy, blocked={"G12_shared_gpu_authorization": "pending"})
+    stored = build(fx.policy, blocked={"G11_storage_authorization": "pending"})
     fx.sha = publish.publish_report(stored, tmp_path).report_sha256
     _tampered(fx, lambda d: d.update(decision="READY", blockers=[]))
     refused(fx, "report_unverifiable")

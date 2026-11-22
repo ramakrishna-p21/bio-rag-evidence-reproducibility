@@ -13,6 +13,7 @@ from biorag_repro.readiness import models, policy
 from biorag_repro.readiness.models import (
     HISTORY_FAIL_CODES,
     HISTORY_PASS_CODES,
+    LEGACY_MANDATORY_GATES,
     MANDATORY_GATES,
     GateResult,
     ReadinessReport,
@@ -30,9 +31,11 @@ def result(gate="G01_corpus_sources", **changes):
     return GateResult(**base)
 
 
-def test_the_thirteen_mandatory_gates_are_fixed():
-    assert len(MANDATORY_GATES) == 13 == len(set(MANDATORY_GATES))
-    assert [g[:3] for g in MANDATORY_GATES] == [f"G{i:02d}" for i in range(1, 14)]
+def test_current_gates_retire_g12_and_legacy_contract_is_retained():
+    assert len(MANDATORY_GATES) == 12 == len(set(MANDATORY_GATES))
+    assert "G12_shared_gpu_authorization" not in MANDATORY_GATES
+    assert len(LEGACY_MANDATORY_GATES) == 13
+    assert LEGACY_MANDATORY_GATES[11] == "G12_shared_gpu_authorization"
     names = [g[4:] for g in MANDATORY_GATES]
     assert names == [
         "corpus_sources",
@@ -46,7 +49,6 @@ def test_the_thirteen_mandatory_gates_are_fixed():
         "scientific_source_revision",
         "development_restart_recovery",
         "storage_authorization",
-        "shared_gpu_authorization",
         "final_test_history_integrity",
     ]
 
@@ -77,12 +79,14 @@ def test_blocked_result_may_carry_evidence_of_what_was_found():
     assert kept.evidence_digest is not None and kept.status == "failed"
 
 
-def test_slots_are_mapped_one_to_one_and_all_unset_in_the_real_policy():
-    assert len(policy.SLOT_NAMES) == 12
+def test_slots_are_mapped_one_to_one_and_open_gates_remain_unset_in_the_real_policy():
+    assert len(policy.SLOT_NAMES) == 11
+    assert len(policy.LEGACY_SLOT_NAMES) == 12
     assert policy.GATE_SLOT[GATE13] is None
-    slots = [s for s in policy.GATE_SLOT.values() if s]
+    slots = [policy.GATE_SLOT[g] for g in MANDATORY_GATES if policy.GATE_SLOT[g]]
     assert sorted(slots) == sorted(policy.SLOT_NAMES)
-    assert all(getattr(REAL_POLICY.slots, name) is None for name in policy.SLOT_NAMES)
+    assert REAL_POLICY.slots.restart_evidence_acceptance is None
+    assert REAL_POLICY.policy_version == "3"
 
 
 def test_policy_is_frozen_and_strict():
@@ -98,11 +102,16 @@ def test_policy_identity_changes_with_any_slot_or_version():
     base = policy.policy_sha256(POLICY)
     assert base == policy.policy_sha256(fx.fixture_policy())
     assert base != policy.policy_sha256(fx.fixture_policy("fixture-policy-1"))
-    slots = POLICY.slots.model_copy(update={"gpu_authorization": fx.digest("other")})
+    slots = POLICY.slots.model_copy(update={"storage_authorization": fx.digest("other")})
     assert base != policy.policy_sha256(
         policy.ApprovalPolicy(policy_version="fixture-policy-0", slots=slots)
     )
     assert policy.policy_sha256(REAL_POLICY) != base
+    with pytest.raises(ValidationError, match="retired G12"):
+        policy.ApprovalPolicy(
+            policy_version="3",
+            slots=POLICY.slots.model_copy(update={"gpu_authorization": fx.digest("retired")}),
+        )
 
 
 def test_package_offers_no_way_to_select_a_policy():

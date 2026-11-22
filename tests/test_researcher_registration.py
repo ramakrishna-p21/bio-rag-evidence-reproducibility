@@ -40,7 +40,9 @@ def test_exact_checkpoint_seed_and_environment_registration():
     assert config.APPROVED_ENVIRONMENT_LOCKS == frozenset(
         {"96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a"}
     )
-    assert all(v is None for v in load_policy(ROOT).slots.model_dump().values())
+    policy = load_policy(ROOT)
+    assert policy.slots.restart_evidence_acceptance is None
+    assert policy.policy_version == "3"
     assert len(APPROVED_REGISTRY_SHA256) == 64
 
 

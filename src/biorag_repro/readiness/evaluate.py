@@ -33,9 +33,9 @@ from biorag_repro.readiness.models import (
     HostBinding,
     ReadinessReport,
 )
-from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import ApprovalPolicy, policy_payload, policy_sha256
 
-EVALUATOR_VERSION = "g03_g04_g05_g07_v1"
+EVALUATOR_VERSION = "g03_g04_g05_g07_g10_g12retired_v1"
 
 
 class EvaluationError(RuntimeError):
@@ -105,9 +105,8 @@ def gather_all(
         "G07_r_analysis_environment": evidence.r_environment(ctx),
         "G08_seed_registry": evidence.seed_registry(ctx, release),
         "G09_scientific_source_revision": source,
-        "G10_development_restart_recovery": evidence.restart_recovery(),
+        "G10_development_restart_recovery": evidence.restart_recovery(ctx),
         "G11_storage_authorization": evidence.storage_authorization(ctx, policy),
-        "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(ctx),
         "G13_final_test_history_integrity": evidence.history_integrity(ctx, policy),
     }
 
@@ -160,6 +159,6 @@ def evaluate(
     snapshots: dict[str, bytes] = {}
     for gathered in found.values():
         snapshots.update(gathered.snapshots)
-    policy_bytes = canonical_json_bytes(policy.model_dump(mode="json"))
+    policy_bytes = canonical_json_bytes(policy_payload(policy))
     snapshots[policy_sha256(policy)] = policy_bytes
     return Evaluation(report, snapshots)

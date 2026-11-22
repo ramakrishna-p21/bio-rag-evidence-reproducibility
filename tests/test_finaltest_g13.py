@@ -284,7 +284,7 @@ def test_g13_passes_only_with_a_named_history_class():
 def test_real_policy_names_the_missing_approval(setup):
     auth, _ = setup.approve()
     setup.initialize(auth)
-    assert setup.g13(REAL_POLICY).detail == "no_storage_approval"
+    assert setup.g13(REAL_POLICY).detail == "storage_approval_unusable"
     assert evidence.history_integrity(setup.world.ctx).detail == "no approval to verify against"
 
 

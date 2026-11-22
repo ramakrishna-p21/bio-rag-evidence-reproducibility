@@ -30,10 +30,7 @@ GROUPS = {
         "G06_python_environment",
         "G07_r_analysis_environment",
     ),
-    "authorization": (
-        "G11_storage_authorization",
-        "G12_shared_gpu_authorization",
-    ),
+    "authorization": ("G11_storage_authorization",),
     "execution_integrity": ("G10_development_restart_recovery",),
 }
 

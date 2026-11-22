@@ -1,5 +1,5 @@
 {
-  "policy_version": "2",
+  "policy_version": "3",
   "slots": {
     "corpus_identity": "f51b52e3cd5e0700575d0dda3394de26e2fd5a5314e09051e27feac1422a3768",
     "benchmark_identity": "a7d4c33e7a51a6339ce0891961e46035ede4f865f6584e7fdcb710e3f7d1dd49",
@@ -11,7 +11,6 @@
     "seed_approvals": "07c518097c6dd56142a10c44d1635f5986a7b0c51f17557379463ab9725a921a",
     "scientific_source_identity": "30a0484349ce5979f2911bc9256db2b59e31b8cbcae82ae59dff72ced252a73a",
     "restart_evidence_acceptance": null,
-    "storage_authorization": "0f7d387ac1d7d62e34a846ab3fb32dc8de8d6517ee7019a44a382af56c6922af",
-    "gpu_authorization": null
+    "storage_authorization": "0f7d387ac1d7d62e34a846ab3fb32dc8de8d6517ee7019a44a382af56c6922af"
   }
 }
