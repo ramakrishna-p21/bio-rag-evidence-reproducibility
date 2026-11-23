@@ -84,8 +84,9 @@ def validate_final_test_plan(package: dict, plan: list["Planned"]) -> None:
         raise Refused("final-test plan requires 4,575 distinct observations")
     if {p.record["item_id"] for p in plan} != set(items):
         raise Refused("final-test observations differ from the declared item roster")
-    if len({p.record["paper_id"] for p in plan}) != 40:
-        raise Refused("final-test plan requires the 40-paper split")
+    # One paper per item; P046 has no item, so 39 of the 40 split papers appear.
+    if len({(p.record["item_id"], p.record["paper_id"]) for p in plan}) != len(items):
+        raise Refused("final-test observations disagree on an item's paper")
     expected = {
         (item, arm, condition, repeat)
         for item in items

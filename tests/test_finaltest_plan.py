@@ -9,7 +9,7 @@ from biorag_repro.evaluation.analysis_models import FROZEN_MATRIX
 from scripts.run_generation import Planned, Refused, load_inputs, validate_final_test_plan
 
 
-def synthetic_plan():
+def synthetic_plan(papers=40):
     items = [f"synthetic_{n:03d}" for n in range(305)]
     package = {"header": {"item_ids": items, "arms": list(FROZEN_MATRIX)}}
     plan = []
@@ -19,7 +19,7 @@ def synthetic_plan():
                 for repeat in repeats:
                     record = {
                         "item_id": item,
-                        "paper_id": f"synthetic_paper_{index % 40:02d}",
+                        "paper_id": f"synthetic_paper_{index % papers:02d}",
                         "matrix_arm": arm,
                         "condition": condition,
                         "split": "final_test",
@@ -39,6 +39,12 @@ def test_complete_synthetic_final_test_plan():
     package, plan = synthetic_plan()
     validate_final_test_plan(package, plan)
     assert len(plan) == 4575
+
+
+def test_plan_with_one_zero_item_split_paper_is_accepted():
+    package, plan = synthetic_plan(papers=39)
+    validate_final_test_plan(package, plan)
+    assert len({p.record["paper_id"] for p in plan}) == 39
 
 
 def test_protected_inputs_are_not_read_without_execution_authorization(monkeypatch):

@@ -124,15 +124,18 @@ def ranked_candidates(arm, item, chunks, ids, scorers, dense) -> list:
 
 
 def check_final_test_roster(items: list, arms: list[str]) -> None:
-    """The complete frozen final-test roster: 305 distinct items on 40 papers, all five arms."""
+    """The complete frozen final-test roster: 305 distinct items, all five arms.
+
+    Items come from the 40-paper final-test split, but P046 has no accepted item, so only
+    39 papers are represented; the split itself is checked by the release reader.
+    """
     if (
         len(items) != 305
         or len({i.item_id for i in items}) != 305
         or any(i.split != "final_test" for i in items)
-        or len({i.paper_id for i in items}) != 40
         or sorted(arms) != sorted(FROZEN_MATRIX)
     ):
-        raise ValueError("final-test inputs require 305 final-test items, 40 papers and five arms")
+        raise ValueError("final-test inputs require 305 final-test items and five arms")
 
 
 def retained_dense_index(root: Path, cfg, representation: str, encoder, progress):

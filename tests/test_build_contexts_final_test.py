@@ -112,7 +112,7 @@ def test_runner_roster_check_uses_the_same_frozen_item_source(data_root):
 
 @pytest.mark.parametrize(
     "change",
-    ["304_items", "duplicate_item", "development_item", "missing_arm", "39_papers"],
+    ["304_items", "duplicate_item", "development_item", "missing_arm"],
 )
 def test_builder_refuses_a_wrong_final_test_roster_before_opening_sources(tmp_path, change):
     from scripts.build_contexts import build_published
@@ -127,14 +127,34 @@ def test_builder_refuses_a_wrong_final_test_roster_before_opening_sources(tmp_pa
         items[5] = make_item("F005", DEV[0], "development")
     elif change == "missing_arm":
         arms = arms[:-1]
-    elif change == "39_papers":
-        items = synthetic_items(papers=FINAL[:39])
     selection = {"arms": arms, "pool_papers": [], "canonical": {}}  # no source is ever opened
     with pytest.raises(ValueError, match="final-test"):
         build_published(
             selection, tmp_path / "contexts.json", tmp_path, final_test=("a" * 64, items)
         )
     assert not (tmp_path / "contexts.json").exists()
+
+
+def test_frozen_shape_305_items_on_39_of_40_split_papers(tmp_path):
+    """The frozen benchmark has one final-test paper (P046) with no accepted item."""
+    from biorag_repro.benchmark.split import PaperSplit
+    from scripts.build_contexts import check_final_test_roster
+
+    write_release(tmp_path, synthetic_items(papers=FINAL[:39]))
+    _, items = read_final_test_items(tmp_path)
+    assert len({i.paper_id for i in items}) == 39
+    check_final_test_roster(items, list(FROZEN_MATRIX))
+    split = PaperSplit.model_validate_json(serialize_project_json(SPLIT, type(SPLIT)))
+    assert len(split.final_test_ids) == 40 and FINAL[39] in split.final_test_ids
+
+
+def test_a_split_without_40_final_test_papers_is_refused():
+    from biorag_repro.benchmark.split import PaperSplit
+
+    data = SPLIT.model_dump()
+    data["final_test_ids"] = data["final_test_ids"][:39]
+    with pytest.raises(ValueError):
+        PaperSplit.model_validate(data)
 
 
 # ---- end to end: 50 tiny synthetic papers, the real builder, real tokenizers and BGE ----------
