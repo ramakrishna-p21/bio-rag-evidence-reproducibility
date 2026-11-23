@@ -104,13 +104,13 @@ def test_real_policy_has_only_reviewed_slots_approved():
     assert {name: value for name, value in slots.items() if value is not None} == {
         "corpus_identity": "f51b52e3cd5e0700575d0dda3394de26e2fd5a5314e09051e27feac1422a3768",
         "benchmark_identity": "a7d4c33e7a51a6339ce0891961e46035ede4f865f6584e7fdcb710e3f7d1dd49",
-        "final_test_freeze": "aa6d9a923671058b33bd50292ba820b3576bbe8b66622ef2fdbc388d25e66798",
+        "final_test_freeze": "4caae4b585543379e70d2d50596ae9d7c8125d7497057022d0a370ca82ac8741",
         "generator_qualification_acceptance": "81b66267e36b52baf9f070195edda9a0f1e08a1315844624cbe736e103b350da",
         "model_parser_identities": "f0a172490f0c37ef2e424a556647b17147abe4f4c9456e1f28652c0480e6af6c",
         "python_environment_lock": "d6691c59546005ae44c5754a8b7391c0436f08d0ac72cafbf5fa9594123648a1",
         "analysis_environment": "02aff0dd98a3c41ef81f2e684594608a15afa88b0ed2ec51a09cacd00d7153de",
         "seed_approvals": "07c518097c6dd56142a10c44d1635f5986a7b0c51f17557379463ab9725a921a",
-        "scientific_source_identity": "20d9268df451dfb554942bc45620c600405e6da85122c0e21bfaa22f91a2302d",
+        "scientific_source_identity": "d9ba7813354ea3eb8d7ae845f5e2e4f349611dd35b96ff1c84f1005bcd8cb100",
         "restart_evidence_acceptance": "35f359654ebda42f3ce85f99aa7d515d3ef585269f9730bca8925a371e755bc4",
         "storage_authorization": "0f7d387ac1d7d62e34a846ab3fb32dc8de8d6517ee7019a44a382af56c6922af",
     }
