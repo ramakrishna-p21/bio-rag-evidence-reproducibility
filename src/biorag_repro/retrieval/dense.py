@@ -200,6 +200,17 @@ TOKENIZER_FILES = (
 )
 
 
+# The CPU wheel, or the CUDA wheel of the same release pinned by the approved generation lock.
+# Inference stays on the CPU in float32 either way; the installed build is recorded in Execution.
+TORCH_BUILDS = ("2.15.0+cpu", "2.15.0+cu132")
+
+
+def check_torch_build(installed: str) -> str:
+    if installed not in TORCH_BUILDS:
+        raise ValueError("dense inference dependency version mismatch")
+    return installed
+
+
 class BgeEncoder:
     """One verified local snapshot, CPU float32/eager inference; no Hub fallback."""
 
@@ -214,7 +225,7 @@ class BgeEncoder:
         required = {
             "transformers": "4.57.6",
             "tokenizers": "0.22.2",
-            "torch": "2.15.0+cpu",
+            "torch": check_torch_build(version("torch")),
             "numpy": "2.4.6",
             "safetensors": "0.8.0",
             "huggingface-hub": "0.36.2",
