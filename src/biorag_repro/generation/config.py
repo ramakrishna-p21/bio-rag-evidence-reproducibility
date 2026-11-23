@@ -40,7 +40,7 @@ APPROVED_CHECKPOINTS: dict[tuple[str, str], str] = {
 # are added only after the lock has been resolved and reviewed on the execution machine.
 APPROVED_ENVIRONMENT_LOCKS: frozenset[str] = frozenset(
     {
-        "96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a",
+        "db728642a012f612450a88c15859e8b9908cfa27a44b0023ee57a2df269eaeae",
     }
 )
 

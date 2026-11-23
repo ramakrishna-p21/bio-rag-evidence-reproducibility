@@ -38,7 +38,7 @@ def test_exact_checkpoint_seed_and_environment_registration():
     seed = read_analysis_seed(ROOT)
     assert (seed.name, seed.value, seed.resamples) == ("primary_bootstrap", 1572911995, 10000)
     assert config.APPROVED_ENVIRONMENT_LOCKS == frozenset(
-        {"96af1876324098a0fbf6c28d9896b790d10a210ba7943538d41056257f15847a"}
+        {"db728642a012f612450a88c15859e8b9908cfa27a44b0023ee57a2df269eaeae"}
     )
     policy = load_policy(ROOT)
     assert (
