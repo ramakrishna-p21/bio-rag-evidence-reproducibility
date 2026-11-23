@@ -104,30 +104,14 @@ def validate_final_test_plan(package: dict, plan: list["Planned"]) -> None:
 
 def check_authorized_final_test_roster(data_root: Path, package: dict) -> None:
     """Bind supplied questions to the already verified frozen benchmark release."""
-    from biorag_repro.benchmark.models import BenchmarkItem
-    from biorag_repro.benchmark.release import BenchmarkRelease
-    from biorag_repro.benchmark.split import PaperSplit
-    from biorag_repro.benchmark.storage import decode_jsonl
-    from biorag_repro.readiness import evidence
-    from biorag_repro.readiness.files import read_regular
+    from biorag_repro.benchmark.release import read_final_test_items
 
-    record = BenchmarkRelease.model_validate_json(
-        read_regular(data_root, evidence.BENCHMARK_RELEASE)
-    )
-    data = read_regular(data_root, record.items.logical_ref)
-    if sha256_bytes(data) != record.items.sha256:
-        raise Refused("frozen benchmark items differ from the release")
-    split_bytes = read_regular(data_root, record.split.logical_ref)
-    if sha256_bytes(split_bytes) != record.split.sha256:
-        raise Refused("frozen paper split differs from the release")
-    split = PaperSplit.model_validate_json(split_bytes)
-    final_papers = set(split.final_test_ids)
-    expected = {
-        item.item_id: (item.paper_id, item.question, item.benchmark_version)
-        for item in decode_jsonl(data, BenchmarkItem)
-        if item.paper_id in final_papers
-    }
-    if len(expected) != 305 or set(package["header"]["item_ids"]) != set(expected):
+    try:
+        _, items = read_final_test_items(data_root)
+    except ValueError as error:
+        raise Refused(str(error)) from error
+    expected = {i.item_id: (i.paper_id, i.question, i.benchmark_version) for i in items}
+    if set(package["header"]["item_ids"]) != set(expected):
         raise Refused("supplied final-test roster differs from the frozen benchmark")
     for supplied in package["records"]:
         if (

@@ -17,6 +17,7 @@ the runner's --contexts-sha256.
 
 import argparse
 import json
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +47,7 @@ from biorag_repro.retrieval.models import (
     CanonicalInput,
     ChunkSet,
     ConfigurationRef,
+    DenseIndex,
     Phase5Configuration,
 )
 from biorag_repro.retrieval.source_selection import select_pair
@@ -121,10 +123,53 @@ def ranked_candidates(arm, item, chunks, ids, scorers, dense) -> list:
     return [chunks[n] for n, _ in rank_vectors(vectors, query[0], ids, papers, designated)]
 
 
+def check_final_test_roster(items: list, arms: list[str]) -> None:
+    """The complete frozen final-test roster: 305 distinct items on 40 papers, all five arms."""
+    if (
+        len(items) != 305
+        or len({i.item_id for i in items}) != 305
+        or any(i.split != "final_test" for i in items)
+        or len({i.paper_id for i in items}) != 40
+        or sorted(arms) != sorted(FROZEN_MATRIX)
+    ):
+        raise ValueError("final-test inputs require 305 final-test items, 40 papers and five arms")
+
+
+def retained_dense_index(root: Path, cfg, representation: str, encoder, progress):
+    """The published dense index of this configuration and representation, if one exists."""
+    found = None
+    for path in sorted((root / "corpus/derived/phase5/dense_index").glob("drv_*.json")):
+        if path.name.count(".") != 1:
+            continue
+        value = read_project_json(path, sha256_file(path), DenseIndex)
+        if (value.configuration, value.representation) != (cfg, representation):
+            continue
+        if value.execution != encoder.execution:
+            progress(f"dense {representation} retained index has another execution; not reused")
+            continue
+        if found is not None:
+            raise ValueError("two retained dense indexes for one configuration")
+        found = (record_ref(value), dense.manifest_ref(value))
+    return found
+
+
 def build_published(
-    selection: dict, destination: Path, output_root: Path, *, resume: bool = False
+    selection: dict,
+    destination: Path,
+    output_root: Path,
+    *,
+    resume: bool = False,
+    final_test: tuple[str, list] | None = None,
 ) -> None:
-    """Publish a declared development subset; only the full roster is marked complete."""
+    """Publish a declared development subset, or the complete final-test roster.
+
+    `final_test` is (benchmark release SHA-256, items) from `read_final_test_items`, which
+    the command line reads only after execution authorization has passed.
+    """
+    if destination.exists():
+        raise FileExistsError(destination)
+    if final_test is not None:
+        check_final_test_roster(final_test[1], selection["arms"])
     check_scope_pool(selection["arms"], selection["pool_papers"])
     arms = selection["arms"]
     if not arms or len(set(arms)) != len(arms) or set(arms) - set(FROZEN_MATRIX):
@@ -137,7 +182,7 @@ def build_published(
         raise ValueError(
             f"published construction requires exactly {len(expected)} source selections"
         )
-    if selection.get("view_sha256") != BENCHMARK_V1_DEVELOPMENT_SHA256:
+    if final_test is None and selection.get("view_sha256") != BENCHMARK_V1_DEVELOPMENT_SHA256:
         raise ValueError("published inputs require the exact frozen development-only view")
     import subprocess
 
@@ -225,13 +270,20 @@ def build_published(
             if key in completed_chunks and completed_chunks[key] != (metadata, cr, cm):
                 raise ValueError("conflicting retained chunk sets")
             completed_chunks[key] = (metadata, cr, cm)
-    view, items = read_development_view(Path(selection["view_dir"]), selection["view_sha256"])
-    if (
-        len(items) != 86
-        or any(i.split != "development" for i in items)
-        or set(selection["item_papers"]) != {i.paper_id for i in items}
-    ):
-        raise ValueError("requires exactly 86 development items")
+    if final_test is None:
+        view, items = read_development_view(Path(selection["view_dir"]), selection["view_sha256"])
+        if (
+            len(items) != 86
+            or any(i.split != "development" for i in items)
+            or set(selection["item_papers"]) != {i.paper_id for i in items}
+        ):
+            raise ValueError("requires exactly 86 development items")
+        split, item_papers = "development", selection["item_papers"]
+        benchmark_version = view.benchmark_version
+    else:
+        items = final_test[1]
+        split, item_papers = "final_test", sorted({i.paper_id for i in items})
+        (benchmark_version,) = {i.benchmark_version for i in items}
     from biorag_repro.generation.config import QUALIFIED_RETRIEVAL_SHA256
 
     base, base_ref = load_configuration(selection["retrieval_configs"]["confirmatory"])
@@ -247,8 +299,8 @@ def build_published(
                     {
                         "item_id": i.item_id,
                         "paper_id": i.paper_id,
-                        "benchmark_version": view.benchmark_version,
-                        "split": "development",
+                        "benchmark_version": benchmark_version,
+                        "split": split,
                         "answer_class": i.answer_class,
                         "question": i.question,
                         "matrix_arm": arm,
@@ -330,7 +382,19 @@ def build_published(
                             Path(selection["bge_tokenizer_root"]),
                         )
                     )
-                if arm == "dense_robustness":
+                retained_index = (
+                    retained_dense_index(output_root, cfg, rep, encoder, progress)
+                    if resume and arm == "dense_robustness"
+                    else None
+                )
+                if retained_index is not None:
+                    # Passage vectors are the costly step; reuse needs the exact recorded
+                    # execution and is re-validated against the selected chunks here.
+                    ir, im = retained_index
+                    index, vectors = dense.read_index(
+                        ir, im, sources, cfg, output_root, encoder, output_root
+                    )
+                elif arm == "dense_robustness":
                     index, vectors = dense.build_index(sources, cfg, output_root, encoder)
                     ir, im = dense.publish_index(
                         index,
@@ -429,8 +493,8 @@ def build_published(
                         {
                             "item_id": i.item_id,
                             "paper_id": i.paper_id,
-                            "benchmark_version": view.benchmark_version,
-                            "split": "development",
+                            "benchmark_version": benchmark_version,
+                            "split": split,
                             "answer_class": i.answer_class,
                             "question": i.question,
                             "matrix_arm": arm,
@@ -444,7 +508,7 @@ def build_published(
                         }
                     )
                     progress(
-                        f"{arm} {rep} context={item_number}/86 "
+                        f"{arm} {rep} context={item_number}/{len(items)} "
                         f"total_conditions={len(records)} "
                         f"stage_elapsed={time.perf_counter() - stage_started:.1f}s"
                     )
@@ -457,7 +521,7 @@ def build_published(
     )
     out = {
         "header": {
-            "benchmark_version": view.benchmark_version,
+            "benchmark_version": benchmark_version,
             "corpus_release_sha256": selection["release_sha256"],
             "item_arm_cells": len(items) * len(arms),
             "condition_records": len(records),
@@ -469,21 +533,28 @@ def build_published(
             ),
             "authenticated_complete_gate": False,
             "item_ids": [i.item_id for i in items],
-            "item_papers": selection["item_papers"],
+            "item_papers": item_papers,
             "arms": arms,
             "pool_papers": pool,
-            "benchmark_view_sha256": selection["view_sha256"],
+            "benchmark_view_sha256": selection.get("view_sha256"),
             "indexes": indexes,
         },
         "records": records,
     }
+    if final_test is not None:
+        del out["header"]["benchmark_view_sha256"]
+        out["header"].update(
+            status="complete_final_test_inputs",
+            split="final_test",
+            benchmark_release_sha256=final_test[0],
+        )
     with destination.open("x") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
-    observations = len(items) * sum(
-        len(FROZEN_MATRIX[a][0]) * len(FROZEN_MATRIX[a][1]) for a in arms
-    )
+    if final_test is not None:
+        os.chmod(destination, 0o444)
     print(
-        f"{len(records)} conditions; {len(items) * len(arms)} cells; {observations} observations",
+        f"{len(records)} conditions; {len(items) * len(arms)} cells; {observations} observations; "
+        f"contexts sha256 {sha256_file(destination)}",
         flush=True,
     )
 
@@ -494,8 +565,30 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--publish-root", type=Path)
     parser.add_argument("--resume", action="store_true")
+    final = parser.add_argument_group("final test (only after execution authorization)")
+    final.add_argument("--final-test", action="store_true")
+    final.add_argument("--repo", type=Path)
+    final.add_argument("--data-root", type=Path)
+    final.add_argument("--expected-head-sha256")
     args = parser.parse_args()
     selection = json.loads(args.selection.read_bytes())
+    if args.final_test:
+        from biorag_repro.benchmark.release import read_final_test_items
+        from biorag_repro.finaltest.authorization import authorize
+
+        if args.publish_root is None or not all(
+            (args.repo, args.data_root, args.expected_head_sha256)
+        ):
+            raise SystemExit("refused: final test requires --publish-root, --repo, --data-root "
+                             "and --expected-head-sha256")  # fmt: skip
+        # The same campaign authorization as the runner, before any protected item is read.
+        authorize(args.repo, args.data_root, args.expected_head_sha256,
+                  custody_mode="amended_drive")  # fmt: skip
+        final_test = read_final_test_items(args.data_root)
+        build_published(
+            selection, args.out, args.publish_root, resume=args.resume, final_test=final_test
+        )
+        return
     if args.publish_root is not None:
         build_published(selection, args.out, args.publish_root, resume=args.resume)
         return
