@@ -166,7 +166,24 @@ class Index:
     order: dict[str, int] = field(default_factory=dict)
 
 
+_LAST_INDEX: list[tuple[ArtifactRef, CanonicalDocument, "Index"]] = []
+
+
 def _index(document: CanonicalDocument, canonical: ArtifactRef) -> Index:
+    """The occurrence index of one canonical document.
+
+    Indexing a large document is expensive and every unit of a review packet needs it twice,
+    so the most recent index is reused when the same artifact and an equal document are asked
+    for again. A finished index is never modified, so sharing it cannot change a result.
+    """
+    if _LAST_INDEX and _LAST_INDEX[0][0] == canonical and _LAST_INDEX[0][1] == document:
+        return _LAST_INDEX[0][2]
+    index = _build_index(document, canonical)
+    _LAST_INDEX[:] = [(canonical, document, index)]
+    return index
+
+
+def _build_index(document: CanonicalDocument, canonical: ArtifactRef) -> Index:
     nodes = {n.node_id: n for n in document.nodes}
     cell_of: dict[str, tuple[str, TableCell]] = {}
     linked: dict[str, str] = {}

@@ -133,18 +133,10 @@ class Inputs:
 
 
 def check_source(revision: str) -> None:
-    """Evaluation runs only from the exact, clean code revision the researcher approved."""
-    import subprocess
-
-    def git(*args: str) -> str:
-        return subprocess.run(
-            ["git", *args], cwd=REPO, capture_output=True, text=True, check=True
-        ).stdout.strip()
-
-    if git("rev-parse", "HEAD") != revision:
-        raise Refused("evaluation code is not the approved evaluation source revision")
-    if git("status", "--porcelain", "--untracked-files=no"):
-        raise Refused("evaluation code has uncommitted tracked changes")
+    try:
+        final_test.check_source(REPO, revision)
+    except final_test.EvaluationRefused as error:
+        raise Refused(str(error)) from None
 
 
 def load(request_path: Path) -> Inputs:

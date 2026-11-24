@@ -562,3 +562,54 @@ def test_batch_verification_fails_closed_on_custody_evidence(tmp_path):
     (batch / "batch.json").write_text("{}")
     with pytest.raises(evaluator.Refused, match="batch integrity"):
         evaluator.verify_batch(ctx())
+
+
+def _final_world(tmp_path):
+    from test_stage_a_review import make_world
+
+    from scripts import stage_a_review as sar
+
+    items, sources = make_world(tmp_path, count=4)
+    items = [i.model_copy(update={"split": "final_test"}) for i in items]
+    sources = {k: sar.Source(items[int(k[0][2:])], s.document, s.root, s.canonical)
+               for k, s in sources.items()}  # fmt: skip
+    return items, sources
+
+
+def _files(root):
+    return {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob("*"))
+            if p.is_file()}  # fmt: skip
+
+
+def test_streamed_final_packet_equals_the_in_memory_packet_and_resumes(tmp_path):
+    from test_stage_a_review import CREATED
+
+    from scripts import stage_a_review as sar
+
+    items, sources = _final_world(tmp_path)
+    auth = {"path": "approvals/final_test_evaluation.json", "sha256": "1" * 64}
+    common = {"seed": 5, "created_utc": CREATED, "code": "abc", "authorization": auth}
+    with final_test_scope():
+        sar.build_packet(sources, items, out=tmp_path / "reference", papers=("P001",),
+                         final_test=True, **common)  # fmt: skip
+        out = tmp_path / "packet"
+        assert sar.build_final_packet(sources, items, out=out, stop_after=3, **common) == 5
+        assert not out.exists()  # never a partial packet
+        staging = tmp_path / "packet.incomplete"
+        staged = sorted((staging / "units").glob("*.json"))
+        assert len(staged) == 3
+        staged[0].write_text('{"payload": {}, "payload_sha256": "0"}')  # damaged record
+        with pytest.raises(sar.ReviewError, match="another plan"):
+            sar.build_final_packet(sources, items, out=out, **(common | {"seed": 6}))
+        assert sar.build_final_packet(sources, items, out=out, **common) == 0
+        with pytest.raises(sar.ReviewError, match="already exists"):
+            sar.build_final_packet(sources, items, out=out, **common)
+    assert not staging.exists()
+    assert _files(out) == _files(tmp_path / "reference")
+    manifest = json.loads((out / "provenance/session_manifest.json").read_text())
+    assert (manifest["units"], manifest["authorization"]) == (8, auth)
+
+
+def test_evaluation_refuses_any_revision_but_the_approved_clean_one():
+    with pytest.raises(final_test.EvaluationRefused, match="approved evaluation source"):
+        final_test.check_source(REPO, "0" * 40)

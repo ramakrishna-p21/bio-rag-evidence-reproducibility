@@ -16,6 +16,7 @@ import json
 import math
 import random
 import re
+import shutil
 import statistics
 import subprocess
 import sys
@@ -386,7 +387,12 @@ def scaffold_leaks(lines: list[Line], identifiers: set[str]) -> list[str]:
     """System-generated leaks only: genuine source text may contain any word, even 'PDF'."""
     scaffold = "\n".join(text for line in lines for kind, text in line if kind == "scaffold")
     leaks = [m.group(0) for m in FORBIDDEN_WORDS.finditer(scaffold)]
-    leaks += [i for i in identifiers if re.search(rf"(?<!\w){re.escape(i)}(?!\w)", scaffold)]
+    # The substring test only skips identifiers that cannot match; the regex decides.
+    leaks += [
+        i
+        for i in identifiers
+        if i in scaffold and re.search(rf"(?<!\w){re.escape(i)}(?!\w)", scaffold)
+    ]
     return leaks
 
 
@@ -487,19 +493,58 @@ def build_packet(
     order = schedule(
         [i.item_id for i in chosen], seed, groups={i.item_id: i.paper_id for i in chosen}
     )
-    analyses: list[Analysis] = []
-    for position, (item_id, representation) in enumerate(order, 1):
-        analyses.append(Analysis(f"R{position:03d}", seed, sources[(item_id, representation)]))
+    handles = [f"R{position:03d}" for position in range(1, len(order) + 1)]
+    rendered = {}
+    for handle, key in zip(handles, order, strict=True):
+        rendered[handle] = render(Analysis(handle, seed, sources[key]))
+    _write_packet(
+        out, rendered, order, handles, seed=seed, chosen=len(chosen), created_utc=created_utc,
+        code=code, role=role, papers=papers, final_test=final_test,
+        include_previously_reviewed=include_previously_reviewed,
+        previous_manifest=previous_manifest, authorization=authorization,
+    )  # fmt: skip
 
+
+def render(analysis: "Analysis") -> tuple[list[Line], dict[str, Any]]:
+    """The masked lines of one unit and its unmasked provenance record; leaks are refused."""
+    lines = analysis.render_unit()
+    leaks = scaffold_leaks(lines, analysis.identifiers())
+    if leaks:
+        raise ReviewError(f"{analysis.handle}: masking leak {sorted(set(leaks))}")
+    a = analysis
+    record = {
+        "item": a.source.item.model_dump(mode="json"),
+        "item_sha256": item_digest(a.source.item),
+        "representation": a.source.representation,
+        "root": str(a.source.root),
+        "canonical": ref_dict(a.source.canonical),
+        "candidate": ref_dict(stage_a_ref(a.candidate)),
+        "containers": {h: c for c, h in a.handles.items()},
+        "shown": [a.handles[c] for c in a.shown()],
+    }
+    return lines, record
+
+
+def _write_packet(
+    out: Path,
+    rendered: dict[str, tuple[list[Line], dict[str, Any]]],
+    order: list[tuple[str, str]],
+    handles: list[str],
+    *,
+    seed: int,
+    chosen: int,
+    created_utc: str,
+    code: str | None,
+    role: str,
+    papers: tuple[str, ...],
+    final_test: bool,
+    include_previously_reviewed: bool,
+    previous_manifest: Path | None,
+    authorization: dict[str, str] | None,
+) -> None:
     view_lines: list[Line] = [[S(INSTRUCTIONS)]]
-    for analysis in analyses:
-        lines = analysis.render_unit()
-        leaks = scaffold_leaks(lines, analysis.identifiers())
-        if leaks:
-            raise ReviewError(f"{analysis.handle}: masking leak {sorted(set(leaks))}")
-        view_lines += lines + [[S("")]]
-    handles = [a.handle for a in analyses]
-
+    for handle in handles:
+        view_lines += [*rendered[handle][0], [S("")]]
     reviewer, provenance = out / "reviewer", out / "provenance"
     view_sha = write(reviewer / "masked_view.md", (to_text(view_lines) + "\n").encode())
     review_sha = write(reviewer / "review.json", dumps([template(h) for h in handles]))
@@ -510,25 +555,13 @@ def build_packet(
             {
                 "seed": seed,
                 "gap_fraction": GAP_FRACTION,
-                "gap": min_gap(len(chosen)),
+                "gap": min_gap(chosen),
                 "orientation": "balanced overall and within papers",
-                "order": [[a.handle, i, r] for a, (i, r) in zip(analyses, order, strict=True)],
+                "order": [[h, i, r] for h, (i, r) in zip(handles, order, strict=True)],
             }
         ),
     )
-    units = {
-        a.handle: {
-            "item": a.source.item.model_dump(mode="json"),
-            "item_sha256": item_digest(a.source.item),
-            "representation": a.source.representation,
-            "root": str(a.source.root),
-            "canonical": ref_dict(a.source.canonical),
-            "candidate": ref_dict(stage_a_ref(a.candidate)),
-            "containers": {h: c for c, h in a.handles.items()},
-            "shown": [a.handles[c] for c in a.shown()],
-        }
-        for a in analyses
-    }
+    units = {h: rendered[h][1] for h in handles}
     unmasked_sha = write(provenance / "unmasked_evidence.json", dumps(units))
     manifest = {
         "status": (
@@ -546,9 +579,9 @@ def build_packet(
         ),
         "previously_reviewed_papers": sorted(set(papers) & EXCLUDED_PAPERS),
         "publication_requires_human_judgments": True,
-        "pairs": len(chosen),
+        "pairs": chosen,
         "units": len(order),
-        "gap": min_gap(len(chosen)),
+        "gap": min_gap(chosen),
         "created_utc": created_utc,
         "code_commit": code,
         "script_sha256": sha256_bytes(Path(__file__).read_bytes()),
@@ -556,7 +589,7 @@ def build_packet(
         "masked_view_sha256": view_sha,
         "review_template_sha256": review_sha,
         "unmasked_evidence_sha256": unmasked_sha,
-        "canonical_documents": sorted({a.source.canonical.sha256 for a in analyses}),
+        "canonical_documents": sorted({u["canonical"]["sha256"] for u in units.values()}),
         "previous_manifest_sha256": (
             sha256_bytes(previous_manifest.read_bytes()) if previous_manifest else None
         ),
@@ -565,6 +598,116 @@ def build_packet(
     if final_test:
         manifest["authorization"] = authorization
     write(provenance / "session_manifest.json", dumps(manifest))
+
+
+def build_final_packet(
+    sources: dict[tuple[str, str], Source],
+    items: list[BenchmarkItem],
+    *,
+    out: Path,
+    seed: int,
+    created_utc: str,
+    code: str | None,
+    authorization: dict[str, str],
+    stop_after: int | None = None,
+) -> int:
+    """The complete final-test packet, built one unit at a time in a resumable staging area.
+
+    The seeded plan (order, handles, item and document identities, authorization) is fixed
+    first. Each unit is rendered once, grouped by document so its index is built once, and
+    staged as a hash-checked record. A restart keeps only records that match the plan; the
+    packet is written from the staged records and published by one rename, so `out` either
+    does not exist or is complete. Returns the number of units still missing (0 = published).
+    """
+    if out.exists():
+        raise ReviewError("the final-test packet already exists")
+    chosen = sorted(items, key=lambda i: i.item_id)
+    if any(i.split != "final_test" for i in chosen):
+        raise ReviewError("the final-test packet holds final-test items only")
+    order = schedule(
+        [i.item_id for i in chosen], seed, groups={i.item_id: i.paper_id for i in chosen}
+    )
+    handles = [f"R{position:03d}" for position in range(1, len(order) + 1)]
+    plan = {
+        "status": "incomplete_final_test_packet_not_for_review",
+        "seed": seed,
+        "authorization": authorization,
+        "units": {
+            h: {
+                "item_id": i,
+                "representation": r,
+                "item_sha256": item_digest(sources[(i, r)].item),
+                "canonical_sha256": sources[(i, r)].canonical.sha256,
+            }
+            for h, (i, r) in zip(handles, order, strict=True)
+        },
+    }
+    staging = out.with_name(out.name + ".incomplete")
+    plan_bytes = dumps(plan)
+    if (staging / "plan.json").exists():
+        if (staging / "plan.json").read_bytes() != plan_bytes:
+            raise ReviewError("staged work belongs to another plan; it is not reused")
+    else:
+        write(staging / "plan.json", plan_bytes)
+    plan_sha = sha256_bytes(plan_bytes)
+
+    def staged(handle: str) -> tuple[list[Line], dict[str, Any]] | None:
+        path = staging / "units" / f"{handle}.json"
+        if not path.exists():
+            return None
+        try:
+            value = json.loads(path.read_bytes())
+            payload = value["payload"]
+            entry = plan["units"][handle]
+            if (
+                value["payload_sha256"] != sha256_bytes(dumps(payload))
+                or payload["plan_sha256"] != plan_sha
+                or payload["handle"] != handle
+                or payload["record"]["item_sha256"] != entry["item_sha256"]
+                or payload["record"]["canonical"]["sha256"] != entry["canonical_sha256"]
+            ):
+                raise ValueError("staged unit does not match the plan")
+        except (ValueError, KeyError, TypeError):
+            path.unlink()  # rebuilt below; an unverified record is never kept
+            return None
+        lines = [[(kind, text) for kind, text in line] for line in payload["lines"]]
+        return lines, payload["record"]
+
+    # Grouping by document keeps one document index in memory and builds it once.
+    by_document = sorted(
+        zip(handles, order, strict=True), key=lambda x: (sources[x[1]].canonical.sha256, x[0])
+    )
+    done = 0
+    for handle, key in by_document:
+        if staged(handle) is not None:
+            continue
+        if stop_after is not None and done >= stop_after:
+            return sum(1 for h in handles if not (staging / "units" / f"{h}.json").exists())
+        lines, record = render(Analysis(handle, seed, sources[key]))
+        payload = {"plan_sha256": plan_sha, "handle": handle, "lines": lines, "record": record}
+        data = dumps({"payload": payload, "payload_sha256": sha256_bytes(dumps(payload))})
+        target = staging / "units" / f"{handle}.json"
+        write(target.with_suffix(".tmp"), data)
+        target.with_suffix(".tmp").replace(target)
+        done += 1
+    rendered = {}
+    for handle in handles:
+        unit = staged(handle)
+        if unit is None:
+            raise ReviewError(f"{handle} failed verification after staging")
+        rendered[handle] = unit
+    assembled = staging / "packet"
+    if assembled.exists():
+        shutil.rmtree(assembled)
+    _write_packet(
+        assembled, rendered, order, handles, seed=seed, chosen=len(chosen),
+        created_utc=created_utc, code=code, role="first_rater",
+        papers=tuple(sorted({i.paper_id for i in chosen})), final_test=True,
+        include_previously_reviewed=False, previous_manifest=None, authorization=authorization,
+    )  # fmt: skip
+    assembled.rename(out)
+    shutil.rmtree(staging)
+    return 0
 
 
 def check_washout(previous: Path | None, seed: int, created_utc: str) -> None:
@@ -978,9 +1121,10 @@ def load_final_test(
     """All 305 frozen final-test items and both canonical documents of each, after the
     researcher's evaluation authorization is verified. Protected content is read only here."""
     from biorag_repro.benchmark.release import read_final_test_items
-    from biorag_repro.evaluation.final_test import read_authorization
+    from biorag_repro.evaluation.final_test import check_source, read_authorization
 
-    read_authorization(authorization, authorization_sha, repo)
+    approved, _ = read_authorization(authorization, authorization_sha, repo)
+    check_source(repo, approved.evaluation_source_revision)
     _, items = read_final_test_items(data_root)
     selection = json.loads(selection_path.read_bytes())
     sources: dict[tuple[str, str], Source] = {}
@@ -1049,6 +1193,7 @@ def main(argv: list[str] | None = None) -> int:
         "--authorization", type=Path, default=repo / "approvals/final_test_evaluation.json"
     )
     fq.add_argument("--authorization-sha256", required=True)
+    fq.add_argument("--stop-after", type=int, help="build at most this many units, then stop")
     for name in ("start", "finish"):
         c = commands.add_parser(name)
         c.add_argument("--out", type=Path, required=True)
@@ -1083,21 +1228,23 @@ def main(argv: list[str] | None = None) -> int:
                     repo, args.data_root, args.selection, args.authorization,
                     args.authorization_sha256,
                 )  # fmt: skip
-                build_packet(
+                missing = build_final_packet(
                     sources,
                     items,
                     out=args.out,
                     seed=args.seed,
-                    papers=tuple(sorted({i.paper_id for i in items})),
                     created_utc=now(),
                     code=code_version(),
-                    final_test=True,
                     authorization={
                         "path": str(args.authorization.resolve()),
                         "sha256": args.authorization_sha256,
                     },
+                    stop_after=args.stop_after,
                 )
-            print(f"{2 * len(items)} final-test units queued")
+            if missing:
+                print(f"incomplete: {missing} units still to build; rerun to resume")
+                return 2
+            print(f"{2 * len(items)} final-test units published")
             return 0
         with scope_for(args.out):
             return _command(args)

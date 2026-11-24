@@ -104,6 +104,21 @@ def read_authorization(
     return value, ref
 
 
+def check_source(repo: Path, revision: str) -> None:
+    """Evaluation runs only from the exact, clean code revision the researcher approved."""
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+        ).stdout.strip()
+
+    if git("rev-parse", "HEAD") != revision:
+        raise EvaluationRefused("evaluation code is not the approved evaluation source revision")
+    if git("status", "--porcelain", "--untracked-files=no"):
+        raise EvaluationRefused("evaluation code has uncommitted tracked changes")
+
+
 # ---- Stage B ---------------------------------------------------------------------------------
 
 REVIEW_FIELDS = (
