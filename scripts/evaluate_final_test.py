@@ -94,6 +94,10 @@ PATHS = (
     "stage_a_inventory", "stage_b_inventory", "stage_c_review",
 )  # fmt: skip
 Refused = generation.Refused
+SCOPE_ARMS: dict[str, tuple[str, ...] | None] = {
+    "complete_matrix": None,
+    "confirmatory_only": ("confirmatory",),
+}
 
 
 def dumps(value: Any) -> bytes:
@@ -124,6 +128,11 @@ class Inputs:
     plan: list[Any]
     seeds: Any
     prompt: Any
+    scope: str = "complete_matrix"
+
+    def in_scope(self, arm: str) -> bool:
+        arms = SCOPE_ARMS[self.scope]
+        return arms is None or arm in arms
 
     def path(self, name: str) -> Path:
         value = self.request.get(name)
@@ -139,7 +148,7 @@ def check_source(revision: str) -> None:
         raise Refused(str(error)) from None
 
 
-def load(request_path: Path) -> Inputs:
+def load(request_path: Path, scope: str | None = None) -> Inputs:
     """Authorization first; protected items, contexts and plan only after it verifies."""
     request = json.loads(request_path.read_bytes())
     try:
@@ -148,6 +157,9 @@ def load(request_path: Path) -> Inputs:
         )
     except final_test.EvaluationRefused as error:
         raise Refused(str(error)) from None
+    scope = scope or request.get("scope", "complete_matrix")
+    if scope not in SCOPE_ARMS or scope != authorization.scope:
+        raise Refused(f"evaluation scope {scope!r} is not the authorized {authorization.scope!r}")
     check_source(authorization.evaluation_source_revision)
     args = argparse.Namespace(
         phase="final_test",
@@ -162,8 +174,9 @@ def load(request_path: Path) -> Inputs:
     generation.check_authorized_final_test_roster(Path(request["data_root"]), package)
     _, items = read_final_test_items(Path(request["data_root"]))
     return Inputs(
-        request, authorization, ref, {i.item_id: i for i in items}, package, plan, seeds, prompt
-    )
+        request, authorization, ref, {i.item_id: i for i in items}, package, plan, seeds, prompt,
+        scope,
+    )  # fmt: skip
 
 
 def official_identity(ctx: Inputs, identity: dict, configurations: dict) -> None:
@@ -221,11 +234,29 @@ def verify_batch(ctx: Inputs) -> list[GenerationResult]:
     renderers = {
         arm: InputRenderer(ctx.path("tokenizer_root"), c, ctx.prompt)
         for arm, c in configurations.items()
+        if ctx.in_scope(arm)
     }
-    if generation.verify_batch_results(out, ctx.plan, renderers, batch["run_id"]) != len(ctx.plan):
-        raise Refused("batch does not hold every planned observation")
+    # Seals above cover every file. Per-observation read-back covers the authorized scope only.
+    events = generation.read_events(out)
+    by_key = {p.key: p for p in ctx.plan}
+    paths = sorted((out / "results").glob("*.json"))
+    if len(paths) != len(ctx.plan) or any(p.stem not in by_key for p in paths):
+        raise Refused("batch does not hold exactly the planned observations")
+    for path in paths:
+        planned = by_key[path.stem]
+        if ctx.in_scope(planned.record["matrix_arm"]):
+            generation.check_result(
+                json.loads(path.read_bytes()),
+                planned,
+                renderers[planned.record["matrix_arm"]],
+                batch["run_id"],
+                events,
+                out,
+            )
     results = []
     for planned in ctx.plan:
+        if not ctx.in_scope(planned.record["matrix_arm"]):
+            continue
         value = json.loads((out / "results" / f"{planned.key}.json").read_bytes())
         result = GenerationResult.model_validate(value["generation_result"])
         if result.phase != "final_test":
@@ -278,7 +309,11 @@ def contexts(ctx: Inputs, judged: dict[str, tuple[Any, Any, Any]]) -> Any:
     indexes: dict[str, tuple[dict, dict]] = {}
     active = None
     records = sorted(
-        (r for r in ctx.package["records"] if r["matrix_arm"] != "closed_book"),
+        (
+            r
+            for r in ctx.package["records"]
+            if r["matrix_arm"] != "closed_book" and ctx.in_scope(r["matrix_arm"])
+        ),
         key=lambda r: (r["matrix_arm"], r["item_id"], r["condition"]),
     )
     for record in records:
@@ -364,7 +399,13 @@ def stage_b_ingest(ctx: Inputs, out: Path, reviewer: str) -> dict[str, Any]:
         raise Refused("Stage B mapping differs from its queue manifest")
     mapping = json.loads(mapping_bytes)
     records = {r["handle"]: r for r in json.loads((out / "reviewer" / "review.json").read_bytes())}
-    if set(records) != set(mapping) or any(r["status"] is None for r in records.values()):
+    # A scoped release needs the entries that cover its contexts; others stay unreviewed.
+    wanted = {h for h, cs in mapping.items() if any(ctx.in_scope(c.split("/")[1]) for c in cs)}
+    if (
+        (ctx.scope == "complete_matrix" and set(records) != set(mapping))
+        or not wanted <= set(records)
+        or any(records[h]["status"] is None for h in wanted)
+    ):
         raise Refused("every Stage B queue entry needs a completed review record")
     handle_of = {c: h for h, cs in mapping.items() for c in cs}
     root = ctx.path("analysis_root")
@@ -402,6 +443,7 @@ def stage_b_ingest(ctx: Inputs, out: Path, reviewer: str) -> dict[str, Any]:
         refs[coordinate] = ref.model_dump(mode="json")
     inventory = {
         "status": "stage_b_judgments_submitted",
+        "scope": ctx.scope,
         "rules": RULES,
         "reviewer": reviewer,
         "queue_manifest_sha256": sha256_bytes(manifest_bytes),
@@ -427,6 +469,7 @@ def stage_c_queue(ctx: Inputs, out: Path, seed: int) -> dict[str, Any]:
     manifest = {
         "status": "final_test_stage_c_pending_adjudication",
         "rules": "stage_c_rules_v2",
+        "scope": ctx.scope,
         "seed": seed,
         "authorization_sha256": ctx.authorization_ref.sha256,
         "queue_sha256": write_once(out / "reviewer" / "queue.json", dumps(entries)),
@@ -442,6 +485,8 @@ def adjudicated_scores(ctx: Inputs, results: list[GenerationResult]) -> list[Any
     review = ctx.path("stage_c_review")
     manifest = json.loads((review / "provenance" / "manifest.json").read_bytes())
     mapping_bytes = (review / "provenance" / "mapping.json").read_bytes()
+    if manifest.get("scope", "complete_matrix") != ctx.scope:
+        raise Refused("Stage C queue was built for another evaluation scope")
     if sha256_bytes(mapping_bytes) != manifest["mapping_sha256"]:
         raise Refused("Stage C mapping differs from its queue manifest")
     mapping = json.loads(mapping_bytes)
@@ -465,6 +510,54 @@ def adjudicated_scores(ctx: Inputs, results: list[GenerationResult]) -> list[Any
 # ---- table and handoff -----------------------------------------------------------------------
 
 
+def planned_roster(ctx: Inputs) -> PlannedRoster:
+    """The declared scope of the analysis table: the authorized arms in full, all 305 items."""
+    matrix = {a: cr for a, cr in FROZEN_MATRIX.items() if ctx.in_scope(a)}
+    return PlannedRoster(
+        scope=ctx.scope,
+        phase="final_test",
+        benchmark_version=next(iter(ctx.items.values())).benchmark_version,
+        corpus_version="corpus_v1",
+        declared_by=final_test.RESEARCHER,
+        basis="Frozen 305-item final-test roster and "
+        + ("five-arm matrix" if ctx.scope == "complete_matrix" else "confirmatory arm only")
+        + " (EXPERIMENT_PLAN v2)",
+        arms=[
+            RosterArm(matrix_arm=a, conditions=list(c), repeats=list(r))
+            for a, (c, r) in matrix.items()
+        ],
+        items=roster_items_from_final_test(list(ctx.items.values())),
+    )
+
+
+def source_runs(
+    ctx: Inputs, results: list[GenerationResult], batch: dict, record_sha256: str
+) -> list[Any]:
+    """One official source run per authorized arm, with that arm's observation count."""
+    head = ArtifactRef(
+        artifact_id="drive_manifest_" + ctx.authorization.drive_manifest_sha256,
+        logical_ref=ctx.authorization_ref.logical_ref,
+        sha256=ctx.authorization.drive_manifest_sha256,
+    )
+    sources = []
+    for arm in (a for a in FROZEN_MATRIX if ctx.in_scope(a)):
+        config = next(p.config for p in ctx.plan if p.record["matrix_arm"] == arm)
+        sources.append(
+            analysis_handoff.SourceRun(
+                run_id=batch["run_id"],
+                completion=head,
+                run_record_sha256=record_sha256,
+                resolved_config_sha256=config.configuration_sha256,
+                raw_config_sha256=config.raw_toml_sha256,
+                roster_sha256=batch["identity"]["planned_keys_sha256"],
+                matrix_arm=arm,
+                backend_kind="official",
+                observations=sum(r.matrix_arm == arm for r in results),
+            )
+        )
+    return sources
+
+
 def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
     root = ctx.path("analysis_root")
     out = ctx.path("batch")
@@ -472,7 +565,11 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
     scores = {s.observation_key: s for s in adjudicated_scores(ctx, results)}
     judged = stage_a(ctx)
     b_inventory = json.loads(ctx.path("stage_b_inventory").read_bytes())
-    if b_inventory.get("status") != "stage_b_judgments_submitted" or b_inventory["rules"] != RULES:
+    if (
+        b_inventory.get("status") != "stage_b_judgments_submitted"
+        or b_inventory["rules"] != RULES
+        or b_inventory.get("scope", "complete_matrix") != ctx.scope
+    ):
         raise Refused("Stage B inventory is not a submitted v2 review")
     evidence = {}
     for coordinate, record, inputs in contexts(ctx, judged):
@@ -552,19 +649,7 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
                 link,
             )
         )
-    roster = PlannedRoster(
-        scope="complete_matrix",
-        phase="final_test",
-        benchmark_version=next(iter(ctx.items.values())).benchmark_version,
-        corpus_version="corpus_v1",
-        declared_by=final_test.RESEARCHER,
-        basis="Frozen 305-item final-test roster and five-arm matrix (EXPERIMENT_PLAN v2)",
-        arms=[
-            RosterArm(matrix_arm=a, conditions=list(c), repeats=list(r))
-            for a, (c, r) in FROZEN_MATRIX.items()
-        ],
-        items=roster_items_from_final_test(list(ctx.items.values())),
-    )
+    roster = planned_roster(ctx)
     table = build_table(observations, roster)
     if publish:
         _, _, table_build = publish_table(table, root)
@@ -577,27 +662,7 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
     template, rows = analysis_handoff._describe(table_build, root, code)
     if [r.model_dump() for r in rows] != [r.model_dump() for r in table.rows]:
         raise Refused("published analysis rows differ from the verified evaluation")
-    sources = []
-    head = ArtifactRef(
-        artifact_id="drive_manifest_" + ctx.authorization.drive_manifest_sha256,
-        logical_ref=ctx.authorization_ref.logical_ref,
-        sha256=ctx.authorization.drive_manifest_sha256,
-    )
-    for arm in FROZEN_MATRIX:
-        config = next(p.config for p in ctx.plan if p.record["matrix_arm"] == arm)
-        sources.append(
-            analysis_handoff.SourceRun(
-                run_id=batch["run_id"],
-                completion=head,
-                run_record_sha256=sha256_file(out / "batch.json"),
-                resolved_config_sha256=config.configuration_sha256,
-                raw_config_sha256=config.raw_toml_sha256,
-                roster_sha256=batch["identity"]["planned_keys_sha256"],
-                matrix_arm=arm,
-                backend_kind="official",
-                observations=sum(r.matrix_arm == arm for r in results),
-            )
-        )
+    sources = source_runs(ctx, results, batch, sha256_file(out / "batch.json"))
     auth = ctx.authorization
     handoff = analysis_handoff.AnalysisHandoff.model_validate(
         template.model_dump()
@@ -627,6 +692,7 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
         "status": "verified_official_final_test_handoff",
         "handoff": href.model_dump(),
         "build": hbuild.model_dump(),
+        "scope": ctx.scope,
         "observations": len(results),
         "csv_sha256": handoff.csv.sha256,
         "source_verification": "fresh_python_verification",
@@ -659,6 +725,7 @@ def main() -> None:
     for name in ("stage-b-queue", "stage-b-ingest", "stage-c-queue", "evaluate"):
         c = commands.add_parser(name)
         c.add_argument("--request", type=Path, required=True)
+        c.add_argument("--scope", choices=("complete", "confirmatory"))
         if name != "evaluate":
             c.add_argument("--out", type=Path, required=True)
         if name.endswith("queue"):
@@ -667,7 +734,8 @@ def main() -> None:
             c.add_argument("--reviewer", required=True)
     args = parser.parse_args()
     with final_test_scope(), stage_b.reuse_checks():
-        ctx = load(args.request)
+        scope = {"complete": "complete_matrix", "confirmatory": "confirmatory_only"}.get(args.scope)
+        ctx = load(args.request, scope)
         if args.command == "stage-b-queue":
             result = stage_b_queue(ctx, args.out, args.seed)
         elif args.command == "stage-b-ingest":

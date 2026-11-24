@@ -275,7 +275,7 @@ class ColumnSpec(Record):
 
 
 ItemState = Literal["included", "missing", "unresolved", "excluded"]
-Scope = Literal["complete_matrix", "partial_development"]
+Scope = Literal["complete_matrix", "partial_development", "confirmatory_only"]
 
 
 class RosterItem(Record):
@@ -319,7 +319,8 @@ class PlannedRoster(Record):
 
     Expected coordinates are the product of included items, declared arms, their
     conditions and repeats, all inside the frozen matrix. A complete_matrix roster
-    declares the whole matrix; anything narrower is partial_development.
+    declares the whole matrix; confirmatory_only declares the confirmatory arm alone;
+    anything else narrower is partial_development.
     """
 
     schema_version: Literal["1"] = "1"
@@ -354,6 +355,10 @@ class PlannedRoster(Record):
                 raise ValueError("a complete_matrix roster declares every arm in full")
             if any(i.state in {"missing", "unresolved"} for i in self.items):
                 raise ValueError("a roster with missing or unresolved items is partial")
+        if self.scope == "confirmatory_only" and [
+            (a.matrix_arm, a.conditions, a.repeats) for a in self.arms
+        ] != [("confirmatory", list(REPRESENTATIONS), [1, 2, 3])]:
+            raise ValueError("a confirmatory_only roster is the confirmatory arm in full")
         return self
 
     def coordinates(self) -> set[tuple[str, str, str, int]]:

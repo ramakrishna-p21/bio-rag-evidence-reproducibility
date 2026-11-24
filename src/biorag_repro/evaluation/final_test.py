@@ -38,6 +38,7 @@ RESEARCHER = "Rama Krishna Pudota"
 PROTOCOL_FILE = "docs/frozen/EVALUATION_PROTOCOL_V1.md"
 CUSTODY_FILE = "docs/frozen/CUSTODY_EXCEPTION_0f1251d9_V1.md"
 AUTHORIZATION_FILE = "approvals/final_test_evaluation.json"
+SCOPE_AMENDMENT_FILE = "docs/frozen/EVALUATION_PROTOCOL_V1_AMENDMENT_CONFIRMATORY_SCOPE_V1.md"
 PLANNED_OBSERVATIONS = 4575
 
 
@@ -68,6 +69,10 @@ class EvaluationAuthorization(Record):
     new_head_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     observations: Literal[4575]
     evaluation_source_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    # Absent in the original record: the complete matrix. A confirmatory-only release must be
+    # named by the researcher's own record; the code never widens or narrows it.
+    scope: Literal["complete_matrix", "confirmatory_only"] = "complete_matrix"
+    scope_amendment_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     reliability_design: str = Field(min_length=1)
     ai_assistance: str = Field(min_length=1)
 
@@ -86,10 +91,12 @@ def read_authorization(
         utc_stamp(value.approved_utc)
     except ValueError as error:
         raise EvaluationRefused(f"evaluation authorization is not an approval: {error}") from None
-    for name, digest in (
-        (PROTOCOL_FILE, value.protocol_sha256),
-        (CUSTODY_FILE, value.custody_exception_sha256),
-    ):
+    if (value.scope == "confirmatory_only") != (value.scope_amendment_sha256 is not None):
+        raise EvaluationRefused("a confirmatory-only scope needs its approved amendment hash")
+    texts = [(PROTOCOL_FILE, value.protocol_sha256), (CUSTODY_FILE, value.custody_exception_sha256)]
+    if value.scope_amendment_sha256:
+        texts.append((SCOPE_AMENDMENT_FILE, value.scope_amendment_sha256))
+    for name, digest in texts:
         text = repo / name
         body = text.read_bytes() if text.is_file() else b""
         if sha256_bytes(body) != digest:

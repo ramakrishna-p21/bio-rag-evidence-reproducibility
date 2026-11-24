@@ -334,7 +334,7 @@ def build_final_table():
     scores = final_test.apply_decisions(scores, mapping, decisions, "Rama")
     observations = [o.__class__(**{**o.__dict__, "score": s}) for o, s in zip(observations, scores)]
     roster = PlannedRoster(
-        scope="partial_development",
+        scope="confirmatory_only",
         phase="final_test",
         benchmark_version="benchmark_v1",
         corpus_version="corpus_v1",
@@ -613,3 +613,193 @@ def test_streamed_final_packet_equals_the_in_memory_packet_and_resumes(tmp_path)
 def test_evaluation_refuses_any_revision_but_the_approved_clean_one():
     with pytest.raises(final_test.EvaluationRefused, match="approved evaluation source"):
         final_test.check_source(REPO, "0" * 40)
+
+
+def _scoped_roster(items=305, **changes):
+    values = {
+        "scope": "confirmatory_only",
+        "phase": "final_test",
+        "benchmark_version": "benchmark_v1",
+        "corpus_version": "corpus_v1",
+        "declared_by": "synthetic",
+        "basis": "synthetic",
+        "arms": [RosterArm(matrix_arm="confirmatory", conditions=["JATS", "PDF_DOCLING"],
+                        repeats=[1, 2, 3])],
+        "items": [
+            RosterItem(item_id=f"q_{n:04d}", state="included", paper_id="p", item_sha256="0" * 64)
+            for n in range(items)
+        ],
+    }  # fmt: skip
+    return PlannedRoster(**(values | changes))
+
+
+def test_confirmatory_roster_plans_610_contexts_and_1830_observations_and_nothing_else():
+    cells = _scoped_roster().coordinates()
+    assert len(cells) == 305 * 2 * 3 == 1830
+    assert {arm for arm, *_ in cells} == {"confirmatory"}
+    assert len({(item, condition) for _, item, condition, _ in cells}) == 610
+    for bad in (
+        {"arms": [RosterArm(matrix_arm="confirmatory", conditions=["JATS"], repeats=[1, 2, 3])]},
+        {"arms": [RosterArm(matrix_arm="closed_book", conditions=["CLOSED_BOOK"], repeats=[1])]},
+    ):
+        with pytest.raises(ValueError, match="confirmatory_only"):
+            _scoped_roster(**bad)
+
+
+def test_scope_must_be_the_authorized_scope_and_defaults_to_the_complete_matrix(
+    tmp_path, monkeypatch
+):
+    from scripts import evaluate_final_test as evaluator
+
+    path, digest, repo = approved(tmp_path)
+    monkeypatch.setattr(evaluator, "REPO", repo)
+    assert final_test.read_authorization(path, digest, repo)[0].scope == "complete_matrix"
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"authorization": str(path), "authorization_sha256": digest}))
+    for scope in ("confirmatory_only", "everything"):
+        with pytest.raises(evaluator.Refused, match="not the authorized"):
+            evaluator.load(request, scope)
+    ctx = evaluator.Inputs(*(None,) * 8)
+    assert ctx.scope == "complete_matrix" and ctx.in_scope("closed_book")
+    ctx.scope = "confirmatory_only"
+    assert ctx.in_scope("confirmatory") and not ctx.in_scope("dense_robustness")
+    assert not ctx.in_scope("closed_book")
+
+
+def test_confirmatory_authorization_needs_its_approved_amendment_text(tmp_path):
+    scoped = {"scope": "confirmatory_only"}
+    path, digest, repo = approved(tmp_path / "a", **scoped)
+    with pytest.raises(final_test.EvaluationRefused, match="amendment hash"):
+        final_test.read_authorization(path, digest, repo)
+    amendment = tmp_path / "b" / "repo" / final_test.SCOPE_AMENDMENT_FILE
+    for text, match in (("**Status: PENDING RESEARCHER APPROVAL.**\n", "pending"), ("ok\n", None)):
+        amendment.parent.mkdir(parents=True, exist_ok=True)
+        amendment.write_text(text)
+        record = scoped | {"scope_amendment_sha256": sha256_file(amendment)}
+        path, digest, repo = approved(tmp_path / "b", **record)
+        if match:
+            with pytest.raises(final_test.EvaluationRefused, match=match):
+                final_test.read_authorization(path, digest, repo)
+        else:
+            assert final_test.read_authorization(path, digest, repo)[0].scope == "confirmatory_only"
+
+
+# ---- scoped ingestion and Stage C queue -------------------------------------------------------
+
+
+def _scoped_ctx(tmp_path, scope="confirmatory_only"):
+    from types import SimpleNamespace
+
+    from scripts import evaluate_final_test as evaluator
+
+    ctx = evaluator.Inputs({}, SimpleNamespace(), None, {}, {}, [], None, None, scope)
+    ctx.path = lambda name: tmp_path / name
+    ctx.request = {}
+    return evaluator, ctx
+
+
+def test_scoped_stage_b_ingest_needs_only_the_scope_entries_and_records_its_scope(
+    tmp_path, monkeypatch
+):
+    with final_test_scope():
+        _, pdf = final_worlds("q_s01")
+        case = deliver(pdf, [pdf_chunk_with_evidence(pdf)])
+        evaluator, ctx = _scoped_ctx(tmp_path)
+        out = tmp_path / "queue"
+        (out / "provenance").mkdir(parents=True)
+        (out / "reviewer").mkdir()
+        # B0001 covers a confirmatory and a dense context (identical bytes); B0002 is dense only.
+        mapping = {"B0001": ["q_s01/confirmatory/PDF_DOCLING", "q_s01/dense_robustness/PDF_DOCLING"],
+                   "B0002": ["q_s02/dense_robustness/PDF_DOCLING"]}  # fmt: skip
+        mapping_bytes = json.dumps(mapping).encode()
+        (out / "provenance" / "mapping.json").write_bytes(mapping_bytes)
+        manifest = {"mapping_sha256": __import__("hashlib").sha256(mapping_bytes).hexdigest()}
+        (out / "provenance" / "manifest.json").write_text(json.dumps(manifest))
+        done = {"handle": "B0001", **pdf_review_record()}
+        open_ = {"handle": "B0002", "status": None}
+        review = out / "reviewer" / "review.json"
+        review.write_text(json.dumps([done, open_]))
+        published = []
+        monkeypatch.setattr(evaluator, "stage_a", lambda c: {})
+        monkeypatch.setattr(
+            evaluator, "contexts",
+            lambda c, j: iter([("q_s01/confirmatory/PDF_DOCLING", {}, case.inputs())]),
+        )  # fmt: skip
+        monkeypatch.setattr(evaluator, "publish_candidate", lambda *a: published.append("c"))
+        monkeypatch.setattr(evaluator, "publish_judgment", lambda *a: published.append("j"))
+        result = evaluator.stage_b_ingest(ctx, out, "Rama")
+        assert result["contexts"] == 1 and result["reviewed_entries"] == 1
+        inventory = json.loads((out / "stage_b_inventory.json").read_text())
+        assert inventory["scope"] == "confirmatory_only"
+        assert list(inventory["stage_b_judgments"]) == ["q_s01/confirmatory/PDF_DOCLING"]
+        # The same open entry blocks a complete-matrix ingestion, and an unfinished scope entry
+        # blocks the scoped one.
+        ctx.scope = "complete_matrix"
+        with pytest.raises(evaluator.Refused, match="every Stage B queue entry"):
+            evaluator.stage_b_ingest(ctx, out, "Rama")
+        ctx.scope = "confirmatory_only"
+        review.write_text(json.dumps([{"handle": "B0001", "status": None}, open_]))
+        with pytest.raises(evaluator.Refused, match="every Stage B queue entry"):
+            evaluator.stage_b_ingest(ctx, out, "Rama")
+
+
+def test_scoped_stage_c_queue_covers_only_the_scope_and_refuses_another_scope(
+    tmp_path, monkeypatch
+):
+    with final_test_scope():
+        jats, _ = final_worlds("q_s03")
+    item = jats.item
+    results = [
+        result_for(item, answer="1 genes", phase="final_test", representation_or_condition=c,
+                   repeat_index=r)
+        for c in ("JATS", "PDF_DOCLING") for r in (1, 2, 3)
+    ]  # fmt: skip
+    evaluator, ctx = _scoped_ctx(tmp_path)
+    ctx.items = {item.item_id: item}
+    ctx.authorization_ref = ArtifactRef(artifact_id="a", logical_ref="a", sha256="0" * 64)
+    monkeypatch.setattr(evaluator, "verify_batch", lambda c: results)
+    out = tmp_path / "stage_c"
+    summary = evaluator.stage_c_queue(ctx, out, 5)
+    assert summary["observations"] == 6 and summary["scope"] == "confirmatory_only"
+    template = json.loads((out / "reviewer" / "decisions.json").read_text())
+    for handle in template:
+        template[handle] = {"status": "correct", "rationale": "count matches; C1", "at_utc": AT}
+    (out / "reviewer" / "decisions.json").write_text(json.dumps(template))
+    ctx.request = {"stage_c_review": str(out)}
+    ctx.path = lambda name: out
+    scores = evaluator.adjudicated_scores(ctx, results)
+    assert [s.status for s in scores] == ["correct"] * 6
+    ctx.scope = "complete_matrix"
+    with pytest.raises(evaluator.Refused, match="another evaluation scope"):
+        evaluator.adjudicated_scores(ctx, results)
+
+
+def test_roster_and_source_runs_follow_the_authorized_scope(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    with final_test_scope():
+        jats, _ = final_worlds("q_s09")
+    item = jats.item
+    arms = ["confirmatory", "dense_robustness", "chunk_robustness", "scope_robustness",
+            "closed_book"]  # fmt: skip
+    config = SimpleNamespace(configuration_sha256="a" * 64, raw_toml_sha256="b" * 64)
+    plan = [SimpleNamespace(record={"matrix_arm": a}, config=config) for a in arms]
+    results = [SimpleNamespace(matrix_arm=a) for a in arms for _ in range(2)]
+    batch = {"run_id": "run_synthetic", "identity": {"planned_keys_sha256": "c" * 64}}
+    roster_item = RosterItem(
+        item_id=item.item_id, state="included", paper_id=item.paper_id,
+        item_sha256=stage_c.item_digest(item),
+    )  # fmt: skip
+    for scope, expected in (("confirmatory_only", arms[:1]), ("complete_matrix", arms)):
+        evaluator, ctx = _scoped_ctx(tmp_path, scope)
+        ctx.items, ctx.plan = {item.item_id: item}, plan
+        ctx.authorization = SimpleNamespace(drive_manifest_sha256="d" * 64)
+        ctx.authorization_ref = ArtifactRef(artifact_id="a", logical_ref="a", sha256="0" * 64)
+        monkeypatch.setattr(evaluator, "roster_items_from_final_test", lambda items: [roster_item])
+        roster = evaluator.planned_roster(ctx)
+        assert roster.scope == scope and [a.matrix_arm for a in roster.arms] == expected
+        runs = evaluator.source_runs(ctx, results, batch, "e" * 64)
+        assert [r.matrix_arm for r in runs] == expected and {r.observations for r in runs} == {2}
+        assert len(roster.coordinates()) == (
+            6 if scope == "confirmatory_only" else 6 + 2 + 2 + 2 + 3
+        )
