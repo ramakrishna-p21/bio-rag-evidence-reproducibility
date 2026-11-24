@@ -6,6 +6,10 @@ or a source occurrence ID inside an included chunk, is not delivery by itself.
 Nothing here reads generator output or benchmark gold.
 """
 
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -39,6 +43,7 @@ from biorag_repro.retrieval.models import Chunk, ChunkSet, ContextRecord, Ranked
 from biorag_repro.retrieval.storage import record_ref
 
 OPEN, CLOSE = "[evidence]\n", "\n[/evidence]"
+REUSE_LIMIT = 200_000  # remembered objects per command; beyond this nothing more is remembered
 # Later entries got further through the pipeline before the evidence was lost.
 LOSS_ORDER: list[Reason] = [
     "excluded_in_chunking",
@@ -67,6 +72,87 @@ class Inputs:
     stage_a_root: Path | None = None
 
 
+class _Unchanged:
+    """Objects seen once, with a deep copy and what was computed from them.
+
+    An entry is used only while the very same live object still equals its copy, so a later
+    change to a record is never answered from memory. Entries die with their objects.
+    """
+
+    def __init__(self) -> None:
+        self.entries: dict[int, tuple[weakref.ref, object, object]] = {}
+
+    def value(self, obj: object) -> object | None:
+        entry = self.entries.get(id(obj))
+        if entry is not None and entry[0]() is obj and entry[1] == obj:
+            return entry[2]
+        return None
+
+    def remember(self, obj: object, value: object) -> None:
+        key = id(obj)
+        if key not in self.entries and len(self.entries) >= REUSE_LIMIT:
+            return
+        forget = weakref.ref(obj, lambda _: self.entries.pop(key, None))
+        self.entries[key] = (forget, obj.model_copy(deep=True), value)
+
+
+_reuse: ContextVar[_Unchanged | None] = ContextVar("stage_b_reuse", default=None)
+
+
+@contextmanager
+def reuse_checks() -> Iterator[None]:
+    """Within one command, do not recompute two pure checks on records already verified.
+
+    Covers the Stage A read-back of a judgment against its item and canonical document, and the
+    identity hash of a chunk or chunk set. Failures are never remembered, and every check that
+    depends on the individual context still runs.
+    """
+    token = _reuse.set(_Unchanged())
+    try:
+        yield
+    finally:
+        _reuse.reset(token)
+
+
+def _ref(record: Chunk | ChunkSet) -> ArtifactRef:
+    seen = _reuse.get()
+    if seen is None:
+        return record_ref(record)
+    ref = seen.value(record)
+    if ref is None:
+        ref = record_ref(record)
+        seen.remember(record, ref)
+    return ref.model_copy(deep=True)
+
+
+def _read_back_stage_a(i: "Inputs") -> None:
+    """validate_stage_a, skipped only for a judgment already read back against these same,
+    unchanged item and document objects, canonical reference and approval root."""
+    seen = _reuse.get()
+    if seen is None:
+        validate_stage_a(i.stage_a, i.item, i.document, i.canonical, i.stage_a_root)
+        return
+    done = seen.value(i.stage_a) or []
+    if (
+        any(
+            item() is i.item
+            and document() is i.document
+            and canonical == i.canonical
+            and root == i.stage_a_root
+            for item, document, canonical, root in done
+        )
+        and seen.value(i.item) is not None
+        and seen.value(i.document) is not None
+    ):
+        return
+    validate_stage_a(i.stage_a, i.item, i.document, i.canonical, i.stage_a_root)
+    for record in (i.item, i.document):
+        if seen.value(record) is None:
+            seen.remember(record, True)
+    entry = (weakref.ref(i.item), weakref.ref(i.document), i.canonical.model_copy(), i.stage_a_root)
+    seen.remember(i.stage_a, [*done, entry])
+
+
 @dataclass
 class Supplied:
     """The verified final context: included chunks in order, with their offsets."""
@@ -81,7 +167,7 @@ class Supplied:
 
 def _verify(i: Inputs) -> Supplied:
     item, ctx, ranked = i.item, i.context, i.ranked
-    validate_stage_a(i.stage_a, item, i.document, i.canonical, i.stage_a_root)
+    _read_back_stage_a(i)
     if (
         i.chunk_set.input.canonical != i.canonical
         or i.chunk_set.input.paper_id != item.paper_id
@@ -102,7 +188,7 @@ def _verify(i: Inputs) -> Supplied:
 
     def authentic(chunk_id: str) -> Chunk:
         chunk = i.chunks.get(chunk_id)
-        if chunk is None or record_ref(chunk).artifact_id != chunk_id:
+        if chunk is None or _ref(chunk).artifact_id != chunk_id:
             raise ValueError("supplied chunk does not match its recorded identity")
         if chunk.input.representation != i.document.representation:
             raise ValueError("chunk representation differs from the item's arm")
@@ -120,7 +206,7 @@ def _verify(i: Inputs) -> Supplied:
     text, designated_n, other_n = "", 0, 0
     for hit in ranked.hits:
         chunk = authentic(hit.chunk.artifact_id)
-        if record_ref(chunk) != hit.chunk or chunk.input.paper_id != hit.paper_id:
+        if _ref(chunk) != hit.chunk or chunk.input.paper_id != hit.paper_id:
             raise ValueError("ranked chunk differs from the supplied chunk")
         if chunk.input.paper_id == item.paper_id and hit.chunk.artifact_id not in designated:
             raise ValueError("designated-paper chunk is not part of the item's chunk set")
@@ -298,7 +384,7 @@ def _identity(i: Inputs, v: Supplied) -> StageBIdentity:
         stage_a=stage_a_ref(i.stage_a),
         context=i.context_ref,
         retrieval=i.context.retrieval,
-        chunk_set=record_ref(i.chunk_set),
+        chunk_set=_ref(i.chunk_set),
         configuration=i.context.configuration,
         composition=composition_of(v.designated_included, v.other_included),
         designated_chunks_included=v.designated_included,

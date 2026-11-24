@@ -666,7 +666,7 @@ def main() -> None:
         if name == "stage-b-ingest":
             c.add_argument("--reviewer", required=True)
     args = parser.parse_args()
-    with final_test_scope():
+    with final_test_scope(), stage_b.reuse_checks():
         ctx = load(args.request)
         if args.command == "stage-b-queue":
             result = stage_b_queue(ctx, args.out, args.seed)
