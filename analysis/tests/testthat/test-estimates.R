@@ -57,22 +57,35 @@ test_that("Holm over exactly two p-values", {
 rule <- list(success = "yes", failure = "no", non_evaluable = c("non_evaluable", "missing"))
 
 test_that("bounds: exact lower/upper over the eligible set (hand-computed)", {
-  # Items (JATS, PDF): 1:(yes,no)  2:(yes,missing)  3:(non_evaluable,yes)  4:(no,no)
+  # Items (JATS, PDF): 1:(yes,no)  2:(yes,non_evaluable)  3:(non_evaluable,yes)  4:(no,no)
   # d known: item1 = +1, item4 = 0.
   # item2 PDF unknown: best (upper) PDF=0 -> d=+1 ; worst (lower) PDF=1 -> d=0.
   # item3 JATS unknown: best JATS=1 -> d=0      ; worst JATS=0 -> d=-1.
   # upper sum = 1+1+0+0 = 2, lower sum = 1+0-1+0 = 0 ; denominator = 4 eligible items.
   b <- missingness_bounds(
     jats_state = c("yes", "yes", "non_evaluable", "no"),
-    pdf_state = c("no", "missing", "yes", "no"), rule = rule
+    pdf_state = c("no", "non_evaluable", "yes", "no"), rule = rule
   )
   expect_identical(b$n_eligible, 4L)
+  expect_identical(b$n_operational_excluded, 0L)
   expect_equal(b$upper, 2 / 4)
   expect_equal(b$lower, 0)
   expect_identical(b$n_unknown_jats, 1L)
   expect_identical(b$n_unknown_pdf, 1L)
-  # distinct reasons are kept, not merged
-  expect_identical(b$unknown_states, c("JATS|non_evaluable" = 1L, "PDF_DOCLING|missing" = 1L))
+  expect_identical(b$unknown_states, c("JATS|non_evaluable" = 1L, "PDF_DOCLING|non_evaluable" = 1L))
+})
+
+test_that("operational missing is never bounded as a scientific outcome (EXPERIMENT_PLAN 9)", {
+  # Items: 1:(yes,no) d=+1  2:(yes,missing) operational  3:(non_evaluable,yes) unresolved
+  # 4:(not_executed,no) operational. Item 2 and 4 leave the bounds and are counted; item 3 is
+  # bounded: upper d=0, lower d=-1. Denominator 2: upper (1+0)/2, lower (1-1)/2.
+  r <- list(success = "yes", failure = "no", non_evaluable = c("non_evaluable", "missing", "not_executed"))
+  b <- missingness_bounds(c("yes", "yes", "non_evaluable", "not_executed"),
+                          c("no", "missing", "yes", "no"), r)
+  expect_identical(c(b$n_eligible, b$n_operational_excluded), c(2L, 2L))
+  expect_equal(c(b$lower, b$upper), c(0, 0.5))
+  expect_identical(b$unknown_states, c("JATS|non_evaluable" = 1L))
+  expect_input_error(missingness_bounds("missing", "yes", r), "estimate_input")
 })
 
 test_that("bounds do not necessarily bracket the complete-case estimate", {
@@ -107,9 +120,11 @@ test_that("bounds on the frozen fixture, per outcome (hand-computed over 9 eligi
   ba <- missingness_bounds(a$jats_state, a$pdf_state, rules$answer_correct)
   # known sum = 0 (q_001 +1, q_003 -1, q_006 -1, q_009 +1); q_004 PDF unknown (JATS yes):
   # upper +1, lower 0; q_008 both unknown: upper +1, lower -1.
-  expect_equal(ba$upper, (0 + 1 + 1) / 9)
-  expect_equal(ba$lower, (0 + 0 - 1) / 9)
-  expect_identical(ba$unknown_states, c("JATS|missing" = 1L, "PDF_DOCLING|missing" = 2L))
+  # q_004 (PDF operational failure) and q_008 (both operational failures) are missing, not
+  # unresolved: they leave the bounds, which equal the complete-case estimate 0 over 7 items.
+  expect_identical(c(ba$n_eligible, ba$n_operational_excluded), c(7L, 2L))
+  expect_equal(c(ba$lower, ba$upper), c(0, 0))
+  expect_identical(length(ba$unknown_states), 0L)
 })
 
 test_that("estimates on the frozen fixture match the hand-computed oracle", {

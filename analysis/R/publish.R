@@ -66,11 +66,12 @@ read_preflight_citation <- function(path, sha256) {
 build_run_record <- function(results, seed, lock, environment, inventory_sha256, used_versions, code, execution, preflight = NULL) {
   handoff <- results$inputs$handoff
   official <- identical(results$inputs$input_origin, "verified_official_run")
+  labels <- origin_labels(official, identical(handoff$phase, "final_test"))
   files <- lapply(c(results$files, list("package_inventory.csv" = results$inventory_bytes)),
                   function(b) list(bytes = length(b), sha256 = sha256_raw(b)))
   record <- list(
     kind = RECORD_KIND, schema_version = RECORD_SCHEMA_VERSION,
-    purpose = if (official) "development_rehearsal" else "synthetic_rehearsal", scientific_authority = "none",
+    purpose = labels$purpose, scientific_authority = labels$authority,
     verification = list(
       input_origin = results$inputs$input_origin,
       r_byte_verification = "handoff_and_csv_bytes_matched_supplied_sha256_and_reading_contract",
@@ -268,8 +269,9 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
       verify_error("fresh Python verification differs from the R record's official inputs")
     }
   }
-  purpose <- if (official) "development_rehearsal" else "synthetic_rehearsal"
-  seed_label <- if (official) "development_rehearsal" else REHEARSAL_SEED_LABEL
+  labels <- origin_labels(official, official && final_test_proof(official_proof))
+  purpose <- labels$purpose
+  seed_label <- labels$seed_label
   registered <- official && !is.null(official_proof$scientific_bootstrap_seed)
   if (registered) {
     pinned <- official_proof$scientific_bootstrap_seed
@@ -277,7 +279,7 @@ verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha2
   }
   claims <- list(
     list(c("kind"), RECORD_KIND), list(c("schema_version"), RECORD_SCHEMA_VERSION),
-    list(c("purpose"), purpose), list(c("scientific_authority"), "none"),
+    list(c("purpose"), purpose), list(c("scientific_authority"), labels$authority),
     list(c("verification", "input_origin"), if (official) "verified_official_run" else "synthetic_rehearsal"),
     list(c("verification", "lineage_verified_by_r"), FALSE),
     list(c("verification", "official_source_runs"), if (official) "fresh_python_verification" else "not_applicable_synthetic_rehearsal"),
@@ -463,8 +465,10 @@ run_analysis <- function(handoff_path, handoff_sha256, csv_path, lock_sha256, se
                 stats::setNames(list(record_bytes), RECORD_FILE))
   for (f in RESULT_FILES) writeBin(contents[[f]], file.path(staging, f))
 
-  target <- file.path(out_root, paste0("rehearsal_", run_id))
+  prefix <- if (identical(record$purpose, "final_test_confirmatory")) "final_test_" else "rehearsal_"
+  target <- file.path(out_root, paste0(prefix, run_id))
   publish_result(staging, target, verifier = function(dir, ...) verify_result(dir, ..., official_proof = results$inputs$official_proof))
   list(result_dir = target, record_sha256 = sha256_raw(record_bytes),
-       scientific_result_sha256 = results$scientific_result_sha256, run_id = run_id)
+       scientific_result_sha256 = results$scientific_result_sha256, run_id = run_id,
+       purpose = record$purpose)
 }

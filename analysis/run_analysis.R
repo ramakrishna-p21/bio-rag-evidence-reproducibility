@@ -93,7 +93,7 @@ main <- function(args) {
   if (a$command == "run") {
     r <- run_analysis(a$handoff, a[["handoff-sha256"]], a$csv, a[["lock-sha256"]], parse_seed(a$seed), a[["seed-label"]],
                       a[["out-root"]], script_dir, preflight_path = a$preflight, preflight_sha256 = a[["preflight-sha256"]], official_request = a[["official-request"]], python = a$python)
-    cat(if (is.null(a[["official-request"]])) "synthetic rehearsal: no scientific authority; the seed is not a registered or approved seed\n" else "development rehearsal: no scientific authority; the bootstrap seed remains unapproved\n")
+    cat(if (identical(r$purpose, "final_test_confirmatory")) "official final-test analysis (frozen confirmatory method; custody exception recorded in the handoff)\n" else if (is.null(a[["official-request"]])) "synthetic rehearsal: no scientific authority; the seed is not a registered or approved seed\n" else "development rehearsal: no scientific authority\n")
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("run_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("scientific_result_sha256: ", r$scientific_result_sha256, "\n", sep = "")
@@ -138,7 +138,9 @@ main <- function(args) {
   } else {
     v <- verify_result(a$result, a[["record-sha256"]], a[["lock-sha256"]],
                        official_request = a[["official-request"]], python = a$python, project_dir = script_dir)
-    cat(if (identical(v$record$inputs$input_origin, "verified_official_run")) "content verified: files, hashes and tables are internally consistent (development rehearsal; no scientific authority)\n" else "content verified: files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    cat(sprintf("content verified: files, hashes and tables are internally consistent (%s)\n",
+                if (identical(v$record$purpose, "final_test_confirmatory")) v$record$purpose
+                else paste0(v$record$purpose, "; no scientific authority")))
     if (v$sealed) {
       cat("read-only seal: present (local file permissions only; not proof of immutability)\n")
     } else {

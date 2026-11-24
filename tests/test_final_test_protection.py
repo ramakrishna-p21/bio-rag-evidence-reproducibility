@@ -78,9 +78,11 @@ def test_analysis_table_refuses_final_test_phase_and_split():
         analysis_table.build_row(export.observation(w, phase="final_test"))
 
 
-def test_analysis_handoff_is_development_only():
+def test_final_test_handoff_is_official_and_names_its_custody_exception():
     field = analysis_handoff.AnalysisHandoff.model_fields["phase"]
-    assert typing.get_args(field.annotation) == ("development",)
+    assert typing.get_args(field.annotation) == ("development", "final_test")
+    source = inspect.getsource(analysis_handoff.AnalysisHandoff.origin_matches_runs)
+    assert "custody_exception is None" in source and "verified_official_run" in source
 
 
 # ---- a readiness result unlocks nothing ----------------------------------------------------
@@ -139,8 +141,9 @@ def test_only_the_readiness_package_refers_to_the_guard():
 
 REVIEWED_REFERENCES = {
     "evaluation/stage_a.py": {"check_item"},
-    "evaluation/analysis_table.py": {"build_row"},
+    "evaluation/analysis_table.py": {"build_row", "roster_items_from_final_test"},
     "evaluation/analysis_models.py": {"analysis_role", "AnalysisRow", "Phase"},
+    "evaluation/analysis_handoff.py": {"AnalysisHandoff", "_describe", "derive_accounting"},
 }
 
 
@@ -163,6 +166,5 @@ def test_reviewed_final_test_sites_have_not_changed(relative):
     assert _referencing(relative) == REVIEWED_REFERENCES[relative]
 
 
-def test_run_and_handoff_types_do_not_name_final_test():
-    for relative in ("generation/attempts.py", "evaluation/analysis_handoff.py"):
-        assert _referencing(relative) == set()
+def test_run_types_do_not_name_final_test():
+    assert _referencing("generation/attempts.py") == set()

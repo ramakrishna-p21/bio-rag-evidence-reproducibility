@@ -23,7 +23,8 @@ COPRIMARY_SCHEMA <- c(
   boot_ci_lower = "dbl", boot_ci_upper = "dbl",
   test_status = "chr", test_reason = "chr", test_se = "dbl", test_df = "dbl", test_t = "dbl", test_p = "dbl",
   holm_status = "chr", holm_p = "dbl",
-  bound_lower = "dbl", bound_upper = "dbl", bound_n_unknown_jats = "int", bound_n_unknown_pdf = "int"
+  bound_lower = "dbl", bound_upper = "dbl", bound_n_unknown_jats = "int", bound_n_unknown_pdf = "int",
+  bound_n_operational_excluded = "int"
 )
 PAPER_COUNTS_SCHEMA <- c(outcome = "chr", paper_id = "chr", eligible = "int", complete = "int")
 STATE_COUNTS_SCHEMA <- c(outcome = "chr", condition = "chr", state = "chr", n = "int")
@@ -132,6 +133,7 @@ coprimary_table <- function(accounting, inference, handoff) {
       holm_status = inference$holm$status, holm_p = unname(inference$holm$adjusted[[outcome]]),
       bound_lower = bounds$lower, bound_upper = bounds$upper,
       bound_n_unknown_jats = bounds$n_unknown_jats, bound_n_unknown_pdf = bounds$n_unknown_pdf,
+      bound_n_operational_excluded = bounds$n_operational_excluded,
       stringsAsFactors = FALSE
     )
   })
@@ -178,8 +180,8 @@ compute_results <- function(handoff_path, handoff_sha256, csv_path, seed, offici
     run_error("origin", "official inputs lack fresh Python verification")
   }
   if (!is.null(inputs$handoff$scoring_reference$primary_bootstrap_registry_sha256)) {
-    seed_record(seed, "development_rehearsal", inputs$handoff,
-                inputs$official_proof$scientific_bootstrap_seed)
+    seed_record(seed, origin_labels(TRUE, identical(inputs$handoff$phase, "final_test"))$seed_label,
+                inputs$handoff, inputs$official_proof$scientific_bootstrap_seed)
   }
   accounting <- derive_accounting(inputs$rows, inputs$handoff)
   inference <- coprimary_inference(accounting, inputs$handoff, seed)

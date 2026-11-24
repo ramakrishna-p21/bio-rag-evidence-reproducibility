@@ -34,6 +34,7 @@ from biorag_repro.evaluation.analysis_table import (
     primary_pairs,
     serialize_csv,
 )
+from biorag_repro.evaluation.stage_a import final_test_scope
 from biorag_repro.retrieval.storage import record_ref
 
 CFG = "b" * 64  # resolved configuration hash used by the Stage B fixtures
@@ -598,7 +599,7 @@ def test_unexecuted_or_closed_book_observation_has_no_generator_input():
         build_row(Observation(**{**cb.__dict__, "generator_input": link(result, case)}))
 
 
-def test_final_test_rows_are_not_built_before_the_readiness_gate():
+def test_final_test_rows_are_built_only_inside_the_final_test_evaluation():
     w = world()
     with pytest.raises(ValueError):
         build_row(observation(w, phase="final_test"))
@@ -619,10 +620,23 @@ def test_final_test_rows_are_not_built_before_the_readiness_gate():
         "matrix_arm": "closed_book",
         "condition": "CLOSED_BOOK",
     }
-    with pytest.raises(ValueError, match="readiness gate"):
+    with pytest.raises(ValueError, match="authorized final-test evaluation"):
         build_row(
             Observation(item=item, result=closed, score=stage_c.score(item, closed), **gate_only)
         )
+    with final_test_scope():
+        row, _ = build_row(
+            Observation(item=item, result=closed, score=stage_c.score(item, closed), **gate_only)
+        )
+        assert (row.phase, row.split, row.analysis_role) == (
+            "final_test",
+            "final_test",
+            "secondary",
+        )
+        with pytest.raises(ValueError):  # a development observation of a final-test item
+            build_row(
+                Observation(item=item, result=result, score=stage_c.score(item, result), **PLAN)
+            )
 
 
 def test_row_model_requires_the_recorded_generator_input_for_final_test_execution():

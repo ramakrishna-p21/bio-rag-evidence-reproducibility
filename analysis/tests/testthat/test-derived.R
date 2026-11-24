@@ -65,7 +65,7 @@ test_that("the secondary directory holds exactly the declared files, read-only",
 
 test_that("the primary result and its golden scientific hash are untouched", {
   expect_identical(primary_hashes(), primary_before)
-  expect_identical(d_primary$scientific_result_sha256, "17c44709e57fd9ac259f3d239498693d31e34258f8577d9e73d0e6cb86b01e36")
+  expect_identical(d_primary$scientific_result_sha256, "075ec3af857b5eb994080078260b56154be4078ceec4c5855ff128242d6cf63d")
   expect_identical(drecord(d1$result_dir)$primary_result$scientific_result_sha256, d_primary$scientific_result_sha256)
   expect_true(verify_result(d_primary$result_dir)$ok)
 })

@@ -13,8 +13,9 @@ cannot be read back as official. An official-origin handoff (`verified_official_
 refused both when building and when reading: verifying official runs is an outstanding Phase 8
 requirement, and its earlier implementation was removed in Phase 2.5. The schema keeps
 `input_origin`, `source_runs` and `SourceRun` unchanged so that published handoffs and the R
-contract keep their bytes. Final-test handoffs are not supported before the final-test
-readiness gate.
+contract keep their bytes. A final-test handoff is built only inside an authorized final-test
+evaluation (`stage_a.final_test_scope`), always with official origin, and names the custody
+exception under which the batch was accepted; it never claims that a custody gate passed.
 """
 
 from collections import defaultdict
@@ -47,6 +48,7 @@ from biorag_repro.evaluation.analysis_models import (
 from biorag_repro.evaluation.analysis_storage import publish_derived_record, read_table
 from biorag_repro.evaluation.analysis_table import primary_pairs
 from biorag_repro.evaluation.attribution import Correct, Delivered, Execution
+from biorag_repro.evaluation.stage_a import in_final_test_scope
 from biorag_repro.generation.environment import GitState
 
 SCHEMA_VERSION = "1"
@@ -282,7 +284,8 @@ def derive_accounting(rows: list[AnalysisRow], roster: PlannedRoster) -> list[Ou
     if stray := sorted({item for item, _ in primary} - known):
         raise HandoffError(f"primary rows for items outside the roster: {stray[:3]}")
     both = {i.item_id for i in included if all((i.item_id, c) in primary for c in REPRESENTATIONS)}
-    if both != set(primary_pairs(rows, "development")):
+    role = "confirmatory" if roster.phase == "final_test" else "development"
+    if both != set(primary_pairs(rows, role)):
         raise HandoffError("primary pairing differs from the published pair definition")
 
     result = []
@@ -355,11 +358,21 @@ class SourceRun(Record):
     observations: int = Field(ge=0)
 
 
+class CustodyException(Record):
+    """The researcher's exception under which a batch with unmet custody was evaluated."""
+
+    status: Literal["custody_gate_not_established_exception_v1"]
+    authorization: ArtifactRef  # the evaluation authorization record that approves it
+    amendment_sha256: str
+    run_id: str
+    drive_manifest_sha256: str
+
+
 class AnalysisHandoff(Record):
     schema_version: Literal["1"] = "1"
     kind: Literal["analysis_handoff"] = "analysis_handoff"
     input_origin: Origin
-    phase: Literal["development"]
+    phase: Literal["development", "final_test"]
     benchmark_version: str = Field(min_length=1)
     corpus_version: str = Field(min_length=1)
     scope: Scope
@@ -380,6 +393,9 @@ class AnalysisHandoff(Record):
     awaiting_approval: list[str]
     execution_provenance_required: list[str]
     code: GitState
+    custody_exception: CustodyException | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def origin_matches_runs(self) -> Self:
@@ -387,6 +403,12 @@ class AnalysisHandoff(Record):
             raise ValueError(
                 "a verified official origin needs its source runs; a rehearsal has none"
             )
+        if self.phase == "final_test" and (
+            self.input_origin != "verified_official_run" or self.custody_exception is None
+        ):
+            raise ValueError("a final-test handoff is official and names its custody exception")
+        if self.phase == "development" and self.custody_exception is not None:
+            raise ValueError("a custody exception belongs to the final-test campaign only")
         return self
 
 
@@ -425,16 +447,21 @@ def _describe(
         outputs["planned_roster"].sha256,
         PlannedRoster,
     )
-    if roster.phase != "development":
-        raise HandoffError("only development tables have a handoff before the final-test gate")
+    if roster.phase == "final_test" and not in_final_test_scope():
+        raise HandoffError("a final-test handoff is built only inside the final-test evaluation")
+    if roster.phase not in ("development", "final_test"):
+        raise HandoffError("qualification tables have no analysis handoff")
     arms: dict[str, set[tuple[str, str | None]]] = defaultdict(set)
     for row in rows:
         arms[row.matrix_arm].add((row.config_sha256, row.retrieval_config_sha256))
     if any(len(configs) != 1 for configs in arms.values()):
         raise HandoffError("one matrix arm must run under one configuration")
-    handoff = AnalysisHandoff(
+    # A final-test template is completed with its verified source runs and custody exception
+    # by the final-test evaluator, which validates the finished record; it is never valid alone.
+    make = AnalysisHandoff.model_construct if roster.phase == "final_test" else AnalysisHandoff
+    handoff = make(
         input_origin="synthetic_rehearsal",
-        phase="development",
+        phase=roster.phase,
         benchmark_version=roster.benchmark_version,
         corpus_version=roster.corpus_version,
         scope=roster.scope,

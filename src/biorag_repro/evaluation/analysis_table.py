@@ -43,7 +43,7 @@ from biorag_repro.evaluation.analysis_models import (
     column_type,
 )
 from biorag_repro.evaluation.attribution import A_FAILED, Execution, attribute
-from biorag_repro.evaluation.stage_a import item_digest
+from biorag_repro.evaluation.stage_a import in_final_test_scope, item_digest
 from biorag_repro.evaluation.stage_a_retrospective import Judgment as StageAJudgment
 from biorag_repro.evaluation.stage_a_retrospective import judgment_ref as stage_a_ref
 from biorag_repro.evaluation.stage_a_retrospective import (
@@ -200,9 +200,14 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
     item, result, score = obs.item, obs.result, obs.score
     if item.candidate_status != "accepted" or item.split is None:
         raise ValueError("only accepted, split benchmark items enter the analysis table")
-    if item.split == "final_test" or obs.phase == "final_test":
-        # Stage A already refuses these items; the final-test readiness gate lifts this later.
-        raise ValueError("final-test rows are not built before the final-test readiness gate")
+    final_test = item.split == "final_test" or obs.phase == "final_test"
+    if final_test and not (
+        in_final_test_scope() and item.split == "final_test" and obs.phase == "final_test"
+    ):
+        # Only the authorized final-test evaluation builds these rows (`final_test_scope`).
+        raise ValueError(
+            "final-test rows are built only inside an authorized final-test evaluation"
+        )
     key = observation_key(
         phase=obs.phase,
         benchmark_version=item.benchmark_version,
@@ -421,6 +426,28 @@ def roster_items_from_development_view(
         raise ValueError("items are not the development-only view") from None
     if len(items) != view.development_item_count:
         raise ValueError("items differ from the development view membership")
+    return [
+        RosterItem(
+            item_id=item.item_id,
+            state="included",
+            paper_id=item.paper_id,
+            item_sha256=item_digest(item),
+        )
+        for item in sorted(items, key=lambda i: i.item_id)
+    ]
+
+
+FINAL_TEST_ITEMS = 305
+
+
+def roster_items_from_final_test(items: list[BenchmarkItem]) -> list[RosterItem]:
+    """Roster entries for exactly the frozen final-test items (from `read_final_test_items`)."""
+    if (
+        len(items) != FINAL_TEST_ITEMS
+        or len({i.item_id for i in items}) != FINAL_TEST_ITEMS
+        or any(i.split != "final_test" or i.candidate_status != "accepted" for i in items)
+    ):
+        raise ValueError("items are not the 305 accepted frozen final-test items")
     return [
         RosterItem(
             item_id=item.item_id,

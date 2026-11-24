@@ -1,4 +1,8 @@
-"""Seeded, representation-masked Stage A review packets for development rehearsals.
+"""Seeded, representation-masked Stage A review packets.
+
+Development rehearsals draw a sample of development items. `final-queue` builds the packet of
+all 610 final-test item x representation units, only after the researcher's evaluation
+authorization is verified, inside `stage_a.final_test_scope`.
 
 The reviewer-facing packet shows canonical source text exactly as stored. Only identifiers,
 file names, representation names and presentation wrappers are withheld. Unmasked provenance
@@ -54,6 +58,8 @@ LABELS: tuple[str, ...] = get_args(Label)
 GAP_FRACTION = 0.3
 ROLES = ("first_rater", "second_rater", "intra_rater")
 STATUS = "development_rehearsal_not_for_inventory"
+FINAL_STATUS = "final_test_pending_human_review"
+PUBLISHABLE = ("development_pending_human_review", FINAL_STATUS)
 VIEW_SHA256 = "5ff34235998b1aa8281e986e5a720a0ef23f62a6c2158f789bd145b17fe99f4d"
 FULL_BENCHMARK_UNITS = 610  # 305 final-test items x 2 representations (planning figure)
 FORBIDDEN_WORDS = re.compile(r"jats|pdf|docling|xml", re.IGNORECASE)
@@ -456,16 +462,28 @@ def build_packet(
     code: str | None,
     previous_manifest: Path | None = None,
     include_previously_reviewed: bool = False,
+    final_test: bool = False,
+    authorization: dict[str, str] | None = None,
 ) -> None:
-    if role not in ROLES or (pairs is None) == (fraction is None):
-        raise ReviewError("give a known role and exactly one of pairs/fraction")
-    eligible = [i for i in items if i.paper_id in papers]
-    count = pairs if pairs is not None else math.ceil((fraction or 0) * len(eligible))
-    if role == "intra_rater":
-        check_washout(previous_manifest, seed, created_utc)
-    chosen = select_items(
-        items, papers, count, seed, include_previously_reviewed=include_previously_reviewed
-    )
+    if final_test:
+        # Every final-test item x representation unit is reviewed; nothing is sampled.
+        if role != "first_rater" or pairs is not None or fraction is not None:
+            raise ReviewError("the final-test packet is the complete first-rater queue")
+        chosen = sorted(items, key=lambda i: i.item_id)
+        if any(i.split != "final_test" for i in chosen):
+            raise ReviewError("the final-test packet holds final-test items only")
+        if authorization is None:
+            raise ReviewError("the final-test packet records its evaluation authorization")
+    else:
+        if role not in ROLES or (pairs is None) == (fraction is None):
+            raise ReviewError("give a known role and exactly one of pairs/fraction")
+        eligible = [i for i in items if i.paper_id in papers]
+        count = pairs if pairs is not None else math.ceil((fraction or 0) * len(eligible))
+        if role == "intra_rater":
+            check_washout(previous_manifest, seed, created_utc)
+        chosen = select_items(
+            items, papers, count, seed, include_previously_reviewed=include_previously_reviewed
+        )
     order = schedule(
         [i.item_id for i in chosen], seed, groups={i.item_id: i.paper_id for i in chosen}
     )
@@ -513,11 +531,19 @@ def build_packet(
     }
     unmasked_sha = write(provenance / "unmasked_evidence.json", dumps(units))
     manifest = {
-        "status": ("development_pending_human_review" if include_previously_reviewed else STATUS),
+        "status": (
+            FINAL_STATUS
+            if final_test
+            else "development_pending_human_review"
+            if include_previously_reviewed
+            else STATUS
+        ),
         "role": role,
         "seed": seed,
         "papers": list(papers),
-        "excluded_papers": [] if include_previously_reviewed else sorted(EXCLUDED_PAPERS),
+        "excluded_papers": (
+            [] if include_previously_reviewed or final_test else sorted(EXCLUDED_PAPERS)
+        ),
         "previously_reviewed_papers": sorted(set(papers) & EXCLUDED_PAPERS),
         "publication_requires_human_judgments": True,
         "pairs": len(chosen),
@@ -536,6 +562,8 @@ def build_packet(
         ),
         "min_washout_days": 14 if role == "intra_rater" else None,
     }
+    if final_test:
+        manifest["authorization"] = authorization
     write(provenance / "session_manifest.json", dumps(manifest))
 
 
@@ -769,7 +797,7 @@ def validate_all(out: Path, reviewer: str, role: str = "first_rater") -> dict[st
     if errors:
         raise ReviewError("\n".join(errors))
     body = {
-        "status": STATUS,
+        "status": manifest["status"],
         "role": role,
         "judgments": {h: j.model_dump(mode="json") for h, j in judgments.items()},
     }
@@ -788,8 +816,8 @@ def publish_review(
     from biorag_repro.evaluation import stage_a_storage
 
     manifest, units = load_provenance(out)
-    if manifest["status"] != "development_pending_human_review":
-        raise ReviewError("only an explicitly prepared development review can publish")
+    if manifest["status"] not in PUBLISHABLE:
+        raise ReviewError("only an explicitly prepared human review can publish")
     judgments = validate_all(out, reviewer, role)
     refs = {}
     for handle, judgment in judgments.items():
@@ -944,6 +972,55 @@ def load_pilot(
     return items, sources
 
 
+def load_final_test(
+    repo: Path, data_root: Path, selection_path: Path, authorization: Path, authorization_sha: str
+) -> tuple[list[BenchmarkItem], dict[tuple[str, str], Source]]:
+    """All 305 frozen final-test items and both canonical documents of each, after the
+    researcher's evaluation authorization is verified. Protected content is read only here."""
+    from biorag_repro.benchmark.release import read_final_test_items
+    from biorag_repro.evaluation.final_test import read_authorization
+
+    read_authorization(authorization, authorization_sha, repo)
+    _, items = read_final_test_items(data_root)
+    selection = json.loads(selection_path.read_bytes())
+    sources: dict[tuple[str, str], Source] = {}
+    for item in items:
+        for representation in REPRESENTATIONS:
+            entry = selection["canonical"][f"{item.paper_id}/{representation}"]
+            root = Path(entry["root"])
+            validation = read_project_json(
+                root / entry["logical_ref"], entry["sha256"], Phase4Validation
+            )
+            canonical = validation.canonical_artifact
+            document = read_project_json(
+                root / canonical.logical_ref, canonical.sha256, CanonicalDocument
+            )
+            sources[(item.item_id, representation)] = Source(item, document, root, canonical)
+    return items, sources
+
+
+def scope_for(out: Path) -> Any:
+    """Final-test packets are read and validated only inside `final_test_scope`."""
+    from contextlib import nullcontext
+
+    from biorag_repro.evaluation.final_test import EvaluationRefused, read_authorization
+    from biorag_repro.evaluation.stage_a import final_test_scope
+
+    path = out / "provenance" / "session_manifest.json"
+    manifest = json.loads(path.read_bytes()) if path.is_file() else {}
+    if manifest.get("status") != FINAL_STATUS:
+        return nullcontext()
+    # Every later command on a final-test packet re-verifies the evaluation authorization.
+    try:
+        recorded = manifest["authorization"]
+        read_authorization(
+            Path(recorded["path"]), recorded["sha256"], Path(__file__).resolve().parent.parent
+        )
+    except (EvaluationRefused, KeyError, TypeError) as error:
+        raise ReviewError(f"final-test packet authorization does not verify: {error}") from None
+    return final_test_scope()
+
+
 def main(argv: list[str] | None = None) -> int:
     repo = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -963,6 +1040,15 @@ def main(argv: list[str] | None = None) -> int:
         "--pilot-root", type=Path, default=repo.parent / "bio-rag-evidence-reproducibility-pilot"
     )
     q.add_argument("--view-sha256", default=VIEW_SHA256)
+    fq = commands.add_parser("final-queue")
+    fq.add_argument("--out", type=Path, required=True)
+    fq.add_argument("--seed", type=int, required=True)
+    fq.add_argument("--data-root", type=Path, required=True)
+    fq.add_argument("--selection", type=Path, required=True)
+    fq.add_argument(
+        "--authorization", type=Path, default=repo / "approvals/final_test_evaluation.json"
+    )
+    fq.add_argument("--authorization-sha256", required=True)
     for name in ("start", "finish"):
         c = commands.add_parser(name)
         c.add_argument("--out", type=Path, required=True)
@@ -988,6 +1074,39 @@ def main(argv: list[str] | None = None) -> int:
     pub.add_argument("--inventory", type=Path, required=True)
     pub.add_argument("--role", choices=ROLES, default="first_rater")
     args = parser.parse_args(argv)
+    try:
+        if args.command == "final-queue":
+            from biorag_repro.evaluation.stage_a import final_test_scope
+
+            with final_test_scope():
+                items, sources = load_final_test(
+                    repo, args.data_root, args.selection, args.authorization,
+                    args.authorization_sha256,
+                )  # fmt: skip
+                build_packet(
+                    sources,
+                    items,
+                    out=args.out,
+                    seed=args.seed,
+                    papers=tuple(sorted({i.paper_id for i in items})),
+                    created_utc=now(),
+                    code=code_version(),
+                    final_test=True,
+                    authorization={
+                        "path": str(args.authorization.resolve()),
+                        "sha256": args.authorization_sha256,
+                    },
+                )
+            print(f"{2 * len(items)} final-test units queued")
+            return 0
+        with scope_for(args.out):
+            return _command(args)
+    except ReviewError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 1
+
+
+def _command(args: argparse.Namespace) -> int:
     try:
         if args.command == "queue":
             papers = tuple(args.papers)

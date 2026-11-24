@@ -149,10 +149,25 @@ code_state <- function(analysis_dir) {
 
 # ---- seed -------------------------------------------------------------------------------------
 
-# Only an explicitly labelled rehearsal seed is accepted. There is no default and no production label.
+FINAL_TEST_SEED_LABEL <- "final_test"
+
+# Labels of the accepted origins. Only an official final-test run is the frozen confirmatory
+# analysis; official development and synthetic runs have no scientific authority.
+origin_labels <- function(official, final_test) {
+  if (official && final_test) {
+    list(purpose = "final_test_confirmatory", seed_label = FINAL_TEST_SEED_LABEL,
+         authority = "frozen_confirmatory_analysis")
+  } else if (official) {
+    list(purpose = "development_rehearsal", seed_label = "development_rehearsal", authority = "none")
+  } else {
+    list(purpose = "synthetic_rehearsal", seed_label = REHEARSAL_SEED_LABEL, authority = "none")
+  }
+}
+
+# An explicit seed label is required; there is no default.
 check_seed <- function(seed, label) {
   if (!(is.character(label) && length(label) == 1L && !is.na(label) &&
-        label %in% c(REHEARSAL_SEED_LABEL, "development_rehearsal"))) {
+        label %in% c(REHEARSAL_SEED_LABEL, "development_rehearsal", FINAL_TEST_SEED_LABEL))) {
     run_error("seed", sprintf("the seed label must be '%s'; production analysis is unavailable through this rehearsal interface", REHEARSAL_SEED_LABEL))
   }
   ok <- is.numeric(seed) && length(seed) == 1 && !is.na(seed) && is.finite(seed) && seed == round(seed) &&
@@ -174,7 +189,8 @@ parse_seed <- function(text) {
 # records bind the approved registry through fresh Python verification.
 seed_record <- function(seed, label, handoff, registration = NULL) {
   seed <- check_seed(seed, label)
-  expected_label <- if (identical(handoff$input_origin, "verified_official_run")) "development_rehearsal" else REHEARSAL_SEED_LABEL
+  official <- identical(handoff$input_origin, "verified_official_run")
+  expected_label <- origin_labels(official, identical(handoff$phase, "final_test"))$seed_label
   if (!identical(label, expected_label)) run_error("seed", "the rehearsal seed label differs from the verified input origin")
   registry_sha <- handoff$scoring_reference$primary_bootstrap_registry_sha256
   if (!is.null(registry_sha)) {

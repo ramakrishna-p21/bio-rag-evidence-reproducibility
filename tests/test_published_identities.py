@@ -20,7 +20,7 @@ HANDOFF_BUILD = (
     "analysis/handoff/b568c4d2cd9c3b7d2bc66eaaeb62d1a88aec0bccb49568c5f9431605dc2cb960.build.json",
 )
 PRIMARY = {
-    "coprimary_results.csv": "b3f1420b8afb629bef6a96e8ecef7b89d3303091205c14a92e2ae05b39a95cc2",
+    "coprimary_results.csv": "2f27d0f51c50279825ce29bf3749da12af051b4da0f8c104f214a14fb36e1239",
     "paper_counts.csv": "a10733bc370026725562ae2f7dd706eed314b7c10227115469e75b81a659cb33",
     "state_counts.csv": "d182b7397d699bf1d9ed233fda506ca01567d1b278513dac45876dc220b0e95a",
 }

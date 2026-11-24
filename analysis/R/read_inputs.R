@@ -87,12 +87,16 @@ columns_sha256 <- function(columns) {
 same_values <- function(a, b) identical(unname(unlist(a)), unname(b))
 
 # Execute the fixed repository verifier; a citation or status flag is insufficient.
+# A final-test request names the researcher's evaluation authorization; a development one does not.
 read_official_proof <- function(request, python, project_dir) {
   if (is.null(request) || is.null(python) || is.null(project_dir)) {
     input_error("origin", "an official origin requires a verification request, Python and project directory")
   }
-  script <- file.path(project_dir, "..", "scripts", "evaluate_development.py")
-  if (!file.exists(script) || !file.exists(request) || !file.exists(python)) {
+  if (!file.exists(request)) input_error("origin", "official verification inputs are unavailable")
+  final <- !is.null(jsonlite::fromJSON(request, simplifyVector = FALSE)$authorization)
+  script <- file.path(project_dir, "..", "scripts",
+                      if (final) "evaluate_final_test.py" else "evaluate_development.py")
+  if (!file.exists(script) || !file.exists(python)) {
     input_error("origin", "official verification inputs are unavailable")
   }
   errors <- tempfile("official-preflight-", fileext = ".log")
@@ -105,19 +109,33 @@ read_official_proof <- function(request, python, project_dir) {
   }
   proof <- tryCatch(jsonlite::fromJSON(paste(output, collapse = "\n"), simplifyVector = FALSE),
                     error = function(e) input_error("origin", "Python returned no valid verification result"))
-  if (!identical(proof$status, "verified_official_development_handoff") ||
-      !identical(proof$source_verification, "fresh_python_verification") ||
-      proof$observations != 1290L) {
-    input_error("origin", "Python did not establish the complete official development origin")
-  }
+  check_official_proof(proof, final)
   proof$request_sha256 <- sha256_file(request)
   proof
 }
 
+check_official_proof <- function(proof, final) {
+  expected <- if (final) list("verified_official_final_test_handoff", 4575L) else
+    list("verified_official_development_handoff", 1290L)
+  if (!identical(proof$status, expected[[1]]) ||
+      !identical(proof$source_verification, "fresh_python_verification") ||
+      proof$observations != expected[[2]] ||
+      (final && !identical(proof$custody, "custody_gate_not_established_exception_v1"))) {
+    input_error("origin", "Python did not establish the complete official origin")
+  }
+  invisible(proof)
+}
+
+final_test_proof <- function(proof) identical(proof$status, "verified_official_final_test_handoff")
+
 check_handoff <- function(handoff, official_proof = NULL) {
+  final <- !is.null(official_proof) && final_test_proof(official_proof)
   if (!identical(handoff$kind, "analysis_handoff") || !identical(handoff$schema_version, "1") ||
-      !identical(handoff$phase, "development")) {
-    input_error("handoff_schema", "not a version 1 development analysis_handoff")
+      !identical(handoff$phase, if (final) "final_test" else "development")) {
+    input_error("handoff_schema", "not a version 1 analysis_handoff of the verified phase")
+  }
+  if (final && !identical(handoff$custody_exception$status, "custody_gate_not_established_exception_v1")) {
+    input_error("origin", "a final-test handoff must name its custody exception")
   }
   if (!identical(handoff$input_origin, "synthetic_rehearsal") &&
       !(identical(handoff$input_origin, "verified_official_run") && !is.null(official_proof))) {
@@ -244,10 +262,15 @@ check_vocabulary <- function(rows, handoff) {
 }
 
 check_purpose <- function(rows, handoff) {
-  # Development rehearsal data only; qualification, final-test or confirmatory-role rows are
-  # never mixed in.
-  if (!all(rows$phase == "development" & rows$split == "development" &
-             rows$analysis_role == "development")) {
+  # One phase per table: development rows have the development role; final-test rows are
+  # confirmatory in the confirmatory arm and secondary elsewhere. Qualification never enters.
+  if (identical(handoff$phase, "final_test")) {
+    role <- ifelse(rows$matrix_arm == "confirmatory", "confirmatory", "secondary")
+    if (!all(rows$phase == "final_test" & rows$split == "final_test" & rows$analysis_role == role)) {
+      input_error("purpose", "rows are not all final-test phase, split and arm role")
+    }
+  } else if (!all(rows$phase == "development" & rows$split == "development" &
+                    rows$analysis_role == "development")) {
     input_error("purpose", "rows are not all development-phase, development-split, development-role")
   }
   if (length(unique(rows$benchmark_version)) != 1 || rows$benchmark_version[1] != handoff$benchmark_version ||

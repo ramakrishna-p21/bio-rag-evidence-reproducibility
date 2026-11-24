@@ -6,6 +6,9 @@ evidence of absence or corruption: those labels need a reviewer's judgment.
 
 import re
 import unicodedata
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from itertools import pairwise
 
@@ -64,17 +67,39 @@ def item_digest(item: BenchmarkItem) -> str:
     return sha256_bytes(canonical_json_bytes(item.model_dump(mode="json")))
 
 
+_FINAL_TEST: ContextVar[bool] = ContextVar("final_test_evaluation", default=False)
+
+
+@contextmanager
+def final_test_scope() -> Iterator[None]:
+    """Admit final-test items, and only them, inside an authorized final-test evaluation.
+
+    Outside this scope final-test items stay refused, so development code cannot reach them.
+    """
+    token = _FINAL_TEST.set(True)
+    try:
+        yield
+    finally:
+        _FINAL_TEST.reset(token)
+
+
+def in_final_test_scope() -> bool:
+    return _FINAL_TEST.get()
+
+
 def check_item(item: BenchmarkItem, document: CanonicalDocument, canonical: ArtifactRef) -> None:
-    """Require an accepted development item whose source is this canonical document's source."""
-    if item.split == "final_test":
+    """Require an accepted paired-equivalent item of the active split whose source is this
+    canonical document's source. The split is development unless `final_test_scope` is active."""
+    split = "final_test" if _FINAL_TEST.get() else "development"
+    if item.split == "final_test" and split != "final_test":
         raise IneligibleItem("final-test items are protected from development evaluation")
     if (
         item.candidate_status != "accepted"
-        or item.split != "development"
+        or item.split != split
         or item.jats_status != "present_equivalent"
         or item.pdf_status != "present_equivalent"
     ):
-        raise IneligibleItem("item is not an accepted paired-equivalent development item")
+        raise IneligibleItem(f"item is not an accepted paired-equivalent {split} item")
     if item.paper_id != document.paper_id:
         raise IneligibleItem("item and canonical document name different papers")
     refs = item.jats_refs if document.representation == "JATS" else item.pdf_refs
