@@ -627,7 +627,7 @@ def _retained_analysis_host(
             ctx, sources, sha256_bytes(lock_bytes), evaluating_host=False
         )
         designation_bytes = read_regular(
-            ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
+            ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_24.json"
         )
         subject = record.subject
         if record.subject_sha256 != sha256_bytes(canonical_json_bytes(subject)):
@@ -666,7 +666,7 @@ def _retained_analysis_host(
     out.refs.append(
         file_ref(
             "analysis_designation",
-            "repo/docs/reports/g07_researcher_designation_evidence_2026_11_20.json",
+            "repo/docs/reports/g07_researcher_designation_evidence_2026_11_24.json",
             designation_bytes,
         )
     )
@@ -765,12 +765,12 @@ def r_environment(ctx: Context, source: Gathered | None = None) -> Gathered:
             )
         else:
             designation_bytes = read_regular(
-                ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
+                ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_24.json"
             )
             out.refs.append(
                 file_ref(
                     "analysis_designation",
-                    "repo/docs/reports/g07_researcher_designation_evidence_2026_11_20.json",
+                    "repo/docs/reports/g07_researcher_designation_evidence_2026_11_24.json",
                     designation_bytes,
                 )
             )

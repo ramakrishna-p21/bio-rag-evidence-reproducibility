@@ -128,7 +128,7 @@ def test_g07_altered_designation_is_rejected(monkeypatch):
 
     def changed(root, relative):
         data = original(root, relative)
-        if relative.endswith("g07_researcher_designation_evidence_2026_11_20.json"):
+        if relative.endswith("g07_researcher_designation_evidence_2026_11_24.json"):
             return data + b" "
         return data
 
@@ -157,7 +157,7 @@ def _lock():
 def _subject():
     data, lock, sources = _lock()
     designation = (
-        REPO / "docs/reports/g07_researcher_designation_evidence_2026_11_20.json"
+        REPO / "docs/reports/g07_researcher_designation_evidence_2026_11_24.json"
     ).read_bytes()
     return {
         "kind": "designated_analysis_environment_v1",
