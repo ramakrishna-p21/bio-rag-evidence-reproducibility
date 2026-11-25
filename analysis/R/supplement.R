@@ -264,6 +264,9 @@ check_supplement_tables <- function(tables) {
 # ---- computation, record, publication ---------------------------------------------------------
 
 compute_supplement <- function(handoff_path, handoff_sha256, csv_path, supplement_dir, supplement_record_sha256) {
+  if (identical(handoff_origin(handoff_path, handoff_sha256), "verified_official_run")) {
+    run_error("origin", "the Python-supplement analyses are deferred for official inputs: official-origin support is not implemented")
+  }
   inputs <- read_inputs(handoff_path, handoff_sha256, csv_path)
   if (!identical(inputs$input_origin, "synthetic_rehearsal")) {
     run_error("origin", sprintf("input_origin '%s' is not accepted; only a synthetic rehearsal is", inputs$input_origin))

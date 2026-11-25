@@ -63,6 +63,31 @@ read_preflight_citation <- function(path, sha256) {
 
 # ---- the record -------------------------------------------------------------------------------
 
+# The facts of the fresh Python proof that a primary record carries, so that a later secondary run can
+# inherit them from the authenticated record instead of repeating the verification.
+official_proof_facts <- function(proof) {
+  list(status = proof$status, source_verification = proof$source_verification, custody = proof$custody,
+       scope = proof$scope, observations = as.integer(proof$observations),
+       handoff_sha256 = proof$handoff$sha256, csv_sha256 = proof$csv_sha256, request_sha256 = proof$request_sha256,
+       bootstrap_registry_sha256 = proof$scientific_bootstrap_seed$registry_sha256)
+}
+PROOF_FACT_NAMES <- c("status", "source_verification", "scope", "observations", "handoff_sha256", "csv_sha256", "request_sha256")
+
+# A proof rebuilt from an authenticated primary record. It is only as strong as that record: its
+# SHA-256 must have been supplied from outside, and the proof facts are re-checked by the same rules.
+inherited_proof <- function(record) {
+  f <- get_path(record, c("verification", "official_proof"))
+  if (is.null(f)) verify_error("the primary record carries no official proof facts to inherit")
+  proof <- list(status = f$status, source_verification = f$source_verification, custody = f$custody, scope = f$scope,
+                observations = f$observations, handoff = list(sha256 = f$handoff_sha256), csv_sha256 = f$csv_sha256,
+                request_sha256 = f$request_sha256,
+                scientific_bootstrap_seed = list(registry_sha256 = f$bootstrap_registry_sha256,
+                                                 record = list(value = record$seed$value)))
+  tryCatch(check_official_proof(proof, identical(f$status, "verified_official_final_test_handoff")),
+           input_error = function(e) verify_error(conditionMessage(e)))
+  proof
+}
+
 build_run_record <- function(results, seed, lock, environment, inventory_sha256, used_versions, code, execution, preflight = NULL) {
   handoff <- results$inputs$handoff
   official <- identical(results$inputs$input_origin, "verified_official_run")
@@ -104,7 +129,11 @@ build_run_record <- function(results, seed, lock, environment, inventory_sha256,
     outputs = list(files = files, scientific_result_sha256 = results$scientific_result_sha256),
     provenance = list(required = as.list(unlist(handoff$execution_provenance_required)))
   )
-  if (official) record$inputs$official_request_sha256 <- results$inputs$official_request_sha256
+  if (official) {
+    record$inputs$official_request_sha256 <- results$inputs$official_request_sha256
+    record$verification$official_proof <- official_proof_facts(results$inputs$official_proof)
+    if (identical(handoff$phase, "final_test")) record$inputs$authorization_sha256 <- handoff$custody_exception$authorization$sha256
+  }
   if (!is.null(preflight)) {
     at <- match("python_preflight", names(record$verification))
     record$verification <- append(record$verification, list(python_preflight_scope = PREFLIGHT_SCOPE), after = at)
@@ -241,7 +270,7 @@ check_listed <- function(listed, bytes) {
 
 # A derived record cites its primary result; that result is verified and must carry the same inputs.
 check_cited_primary <- function(record, primary_dir, cited) {
-  p <- verify_result(primary_dir, expected_record_sha256 = cited)
+  p <- verify_result(primary_dir, expected_record_sha256 = cited, inherit = TRUE)
   if (!identical(p$scientific_result_sha256, record$primary_result$scientific_result_sha256) ||
       !identical(p$record$inputs$handoff_sha256, record$inputs$handoff_sha256) ||
       !identical(p$record$inputs$csv_sha256, record$inputs$csv_sha256)) {
@@ -253,15 +282,25 @@ check_cited_primary <- function(record, primary_dir, cited) {
 # `record_authenticated` is TRUE only when the caller supplied an external SHA-256 of the record
 # and it matched. Without one the result is internally consistent, nothing more.
 verify_result <- function(dir, expected_record_sha256 = NULL, expected_lock_sha256 = NULL, require_read_only = FALSE,
-                          official_request = NULL, python = NULL, project_dir = NULL, official_proof = NULL) {
+                          official_request = NULL, python = NULL, project_dir = NULL, official_proof = NULL,
+                          inherit = FALSE) {
   opened <- open_published(dir, RESULT_FILES, RECORD_FILE, "result", expected_record_sha256, require_read_only)
   paths <- opened$paths; sealed <- opened$sealed; record <- opened$record; record_sha256 <- opened$record_sha256
 
   official <- identical(record$inputs$input_origin, "verified_official_run")
   if (official) {
     if (is.null(official_proof)) {
-      official_proof <- tryCatch(read_official_proof(official_request, python, project_dir),
-                                 input_error = function(e) verify_error(conditionMessage(e)))
+      # inherit = TRUE is for a secondary run citing this record: the proof comes from the record itself.
+      official_proof <- if (inherit) inherited_proof(record) else
+        tryCatch(read_official_proof(official_request, python, project_dir),
+                 input_error = function(e) verify_error(conditionMessage(e)))
+    }
+    recorded <- get_path(record, c("verification", "official_proof"))
+    facts <- official_proof_facts(official_proof)
+    for (name in PROOF_FACT_NAMES) {
+      if (is.null(recorded) || !identical(recorded[[name]], facts[[name]])) {
+        verify_error(sprintf("the record's official proof fact %s differs from the verified proof", name))
+      }
     }
     if (!identical(official_proof$handoff$sha256, record$inputs$handoff_sha256) ||
         !identical(official_proof$csv_sha256, record$inputs$csv_sha256) ||

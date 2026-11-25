@@ -195,7 +195,18 @@ check_handoff <- function(handoff, official_proof = NULL) {
   invisible(handoff)
 }
 
-read_handoff_file <- function(path, expected_sha256, official_request = NULL, python = NULL, project_dir = NULL) {
+# The origin a handoff states, read only after its bytes match the pinned hash.
+handoff_origin <- function(path, expected_sha256) {
+  if (!identical(sha256_file(path), expected_sha256)) {
+    input_error("handoff_hash", "handoff bytes differ from the pinned SHA-256")
+  }
+  jsonlite::fromJSON(path, simplifyVector = FALSE)$input_origin
+}
+
+# `given_proof` is the proof inherited from an authenticated primary record (secondary analyses);
+# without it an official handoff is verified afresh by Python.
+read_handoff_file <- function(path, expected_sha256, official_request = NULL, python = NULL, project_dir = NULL,
+                              given_proof = NULL) {
   if (!is.character(expected_sha256) || length(expected_sha256) != 1 ||
       !grepl("^[0-9a-f]{64}$", expected_sha256)) {
     input_error("handoff_hash", "the pinned handoff hash is not a SHA-256")
@@ -206,7 +217,7 @@ read_handoff_file <- function(path, expected_sha256, official_request = NULL, py
   handoff <- jsonlite::fromJSON(path, simplifyVector = FALSE)
   proof <- NULL
   if (identical(handoff$input_origin, "verified_official_run")) {
-    proof <- read_official_proof(official_request, python, project_dir)
+    proof <- if (!is.null(given_proof)) given_proof else read_official_proof(official_request, python, project_dir)
     if (!identical(proof$handoff$sha256, expected_sha256) ||
         !identical(proof$csv_sha256, handoff$csv$sha256)) {
       input_error("origin", "Python verified different handoff or table bytes")
@@ -351,8 +362,9 @@ read_table <- function(csv_path, handoff) {
 
 # The entry point of the reader. `lineage_verified_by_r` is always FALSE: lineage and official
 # origin are Python's to verify before R runs.
-read_inputs <- function(handoff_path, handoff_sha256, csv_path, official_request = NULL, python = NULL, project_dir = NULL) {
-  handoff <- read_handoff_file(handoff_path, handoff_sha256, official_request, python, project_dir)
+read_inputs <- function(handoff_path, handoff_sha256, csv_path, official_request = NULL, python = NULL, project_dir = NULL,
+                        given_proof = NULL) {
+  handoff <- read_handoff_file(handoff_path, handoff_sha256, official_request, python, project_dir, given_proof)
   proof <- attr(handoff, "official_proof")
   attr(handoff, "official_proof") <- NULL
   rows <- read_table(csv_path, handoff)

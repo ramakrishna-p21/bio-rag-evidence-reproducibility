@@ -8,6 +8,8 @@
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
 #   Rscript run_analysis.R derive --handoff F --handoff-sha256 H --csv F --primary DIR --out-root DIR \
 #           [--primary-record-sha256 H]
+#   An official handoff needs --primary-record-sha256 (the authenticated primary record). Its fresh Python verification
+#   is inherited from that record and is not repeated; supplement stays refused for official inputs.
 #   Rscript run_analysis.R verify-derived --result DIR [--record-sha256 H] [--primary DIR] \
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
 #   Rscript run_analysis.R supplement --handoff F --handoff-sha256 H --csv F --supplement DIR \
@@ -104,7 +106,7 @@ main <- function(args) {
   } else if (a$command == "derive") {
     r <- run_derived(a$handoff, a[["handoff-sha256"]], a$csv, a$primary, a[["out-root"]], script_dir,
                      expected_primary_record_sha256 = a[["primary-record-sha256"]])
-    cat("SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS\n")
+    cat(if (identical(r$purpose, OFFICIAL_SECONDARY_PURPOSE)) paste0(OFFICIAL_SECONDARY_BANNER, "\n") else "SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS\n")
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("secondary_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("secondary_result_sha256: ", r$secondary_result_sha256, "\n", sep = "")
@@ -127,7 +129,8 @@ main <- function(args) {
     }
   } else if (a$command == "verify-derived") {
     v <- verify_secondary(a$result, a[["record-sha256"]], primary_dir = a$primary)
-    cat("content verified: secondary files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    cat(sprintf("content verified: secondary files, hashes and tables are internally consistent (%s)\n",
+                if (identical(v$record$purpose, OFFICIAL_SECONDARY_PURPOSE)) "official secondary descriptive analysis; exploratory, not confirmatory; primary verification inherited" else "synthetic rehearsal; no scientific authority"))
     cat("read-only seal: ", if (v$sealed) "present (local file permissions only)" else "ABSENT", "\n", sep = "")
     cat(if (v$record_authenticated) "record authenticated against the supplied sha256\n" else "record NOT authenticated: no --record-sha256 was supplied\n")
     if (!is.null(a$primary)) cat("cited primary result verified against ", a$primary, "\n", sep = "")
