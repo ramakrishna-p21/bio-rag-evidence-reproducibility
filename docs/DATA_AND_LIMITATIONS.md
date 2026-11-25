@@ -19,6 +19,8 @@ code revisions. It does not contain study data or results.
 | Model weights | No | Public models, pinned by revision in `configs/` |
 | Code, configs, tests, locks, approvals | Yes | |
 
+A few short text fragments from the article PMC13488024 (licensed CC-BY-4.0 in its JATS permissions) appear in unit-test fixtures; they are attributed here and are not final-test benchmark material.
+
 No decision has yet been made on publishing any of the withheld material, on the license for the
 software, or on an archival deposit. When such decisions are taken they will be recorded here. Until
 then, the workflows that need controlled data cannot be repeated by outside readers, and the
