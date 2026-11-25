@@ -236,3 +236,64 @@ test_that("registered seed binds the freshly verified handoff without changing h
   registration$record$sample_kind <- "Rounding"
   expect_error(seed_record(1572911995L, "development_rehearsal", handoff, registration), "registered seed differs")
 })
+
+# ---- the official proof states the evaluation scope that fixes its observation count ----------
+
+final_proof <- function(scope = "confirmatory_only", observations = 1830L) {
+  proof <- list(status = "verified_official_final_test_handoff", source_verification = "fresh_python_verification",
+                custody = "custody_gate_not_established_exception_v1", observations = observations)
+  if (!is.null(scope)) proof$scope <- scope
+  proof
+}
+
+test_that("a final-test proof is accepted only with the observation count of its own scope", {
+  expect_silent(check_official_proof(final_proof("complete_matrix", 4575L), TRUE))
+  expect_silent(check_official_proof(final_proof("confirmatory_only", 1830L), TRUE))
+  # the original campaign count and the scoped count are not interchangeable
+  expect_error(check_official_proof(final_proof("confirmatory_only", 4575L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof("complete_matrix", 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof("confirmatory_only", 1829L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof("complete_matrix", 4574L), TRUE), "complete official origin")
+})
+
+test_that("a final-test proof with a missing, unknown or malformed scope is refused", {
+  expect_error(check_official_proof(final_proof(NULL, 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof("partial_development", 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof("", 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof(NA_character_, 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof(c("confirmatory_only", "complete_matrix"), 1830L), TRUE), "complete official origin")
+  expect_error(check_official_proof(final_proof(1830L, 1830L), TRUE), "complete official origin")
+})
+
+test_that("the other origin requirements of a final-test proof are unchanged", {
+  p <- final_proof(); p$status <- "verified_official_development_handoff"
+  expect_error(check_official_proof(p, TRUE), "complete official origin")
+  p <- final_proof(); p$source_verification <- "cited_local_record"
+  expect_error(check_official_proof(p, TRUE), "complete official origin")
+  p <- final_proof(); p$custody <- NULL
+  expect_error(check_official_proof(p, TRUE), "complete official origin")
+  dev <- list(status = "verified_official_development_handoff", source_verification = "fresh_python_verification", observations = 1290L)
+  expect_silent(check_official_proof(dev, FALSE))
+  dev$observations <- 1830L
+  expect_error(check_official_proof(dev, FALSE), "complete official origin")
+})
+
+official_handoff <- function(scope = "confirmatory_only", observations = 1830L) {
+  h <- jsonlite::fromJSON(fixture_args()$handoff_path, simplifyVector = FALSE)
+  h$input_origin <- "verified_official_run"
+  h$phase <- "final_test"
+  h$scope <- scope
+  h$custody_exception <- list(status = "custody_gate_not_established_exception_v1")
+  h$source_runs <- list(list(matrix_arm = "confirmatory", observations = observations))
+  h
+}
+
+test_that("the handoff must state the scope and observation total that the verified proof states", {
+  expect_silent(check_handoff(official_handoff(), final_proof()))
+  expect_silent(check_handoff(official_handoff("complete_matrix", 4575L), final_proof("complete_matrix", 4575L)))
+  expect_error(check_handoff(official_handoff("complete_matrix", 1830L), final_proof()), "differ from the verified official proof")
+  expect_error(check_handoff(official_handoff(), final_proof("complete_matrix", 1830L)), "differ from the verified official proof")
+  expect_error(check_handoff(official_handoff("confirmatory_only", 915L), final_proof()), "differ from the verified official proof")
+  h <- official_handoff(); h$scope <- NULL
+  expect_error(check_handoff(h, final_proof()), "differ from the verified official proof")
+})

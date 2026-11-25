@@ -114,12 +114,21 @@ read_official_proof <- function(request, python, project_dir) {
   proof
 }
 
+# A final-test evaluation reports the observations of its authorized scope: the whole 4,575-
+# observation campaign, or the 1,830 of the confirmatory arm. The proof's own scope fixes which.
+FINAL_TEST_OBSERVATIONS <- c(complete_matrix = 4575L, confirmatory_only = 1830L)
+
 check_official_proof <- function(proof, final) {
-  expected <- if (final) list("verified_official_final_test_handoff", 4575L) else
-    list("verified_official_development_handoff", 1290L)
-  if (!identical(proof$status, expected[[1]]) ||
+  status <- if (final) "verified_official_final_test_handoff" else "verified_official_development_handoff"
+  expected <- 1290L
+  if (final) {
+    scope <- proof$scope
+    known <- is.character(scope) && length(scope) == 1 && !is.na(scope) && scope %in% names(FINAL_TEST_OBSERVATIONS)
+    expected <- if (known) FINAL_TEST_OBSERVATIONS[[scope]] else NA_integer_
+  }
+  if (!identical(proof$status, status) ||
       !identical(proof$source_verification, "fresh_python_verification") ||
-      proof$observations != expected[[2]] ||
+      !isTRUE(proof$observations == expected) ||
       (final && !identical(proof$custody, "custody_gate_not_established_exception_v1"))) {
     input_error("origin", "Python did not establish the complete official origin")
   }
@@ -136,6 +145,12 @@ check_handoff <- function(handoff, official_proof = NULL) {
   }
   if (final && !identical(handoff$custody_exception$status, "custody_gate_not_established_exception_v1")) {
     input_error("origin", "a final-test handoff must name its custody exception")
+  }
+  if (final) {
+    stated <- sum(vapply(handoff$source_runs, function(run) as.integer(run$observations), 1L))
+    if (!identical(handoff$scope, official_proof$scope) || !identical(stated, as.integer(official_proof$observations))) {
+      input_error("origin", "the handoff's scope or source runs differ from the verified official proof")
+    }
   }
   if (!identical(handoff$input_origin, "synthetic_rehearsal") &&
       !(identical(handoff$input_origin, "verified_official_run") && !is.null(official_proof))) {
