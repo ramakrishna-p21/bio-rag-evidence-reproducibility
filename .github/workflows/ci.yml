@@ -24,18 +24,20 @@ jobs:
       # The Python/R handoff, rehearsal, result and supplement tests must run, not skip.
       BIORAG_REQUIRE_R: '1'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           # Exact patch: split records embed sys.version, so test goldens depend on it.
           python-version: '3.11.15'
           cache: pip
           cache-dependency-path: pyproject.toml
-      - uses: r-lib/actions/setup-r@v2
+      - uses: r-lib/actions/setup-r@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           r-version: '4.6.1'
           use-public-rspm: true
-      - uses: r-lib/actions/setup-renv@v2
+      - uses: r-lib/actions/setup-renv@f9a764fea8d5c63df6ef9a5c7795bf7deb5d7e05 # v2
         with:
           working-directory: analysis
       - name: renv library matches analysis/renv.lock
@@ -77,3 +79,29 @@ jobs:
           OPENBLAS_CORETYPE: HASWELL
           OPENBLAS_NUM_THREADS: '1'
         run: Rscript -e 'testthat::test_dir("tests/testthat", reporter = "summary", stop_on_failure = TRUE)'
+      # Repository checks that need no study data. The statistical figures themselves need the
+      # official result files and are not run here; the scripts are only syntax-checked.
+      - name: Documentation links and citation metadata
+        run: |
+          python - <<'EOF'
+          import os, re, sys
+          bad = []
+          for f in ("README.md", "docs/REPRODUCING.md", "docs/DATA_AND_LIMITATIONS.md", "figures/README.md"):
+              text = open(f, encoding="utf-8").read()
+              targets = re.findall(r"\]\(([^)]+)\)", text) + re.findall(r'src="([^"]+)"', text)
+              for t in targets:
+                  if t.startswith(("http://", "https://", "#")):
+                      continue
+                  path = t.split("#")[0]
+                  if path and not os.path.exists(os.path.normpath(os.path.join(os.path.dirname(f), path))):
+                      bad.append((f, t))
+          print("broken links:", bad)
+          sys.exit(1 if bad else 0)
+          EOF
+          python -m venv "$RUNNER_TEMP/cff"
+          "$RUNNER_TEMP/cff/bin/python" -m pip install -q cffconvert
+          "$RUNNER_TEMP/cff/bin/cffconvert" --validate -i CITATION.cff
+      - name: Figure scripts parse and the wrapper is valid shell
+        run: |
+          Rscript -e 'for (f in list.files("figures/scripts", pattern = "[.]R$", full.names = TRUE)) invisible(parse(f))'
+          bash -n figures/make_figures.sh
