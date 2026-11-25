@@ -1,129 +1,186 @@
-# Evidence reproducibility in retrieval-augmented scientific question answering
+# Evaluating Reproducibility in Retrieval-Augmented Scientific Question Answering for Bioinformatics
 
-Research software for studying how alternative representations of the same scientific publication
-affect retrieval-augmented question answering in bioinformatics.
+Code, configuration, tests and analysis programs for a master's capstone (MS Bioinformatics) that
+asks a simple question: **if the same scientific paper is given to an AI question-answering system
+in two different digital forms, does the system find the same evidence and give the same answer?**
 
-## Research objective
+The experiments are finished and their results are frozen. This repository holds the software
+that ran and evaluated them. It does not contain the study data or results; see
+[Data availability](#data-availability).
 
-A retrieval-augmented system never sees a publication itself. It sees one representation of it:
-structured text from the publisher's JATS XML, or text recovered from the published PDF by a layout
-parser. This project asks whether the choice of representation changes
+## The idea in plain language
 
-- whether the evidence needed to answer a question is preserved in the representation;
-- whether retrieval delivers that evidence in the context supplied to the generator;
-- whether the generated answer is scientifically correct;
-- whether those answers are reproducible across repeated runs.
+**Scientific question answering.** A researcher asks a precise question about a paper, such as
+"which value did the authors report for X?" or "which method did they use?", and the system
+should answer from the paper's evidence, not from guesswork.
 
-Each question is graded against the original source, and each result stays traceable through the chain
+**Retrieval-augmented generation (RAG).** A language model does not read a whole paper. Instead, the
+paper is cut into short passages, a search step picks the passages most relevant to the question,
+and only those passages are handed to the model, which then writes its answer. If the right passage
+is missing, the model can only guess.
 
-```
-source file → ingestion → canonical document → chunks → ranked retrieval
-            → supplied context → generated answer → evaluation → statistical analysis
-```
+**Why the form of the paper matters.** A publication exists in several digital forms. A publisher
+can supply structured text (an XML format called JATS, used by PubMed Central). The same paper is
+also available as a PDF, whose text must be recovered by software that reads the page layout.
+Tables, numbers, formulas, figure captions and reading order can come out differently in each form.
+The search step and the language model only ever see one of these forms, so a difference in form can
+change which evidence reaches the model, and so which answer it gives.
 
-by content hashes recorded in build manifests.
+**Why this is a reproducibility question.** If an answer depends on a choice that is rarely
+reported, such as which digital form of the paper was fed to the system, then results are hard to
+repeat or compare. This study measures how much that one choice matters, holding everything else
+fixed.
 
-## Design
+## Research questions
 
-| Stage | What it does |
+1. **Evidence delivery.** For the same paper and question, how does using JATS structured text
+   versus text recovered from the PDF change whether the evidence needed to answer is preserved and
+   actually delivered to the language model?
+2. **Scientific answers.** How does the form of the paper change whether the model's answer is
+   scientifically correct? Agreement between the two forms and consistency across repeated runs
+   are examined as secondary analyses.
+
+Findings are limited to the frozen corpus, benchmark and settings below. The study does not assume
+that either form is better in general.
+
+## Study design
+
+| Element | What was used |
 | --- | --- |
-| Ingestion | Converts JATS XML and PDF (via Docling) into one canonical document schema, keeping source locations. |
-| Chunking | Splits canonical documents into 192- or 384-token chunks, counted with a pinned construction tokenizer. |
-| Retrieval | BM25 and dense retrieval (`BAAI/bge-base-en-v1.5`) over the chunks. |
-| Context | Assembles whole chunks from the top 20 ranked results into the generator input, stopping before a 2,048-token (Qwen3 tokenizer) evidence budget would be exceeded. |
-| Generation | Runs a Qwen3-8B generator with recorded attempts, seeds and exact supplied context. |
-| Evaluation | Stage A: evidence preserved in the representation. Stage B: evidence delivered in the supplied context. Stage C: answer correctness. |
-| Analysis | An R analysis (whole-paper bootstrap, cluster-robust inference) reads a validated table exported by Python. Python remains authoritative for scoring. |
+| Corpus | 50 bioinformatics papers, each in two matched forms: PubMed Central JATS XML, and the same paper's PDF converted with Docling (called `PDF_DOCLING`) |
+| Benchmark | 391 questions written from the papers and checked against the original PDF: 86 for development and 305 held back for the final test. Answers fall in five classes: quantitative value, categorical conclusion, molecular or biological entity, bounded entity set, dataset or cohort |
+| Passage preparation | Each form is split into passages of 384 tokens (a token is a word piece counted by the model's tokenizer). 192-token passages were a secondary variation |
+| Search | BM25, a standard keyword-matching ranking method, over the passages of the question's source paper. A dense-embedding search (`BAAI/bge-base-en-v1.5`) was a secondary variation |
+| Context given to the model | Whole passages from the top 20 results, as many as fit in a 2,048-token evidence budget, identical in size for both forms |
+| Language model | Qwen3-8B, an open-weight model, run with deterministic (greedy) decoding and short structured answers |
+| Repeats | Each question and form was generated 3 times; repeat 1 was fixed in advance as the primary observation |
 
-### Repository layout
+### How results were judged
+
+Each answer is traced back through the chain below, and judged at three stages:
+
+```
+paper → ingestion → canonical text → passages → search results → context → answer → evaluation
+```
+
+- **Stage A, evidence preserved.** Is the evidence needed to answer still present in the form of the paper?
+- **Stage B, evidence delivered.** Did that evidence reach the model in the supplied context? This is the first of two co-primary outcomes.
+- **Stage C, answer correct.** Is the model's answer scientifically correct against the benchmark? This is the second co-primary outcome.
+
+The human review judgments (Stages A, B and C) were made by the researcher; the evaluation
+protocol records that any AI assistance in preparing review material was advisory only. The statistical analysis, written in R,
+compares the two forms question by question using a whole-paper bootstrap (resampling whole papers,
+since questions from one paper are not independent), cluster-robust standard errors and Holm
+adjustment for the two co-primary outcomes. Python scoring is authoritative; R reads a validated,
+hashed table exported by Python.
+
+### What was run and what was evaluated
+
+| | Observations |
+| --- | ---: |
+| Generated in the final test (all arms) | 4,575 |
+| **Confirmatory arm: 305 questions × 2 forms × 3 repeats (evaluated)** | **1,830** |
+| Closed-book baseline, dense search and 192-token variations, full-corpus search (generated, **not evaluated**) | 2,745 |
+
+Only the confirmatory observations entered official evaluation, under an approved amendment to the
+evaluation protocol. The remaining arms are preserved but unevaluated; they are deferred work, not
+results.
+
+## Reproducibility approach
+
+- Every input is chosen by explicit path and SHA-256 hash. Files are written once and re-read
+  against their recorded hashes.
+- Build manifests link each derived artifact to its inputs and to the code that made it, so an
+  answer can be traced back to its exact context, passages and source file.
+- Protected evaluation steps refuse to run unless an approval record names the exact source
+  revision, protocol, custody exception and data batch (`approvals/`).
+- The final analysis is pinned: R 4.6.1, a locked `renv` library, a fixed OpenBLAS kernel and a fixed
+  seed. Its primary numeric result is compared byte for byte, so it is tied to that platform.
+- Repeated generations under fixed greedy decoding test computational replay. They do not measure
+  stochastic variability.
+
+### Historical revisions
+
+The results were not produced by the latest commit of this repository. This revision (branch
+`final/closure`) adds documentation and plotting code to the last analysis revision without changing
+`src/`, `scripts/`, `configs/`, `analysis/` or `tests/`. The execution revisions are:
+
+| Step | Revision |
+| --- | --- |
+| Generation (Colab L4) | `92af41e840b6667c5bf967a08e7ed61da078640a` |
+| Stage A packet and review | `04eb08499f518c51a223019795cc20c19b6d1ca7` |
+| Stage B review records | `8c0a8255d85409e717cde0c7757ee68efeb0002c` |
+| Stage B ingestion, Stage C queue, first confirmatory evaluation | `71cc332766204c33af785b5b317c93eff3c394a6` |
+| Final evaluation run and official R analysis | `cfa2ac026ed8f5e354bd45148774446ce07287cf` |
+
+Commands that verify an official run must be run from the revision that run was approved for. They
+will refuse this revision by design. See [docs/REPRODUCING.md](docs/REPRODUCING.md).
+
+## Repository map
 
 | Path | Contents |
 | --- | --- |
-| `src/biorag_repro/core` | Hashing, identities, build manifests, immutable file publication. |
-| `src/biorag_repro/corpus`, `benchmark` | Corpus manifest and benchmark construction and validation. |
-| `src/biorag_repro/documents` | JATS and PDF ingestion, canonical documents, coverage and lineage validation. |
-| `src/biorag_repro/retrieval` | Chunking, BM25, dense retrieval, context assembly. |
-| `src/biorag_repro/generation` | Generator configuration, prompts, run and attempt records, environment checks. |
-| `src/biorag_repro/evaluation` | Stage A, B and C evaluation and the analysis handoff. |
-| `src/biorag_repro/readiness`, `finaltest` | Checks that gate protected evaluation runs. |
-| `analysis/` | R analysis, locked with `renv`. |
-| `configs/` | Ingestion and environment configuration. |
-| `scripts/` | Command-line entry points for corpus, benchmark, ingestion and review work. |
-| `tests/` | Python test suite. |
+| `src/biorag_repro/core` | Hashing, identities, build manifests, write-once file publication |
+| `src/biorag_repro/corpus`, `benchmark` | Corpus manifest, benchmark construction and validation |
+| `src/biorag_repro/documents` | JATS and PDF ingestion into one canonical document form |
+| `src/biorag_repro/retrieval` | Chunking, BM25, dense search, context assembly |
+| `src/biorag_repro/generation` | Generator settings, prompts, run and attempt records, environment checks |
+| `src/biorag_repro/evaluation` | Stage A, B and C evaluation and the handoff to R |
+| `src/biorag_repro/readiness`, `finaltest` | Authorization and custody checks that gate the protected runs |
+| `analysis/` | The R statistical analysis, locked with `renv` |
+| `figures/` | R code for the five statistical figures (no data, no generated figures) |
+| `configs/` | Ingestion, environment and per-arm production settings |
+| `scripts/` | Command-line programs; see [docs/REPRODUCING.md](docs/REPRODUCING.md) |
+| `approvals/` | Researcher approval records that bind protected runs to exact revisions |
+| `tests/` | Python tests on synthetic fixtures |
+| `docs/` | Reproduction guide, data availability and limitations |
 
-## Installation
+## Getting started
 
-Python 3.11 is required.
+Python 3.11 is required. From a clone:
 
 ```bash
 python -m pip install -e '.[dev,benchmark,bm25,dense]'
-```
-
-Optional extras: `context` (tokenizer support for context assembly), `generation` (generator
-backend), `chunking`, `pdf` (pinned Docling stack for PDF ingestion). For a CPU-only dense build,
-install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` before the project extras.
-
-Model files and source data are not part of the repository. Retrieval and generation read local,
-hash-verified snapshots: set `BIORAG_BGE_ROOT` to the pinned BGE snapshot and `BIORAG_QWEN_ROOT` to
-the pinned Qwen3-8B tokenizer files to include the checks that use them. Without them those tests
-are skipped.
-
-The R analysis needs R 4.6.1. From `analysis/`:
-
-```bash
-Rscript -e 'renv::restore()'
-```
-
-PyMuPDF (`benchmark` extra) is used only to locate evidence in original PDFs for human review. It
-is not an experimental parser.
-
-## Usage
-
-Installed console scripts, each also runnable as `python -m <module> --help`:
-
-| Command | Module | Purpose |
-| --- | --- | --- |
-| `biorag-context` | `biorag_repro.retrieval.cli` | Assemble generator contexts from selected chunks and re-read them with full validation. |
-| `biorag-analysis` | `biorag_repro.evaluation.analysis_cli` | Verify the analysis table, the handoff and a supplement. |
-| `biorag-environment` | `biorag_repro.generation.environment_lock` | Compare the intended execution environment with the installed one. |
-| `biorag-readiness` | `biorag_repro.readiness.cli` | Evaluate and verify readiness for protected evaluation runs. |
-
-Scripts in `scripts/`:
-
-- `benchmark.py` — `split`, `discover`, `review-pack`, `pdf-search`, `validate`, `audit-draw`,
-  `derive-development`. Every command takes an external data root and the explicit path and SHA-256
-  of the corpus release record. Candidate evidence found automatically is a lead for a human
-  reviewer; it is never accepted as gold without inspection of the original PDF.
-- `ingest_paper.py`, `reproduce_pair.py`, `stage_a_review.py` — single-paper ingestion,
-  reproduction of a source pair, and masked Stage A review packets. Run each with `--help`.
-
-R analysis (from `analysis/`): `Rscript run_analysis.R run|verify|derive|supplement ...`; see the
-header of `analysis/run_analysis.R` for the arguments.
-
-## Reproducibility
-
-- Inputs are selected by explicit path and SHA-256; files are published without overwriting and
-  re-read against their recorded hashes.
-- Build manifests link every derived artifact to its inputs and to the transformation that made it.
-- Continuous integration (`.github/workflows/ci.yml`) runs on Ubuntu 22.04 with Python 3.11.15 and
-  R 4.6.1 and requires the R tests to run. The primary R result is compared byte for byte, so it is
-  tied to that platform's numerics.
-
-### Checks
-
-```bash
 python -m pytest -q
-python -m ruff format --check .
-python -m ruff check .
-(cd analysis && Rscript -e 'testthat::test_dir("tests/testthat")')
+python -m ruff check . && python -m ruff format --check .
 ```
 
-Several Python tests call `Rscript` and skip when R or the `renv` library is absent; set
-`BIORAG_REQUIRE_R=1` to make that a failure.
+For a CPU-only build install `torch==2.15.0` from `https://download.pytorch.org/whl/cpu` first. Some
+tests need the pinned tokenizer and embedding snapshots (`BIORAG_QWEN_ROOT`, `BIORAG_BGE_ROOT`) and
+are skipped without them. The R tests need R 4.6.1:
 
-## Scope and limitations
+```bash
+cd analysis && Rscript -e 'renv::restore()'
+cd analysis && Rscript -e 'testthat::test_dir("tests/testthat")'
+```
 
-The repository contains the pipeline, its contracts and its tests, exercised on synthetic fixtures.
-It does not contain the corpus, benchmark gold, model weights or experimental results; those are
-kept outside version control. Dense retrieval and generation behaviour is verified only for the
-pinned snapshots and the platform noted above.
+These steps use only synthetic fixtures. The guide explains which workflows need controlled data.
+
+## Documentation
+
+- [docs/REPRODUCING.md](docs/REPRODUCING.md): installation, supported workflows, every command-line
+  entry point, historical checkouts, the Colab workflow, expected outputs.
+- [docs/DATA_AND_LIMITATIONS.md](docs/DATA_AND_LIMITATIONS.md): what is and is not available, the
+  custody exception, evaluation scope and scientific limitations.
+- [figures/README.md](figures/README.md): regenerating the statistical figures from analysis outputs.
+
+## Data availability
+
+The corpus, benchmark questions and gold answers, generated answers, review and adjudication records
+and the statistical result files are not in this repository. Decisions on what can be shared, and
+under which terms, have not been made. No claim is made here that the full study can be reproduced
+from public material.
+
+## Scientific limitations
+
+In brief (details in [docs/DATA_AND_LIMITATIONS.md](docs/DATA_AND_LIMITATIONS.md)): one open-weight
+generator, one corpus of 50 papers, two forms of each paper and one PDF converter; a single
+reviewer for the human judgments; only the confirmatory arm was evaluated; an approved custody
+exception because the original external custody requirement could not be established; and numerical
+results of the final R analysis tied to one platform.
+
+## Citation and acknowledgments
+
+Cite the software with [CITATION.cff](CITATION.cff). The manuscript is in preparation, so no paper
+citation is given here yet. Advisor and institutional acknowledgments will be added with the
+manuscript. Author and maintainer: Rama Krishna Pudota.
