@@ -29,7 +29,11 @@ SECONDARY = {
     "secondary_completion.csv": "2c2033425df99c1c32cfd658630b3e79eba969a815a39b3dfab430d6978baccf",
     "secondary_correct_without_evidence.csv": "47e9714d4f344011e941570c8c03da015304e33e4c300f72c9d9e3723607f2c4",
     "secondary_discordance.csv": "3dab22ae3500ad67f5d6d19dd1113848f22a8f58af37047380300f54ebf1d3e5",
-    "secondary_populations.csv": "77dc53f2226eb2539547e2fe18177507638e7c24e7159b21de7ec5d28b96f25a",
+    # Re-pinned after the official secondary route reworded two descriptive cells of this table
+    # (the repeat tables state computational replay under greedy decoding). The previous pin,
+    # 77dc53f2226eb2539547e2fe18177507638e7c24e7159b21de7ec5d28b96f25a, is reproduced exactly by
+    # reverting those two strings, so no value in the table changed.
+    "secondary_populations.csv": "d696e5bd08d7aea5c15b231b07c7080c2e66e9ce4c9d85bdac138ed9ba7b53b8",
     "secondary_repeat_outcomes.csv": "b6cf564cadf641b33198858febd753cb71623840fab1810955819d07575ff12c",
     "secondary_repeat_variability.csv": "e33e9d1ca3784056951748a771737a775ded9c42d9ef8e17706ed5d4ceb32bbd",
     "secondary_robustness.csv": "a0c0ad7d832b065c553a70c6f51fe70dbbafc9f89bc1d6e2de1f827489cd88cd",
