@@ -271,7 +271,8 @@ def test_production_code_cannot_initialize_a_final_test_root():
         for p in root.rglob("*.py")
         if "_initialize(" in p.read_text() or "initialize_root(" in p.read_text()
     ]
-    assert callers == ["finaltest/inventory.py", "finaltest/genesis.py"]
+    # rglob order depends on the file system; only the set of callers matters.
+    assert sorted(callers) == ["finaltest/genesis.py", "finaltest/inventory.py"]
     # The only production caller must be gated by the full prospective preflight.
     assert "campaign_preflight(" in (root / "finaltest/genesis.py").read_text()
 
