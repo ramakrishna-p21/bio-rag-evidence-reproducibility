@@ -1,0 +1,19 @@
+{
+  "schema_version": "final_test_evaluation_v1",
+  "decision": "approved",
+  "approved_by": "Rama Krishna Pudota",
+  "approved_utc": "2026-11-25T05:33:11Z",
+  "protocol_sha256": "1211ec439816bd1817a0cbfac0dc2d70ac04e93b87745e3a27b0a1b2929773e3",
+  "custody_exception_sha256": "34d5de7e49d8a74a45c395af2b9bacdb1f5eb1578728b116dc9354c45735c278",
+  "campaign_id": "rk_capstone_final_test_2026",
+  "run_id": "run_cb6ff67181325a2fa13575029f8b1912",
+  "drive_manifest_sha256": "a5726ff5ad3ec1fe4a821e69f065f30cca4dec902b77c5c568c213317b080750",
+  "head_request_sha256": "3d95e94eaf20a8c872316c58c12fdb812bbbce2547fd4a69a7611ec8f24d3623",
+  "new_head_sha256": "0f1251d9f5df36d9234f382851f11cb2888ef96db8c691ab1a03eb12760faba1",
+  "observations": 4575,
+  "evaluation_source_revision": "cfa2ac026ed8f5e354bd45148774446ce07287cf",
+  "reliability_design": "single reviewer; no second rating; stated as a limitation",
+  "ai_assistance": "optional advisory support from representation-masked materials only; researcher determines every final label (protocol section 5)",
+  "scope": "confirmatory_only",
+  "scope_amendment_sha256": "12e6c9026b2702b8ddb8ce32f3b150dd02fb28a3c7c03544772c0b054f705e0a"
+}
