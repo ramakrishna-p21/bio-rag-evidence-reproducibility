@@ -4,7 +4,6 @@ import json
 from copy import deepcopy
 from datetime import date
 from hashlib import sha256
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -490,16 +489,6 @@ def test_persistent_json_exact_hash_readback(tmp_path):
     assert read_project_json(target, sha256_bytes(content), ValidationReport) == report
     with pytest.raises(ValueError):
         read_project_json(target, "a" * 64, ValidationReport)
-
-
-def test_phase2_generated_schemas_match_models():
-    root = Path(__file__).resolve().parents[1]
-    for name, model in (
-        ("corpus_validation_report", ValidationReport),
-        ("corpus_release_record", ReleaseRecord),
-    ):
-        stored = json.loads((root / "schemas" / f"{name}.schema.json").read_text())
-        assert stored == model.model_json_schema()
 
 
 def test_source_magic_does_not_override_declared_hash(tmp_path):

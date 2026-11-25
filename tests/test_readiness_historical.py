@@ -18,7 +18,8 @@ from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import approvals, cli, guard, publish
 from biorag_repro.readiness.evaluate import evaluate
 from biorag_repro.readiness.guard import AuthorizationRefused, FinalTestAuthorization
-from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.models import LEGACY_MANDATORY_GATES, ReadinessReport
+from biorag_repro.readiness.policy import ApprovalPolicy, policy_payload, policy_sha256
 from biorag_repro.readiness.publish import (
     HistoricalEvidenceIncomplete,
     HistoricalPolicyError,
@@ -42,7 +43,7 @@ def tree(root: Path) -> dict[str, str]:
 
 
 def policy_bytes(policy: ApprovalPolicy) -> bytes:
-    return canonical_json_bytes(policy.model_dump(mode="json"))
+    return canonical_json_bytes(policy_payload(policy))
 
 
 def put(root: Path, relative: str, content: bytes) -> str:
@@ -452,7 +453,7 @@ def _extra_slot(data):
         _extra_slot(_policy_dict()),
         _policy_dict(policy_version=""),
         _policy_dict(policy_version=1),
-        _policy_dict(policy_version="2"),
+        _policy_dict(policy_version="3"),
         _policy_dict(policy_version=None),
         _without_version(_policy_dict()),
         {"policy_version": "0", "approvals": []},
@@ -464,7 +465,7 @@ def _extra_slot(data):
         "extra_slot",
         "blank_version",
         "int_version",
-        "version_2",
+        "version_3",
         "null_version",
         "missing_version",
         "old",
@@ -481,7 +482,7 @@ def test_policy_the_current_schema_cannot_represent_is_unsupported(tmp_path, dat
 
 
 def test_unknown_version_is_refused_at_the_version_boundary(tmp_path):
-    content = canonical_json_bytes(_policy_dict(policy_version="2"))  # structure otherwise valid
+    content = canonical_json_bytes(_policy_dict(policy_version="4"))  # structure otherwise valid
     claimed = sha256_bytes(content)
     stub = stub_report(tmp_path, claimed)
     put(tmp_path, f"readiness/evidence/{claimed}.json", content)
@@ -500,9 +501,37 @@ def test_version_1_with_an_unsupported_structure_is_refused(tmp_path):
 
 def test_historical_version_1_does_not_follow_the_current_policy_version(fixture_root, monkeypatch):
     root, _, ready, _ = fixture_root
-    monkeypatch.setattr(approvals, "POLICY_VERSION", "2")
+    monkeypatch.setattr(approvals, "POLICY_VERSION", "future-version")
     assert read_historical(root, ready).decision == "READY"
-    assert publish.HISTORICAL_POLICY_VERSIONS == frozenset({"1"})
+    assert publish.HISTORICAL_POLICY_VERSIONS == frozenset({"1", "2", "3"})
+
+
+def test_legacy_thirteen_gate_report_remains_readable():
+    base = support.fixture_policy("2")
+    policy = base.model_copy(
+        update={
+            "slots": base.slots.model_copy(
+                update={"gpu_authorization": support.digest("legacy G12 approval fixture")}
+            )
+        }
+    )
+    report = support.report(
+        policy, [support.passed(gate, policy) for gate in LEGACY_MANDATORY_GATES]
+    )
+    restored = ReadinessReport.model_validate(report.model_dump(mode="python"))
+    assert restored.decision == "READY"
+    assert [gate.gate_id for gate in restored.gates] == list(LEGACY_MANDATORY_GATES)
+
+
+def test_prospective_policy_retains_its_own_version_for_historical_readback(tmp_path):
+    policy = support.fixture_policy("2")
+    sha = publish_report(build(policy), tmp_path).report_sha256
+    result = read_historical(tmp_path, sha)
+    assert result.decision == "READY"
+    assert result.policy_sha256 == policy_sha256(policy)
+    assert (
+        json.loads(retained(tmp_path, result.policy_sha256).read_bytes())["policy_version"] == "2"
+    )
 
 
 def test_symlinked_retained_policy(fixture_root, tmp_path_factory):

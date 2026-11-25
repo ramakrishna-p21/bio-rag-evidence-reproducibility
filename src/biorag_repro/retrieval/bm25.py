@@ -4,6 +4,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from importlib.metadata import version
 from pathlib import Path
@@ -21,8 +22,8 @@ from biorag_repro.core.storage import (
     serialize_project_json,
     verify_manifest_outputs,
 )
-from biorag_repro.documents.chunking import read_chunking
 from biorag_repro.documents.models import Record
+from biorag_repro.retrieval.chunking import read_chunking
 from biorag_repro.retrieval.models import (
     Bm25Index,
     Bm25Statistics,
@@ -101,7 +102,29 @@ def statistics(model: Any) -> Bm25Statistics:
     )
 
 
-def _selected(sources: list[ChunkSelection]) -> tuple[Bm25Index, list[Chunk]]:
+# Kept only during one explicit verified_once scope; never a persistent index approval.
+_verified_selections: ContextVar[dict | None] = ContextVar("verified_bm25_selections", default=None)
+
+
+def _selection_key(sources: list[ChunkSelection]) -> tuple:
+    return tuple(
+        (
+            s.chunk_set.model_dump_json(),
+            s.manifest.model_dump_json(),
+            s.configuration.model_dump_json(),
+            str(s.configuration_root),
+            str(s.chunk_root),
+            str(s.tokenizer_root),
+            id(s.authority),
+            id(s.fixture_counter),
+        )
+        for s in sorted(sources, key=lambda s: s.chunk_set.artifact_id)
+    )
+
+
+def _selected(
+    sources: list[ChunkSelection], *, copy_index: bool = True
+) -> tuple[Bm25Index, list[Chunk]]:
     if not sources:
         raise ValueError("empty selected index membership")
     sources = sorted(sources, key=lambda s: s.chunk_set.artifact_id)
@@ -109,6 +132,11 @@ def _selected(sources: list[ChunkSelection]) -> tuple[Bm25Index, list[Chunk]]:
         raise ValueError("duplicate selected chunk set")
     configuration = sources[0].configuration
     settings = load_configuration(configuration, sources[0].configuration_root)
+    cache = _verified_selections.get()
+    key = _selection_key(sources)
+    if cache is not None and key in cache:
+        index, chunks, _ = cache[key]
+        return (index.model_copy(deep=True) if copy_index else index), list(chunks)
     if settings.lexical_tokenizer != PREPROCESSING:
         raise ValueError("unapproved lexical preprocessing")
     chunks: list[Chunk] = []
@@ -153,6 +181,8 @@ def _selected(sources: list[ChunkSelection]) -> tuple[Bm25Index, list[Chunk]]:
         tokenized_corpus=corpus,
         statistics=statistics(scorer(corpus)),
     )
+    if cache is not None:
+        cache[key] = (index.model_copy(deep=True), tuple(chunks), tuple(sources))
     return index, chunks
 
 
@@ -174,6 +204,8 @@ def _rank(
     configuration: ConfigurationRef,
     settings: Phase5Configuration,
     index_settings: Phase5Configuration,
+    index_ref: ArtifactRef,
+    index_manifest: ArtifactRef,
 ) -> RankedRetrieval:
     query = Query.model_validate(query.model_dump())
     # Scope is part of the execution configuration. Reuse the original index
@@ -185,7 +217,15 @@ def _rank(
         raise ValueError("retrieval configuration/scope differs from selected index settings")
     if query.designated_paper_id is not None and query.designated_paper_id not in index.paper_ids:
         raise ValueError("designated paper missing from index membership")
-    scores = scorer(index.tokenized_corpus).get_scores(tokenize(query.question))
+    cache = _verified_selections.get()
+    scorer_key = ("query_scorer", index_ref.sha256)
+    if cache is not None and scorer_key in cache:
+        model = cache[scorer_key]
+    else:
+        model = scorer(index.tokenized_corpus)
+        if cache is not None:
+            cache[scorer_key] = model
+    scores = model.get_scores(tokenize(query.question))
     values = [float(v) for v in scores]
     if any(not math.isfinite(v) for v in values):
         raise ValueError("nonfinite BM25 score")
@@ -198,8 +238,8 @@ def _rank(
     eligible.sort(key=lambda pair: (-pair[1], record_ref(pair[0]).artifact_id))
     return RankedRetrieval(
         configuration=configuration,
-        index=record_ref(index),
-        index_build_manifest=manifest_ref(index),
+        index=index_ref.model_copy(deep=True),
+        index_build_manifest=index_manifest.model_copy(deep=True),
         retriever="bm25",
         query_id=query.query_id,
         question=query.question,
@@ -220,9 +260,19 @@ def retrieve(
     configuration: ConfigurationRef,
     configuration_root: Path,
 ) -> RankedRetrieval:
-    expected, chunks = _selected(sources)
+    expected, chunks = _selected(sources, copy_index=False)
     if Bm25Index.model_validate(index.model_dump()) != expected:
         raise ValueError("BM25 index differs from independently selected scientific inputs")
+    # These references belong to the independently derived selection, never the
+    # submitted index. Reuse them only within the current immutable verification.
+    cache = _verified_selections.get()
+    key = ("selected_index_refs", _selection_key(sources))
+    if cache is not None and key in cache:
+        index_ref, index_manifest = cache[key]
+    else:
+        index_ref, index_manifest = record_ref(expected), manifest_ref(expected)
+        if cache is not None:
+            cache[key] = (index_ref, index_manifest)
     return _rank(
         expected,
         chunks,
@@ -230,6 +280,8 @@ def retrieve(
         configuration,
         load_configuration(configuration, configuration_root),
         load_configuration(expected.configuration, sources[0].configuration_root),
+        index_ref,
+        index_manifest,
     )
 
 
@@ -301,6 +353,8 @@ def _publish(
     value: Bm25Index | RankedRetrieval,
     root: Path,
     index_manifest: ArtifactRef | None = None,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     ref = record_ref(value)
     target = root / ref.logical_ref
@@ -310,19 +364,27 @@ def _publish(
         serialize_project_json(value, type(value)),
         ref.sha256,
         validate_temp=lambda p: read_project_json(p, ref.sha256, type(value)),
+        reuse_identical=reuse_identical,
     )
     mr = manifest_ref(value, index_manifest)
     publish_manifest(
-        build_manifest(value, index_manifest), root / mr.logical_ref, {ref.logical_ref: target}
+        build_manifest(value, index_manifest),
+        root / mr.logical_ref,
+        {ref.logical_ref: target},
+        reuse_identical=reuse_identical,
     )
     return ref, mr
 
 
 def publish_index(
-    value: Bm25Index, sources: list[ChunkSelection], root: Path
+    value: Bm25Index,
+    sources: list[ChunkSelection],
+    root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     validate_index(value, sources)
-    return _publish(value, root)
+    return _publish(value, root, reuse_identical=reuse_identical)
 
 
 def _check_read(
@@ -342,13 +404,32 @@ def _check_read(
     verify_manifest_outputs(manifest, {ref.logical_ref: root / ref.logical_ref})
 
 
-def read_index(
+def _read_index(
     ref: ArtifactRef, mr: ArtifactRef, sources: list[ChunkSelection], root: Path
 ) -> Bm25Index:
+    cache = _verified_selections.get()
+    key = (
+        "read_index",
+        ref.model_dump_json(),
+        mr.model_dump_json(),
+        str(root),
+        _selection_key(sources),
+    )
+    if cache is not None and key in cache:
+        return cache[key][0]
     value = read_project_json(root / ref.logical_ref, ref.sha256, Bm25Index)
     _check_read(value, ref, mr, root)
     validate_index(value, sources)
+    if cache is not None:
+        cache[key] = (value, tuple(sources))
     return value
+
+
+def read_index(
+    ref: ArtifactRef, mr: ArtifactRef, sources: list[ChunkSelection], root: Path
+) -> Bm25Index:
+    """Return caller-owned records while private scientific readers share checked data."""
+    return _read_index(ref, mr, sources, root).model_copy(deep=True)
 
 
 def publish_retrieval(
@@ -360,10 +441,12 @@ def publish_retrieval(
     configuration: ConfigurationRef,
     configuration_root: Path,
     root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
-    index = read_index(index_ref, index_manifest, sources, root)
+    index = _read_index(index_ref, index_manifest, sources, root)
     validate_retrieval(value, index, sources, query, configuration, configuration_root)
-    return _publish(value, root, index_manifest)
+    return _publish(value, root, index_manifest, reuse_identical=reuse_identical)
 
 
 def read_retrieval(
@@ -379,6 +462,6 @@ def read_retrieval(
 ) -> RankedRetrieval:
     value = read_project_json(root / ref.logical_ref, ref.sha256, RankedRetrieval)
     _check_read(value, ref, mr, root, index_manifest)
-    index = read_index(index_ref, index_manifest, sources, root)
+    index = _read_index(index_ref, index_manifest, sources, root)
     validate_retrieval(value, index, sources, query, configuration, configuration_root)
     return value

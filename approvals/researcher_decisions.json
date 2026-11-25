@@ -1,0 +1,23 @@
+{
+  "protocol_version": "researcher_authority_v1",
+  "authority": "Rama Krishna Pudota",
+  "authority_role": "researcher_of_record",
+  "recorded_at_utc": "2026-11-17T16:48:48.354090Z",
+  "historical_approval_at_utc": null,
+  "authorization_record_sha256": "7ee801144b9be2b26bb3768cedae7197b68f71ca3bf86d0a10324153458feaf3",
+  "attestation_sha256": "e822fb04521344854b5829acc9ae18eb02fc7e33f961d10aed542f24f07851ec",
+  "authentication": "researcher_statement; no independent third-party authentication",
+  "checkpoint": {
+    "repository": "Qwen/Qwen3-8B",
+    "revision": "b968826d9c46dd6066d109eabc6255188de91218",
+    "manifest_sha256": "4a133fa0d16ea3fdd42e987d7aa5135f3f8562ce45c55bf478b2f777f53e6fad",
+    "scope": "Phase 7-qualified single NVIDIA L4; unquantized bfloat16; qualified greedy non-thinking settings"
+  },
+  "portable_identity": {
+    "rule": "prospective_freeze_identity_v1",
+    "status": "approved_in_principle; implementation_review_required; inactive"
+  },
+  "technical_gate_approvals": {},
+  "execution_authorized": false,
+  "transfer_authorized": false
+}

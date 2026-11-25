@@ -16,8 +16,8 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.generation.environment import check_utc
 
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -40,7 +40,7 @@ GateId = Literal[
     "G12_shared_gpu_authorization",
     "G13_final_test_history_integrity",
 ]
-MANDATORY_GATES: Final[tuple[GateId, ...]] = (
+LEGACY_MANDATORY_GATES: Final[tuple[GateId, ...]] = (
     "G01_corpus_sources",
     "G02_benchmark_freeze",
     "G03_final_test_configuration_freeze",
@@ -54,6 +54,9 @@ MANDATORY_GATES: Final[tuple[GateId, ...]] = (
     "G11_storage_authorization",
     "G12_shared_gpu_authorization",
     "G13_final_test_history_integrity",
+)
+MANDATORY_GATES: Final[tuple[GateId, ...]] = tuple(
+    gate for gate in LEGACY_MANDATORY_GATES if gate != "G12_shared_gpu_authorization"
 )
 HISTORY_GATE: Final = "G13_final_test_history_integrity"
 
@@ -215,20 +218,35 @@ class GateSetError(ValueError):
     """The gate results are not exactly the mandatory set."""
 
 
-def check_gate_set(gate_ids: Sequence[str]) -> None:
+def gate_contract(gate_ids: Sequence[str]) -> tuple[GateId, ...]:
+    """Return the current or retained legacy gate contract for an exact gate set."""
     seen: set[str] = set()
     for gate in gate_ids:
-        if gate not in MANDATORY_GATES:
+        if gate not in LEGACY_MANDATORY_GATES:
             raise GateSetError(f"unexpected gate {gate!r}")
         if gate in seen:
             raise GateSetError(f"duplicate gate {gate}")
         seen.add(gate)
-    if missing := [g for g in MANDATORY_GATES if g not in seen]:
+    for contract in (MANDATORY_GATES, LEGACY_MANDATORY_GATES):
+        if seen == set(contract):
+            return contract
+    missing = [g for g in MANDATORY_GATES if g not in seen]
+    if missing:
         raise GateSetError("missing mandatory gates: " + ", ".join(missing))
+    raise GateSetError("gate set is neither the current nor retained legacy contract")
+
+
+def check_gate_set(gate_ids: Sequence[str]) -> None:
+    gate_contract(gate_ids)
+
+
+def _result_contract(gate_ids: Sequence[str]) -> tuple[GateId, ...]:
+    """Select the binding order without treating a partial/forged set as valid."""
+    return LEGACY_MANDATORY_GATES if "G12_shared_gpu_authorization" in gate_ids else MANDATORY_GATES
 
 
 def derive_blockers(results: Sequence[GateResult]) -> list[Blocker]:
-    order = {gate: i for i, gate in enumerate(MANDATORY_GATES)}
+    order = {gate: i for i, gate in enumerate(_result_contract([r.gate_id for r in results]))}
     return [
         Blocker(gate_id=r.gate_id, status=r.status, reason_code=r.reason_code)
         for r in sorted(results, key=lambda r: order[r.gate_id])
@@ -255,13 +273,14 @@ def compute_binding(
     evidence, the candidate, the host, the policy and the evaluator. It excludes the decision
     and blockers (derived), warnings, timestamps, the nonce and the report's own hash.
     """
-    order = {gate: i for i, gate in enumerate(MANDATORY_GATES)}
+    contract = _result_contract([r.gate_id for r in results])
+    order = {gate: i for i, gate in enumerate(contract)}
     return _digest(
         {
             "kind": "readiness_binding",
             "schema_version": "1",
             "requested_run_mode": requested_run_mode,
-            "mandatory_gates": list(MANDATORY_GATES),
+            "mandatory_gates": list(contract),
             "policy_sha256": policy_sha256,
             "evaluator": evaluator.model_dump(mode="json"),
             "candidate": candidate.model_dump(mode="json"),

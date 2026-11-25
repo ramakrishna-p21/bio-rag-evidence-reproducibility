@@ -41,6 +41,18 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def read_verified_bytes(path: Path, expected_sha256: str) -> bytes:
+    """Read a file once and return its bytes only if they match the declared digest."""
+    validate_sha256(expected_sha256)
+    content = path.read_bytes()
+    actual_sha256 = sha256_bytes(content)
+    if actual_sha256 != expected_sha256:
+        raise HashMismatchError(
+            f"SHA-256 mismatch for {path}: expected {expected_sha256}, got {actual_sha256}"
+        )
+    return content
+
+
 def verify_file_sha256(path: Path, expected_sha256: str) -> None:
     """Validate a file's exact bytes without changing the file."""
     validate_sha256(expected_sha256)

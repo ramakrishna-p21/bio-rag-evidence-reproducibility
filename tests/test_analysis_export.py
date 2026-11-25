@@ -34,6 +34,7 @@ from biorag_repro.evaluation.analysis_table import (
     primary_pairs,
     serialize_csv,
 )
+from biorag_repro.evaluation.stage_a import final_test_scope
 from biorag_repro.retrieval.storage import record_ref
 
 CFG = "b" * 64  # resolved configuration hash used by the Stage B fixtures
@@ -272,6 +273,25 @@ def test_evidence_not_yet_assessed_is_neither_failure_nor_unresolved():
     assert r.earliest_failure == "incomplete" and r.stage_a_label is None
 
 
+def test_incomplete_retrospective_provenance_keeps_independent_answer_score():
+    w = world()
+    r = row(observation(w, evidence=None, retrospective_provenance_incomplete=True))
+    assert r.evidence_delivered == "non_evaluable"
+    assert r.evidence_reason == "retrospective_provenance_incomplete"
+    assert r.stage_a_label is None and r.stage_b_status is None
+    assert r.answer_correct == "yes"
+
+
+def test_retrospective_exception_cannot_enter_final_test_rows():
+    w = world()
+    with pytest.raises(ValueError, match="final-test rows"):
+        row(
+            observation(
+                w, evidence=None, phase="final_test", retrospective_provenance_incomplete=True
+            )
+        )
+
+
 def test_stage_a_only_is_not_assessed_at_stage_b():
     w = world()
     ev = Evidence(w.document, CANONICAL, w.stage_a)
@@ -436,10 +456,61 @@ def test_full_configuration_is_distinct_from_the_retrieval_configuration_it_cont
     assert full in both and CFG in both
 
 
+def test_distinct_context_configuration_retains_ranked_retrieval_identity():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    case.ctx = case.ctx.model_copy(
+        update={
+            "configuration": case.ctx.configuration.model_copy(update={"resolved_sha256": "c" * 64})
+        }
+    )
+    result = row(observation(w, case=case))
+    assert result.retrieval_config_sha256 == case.ranked.configuration.resolved_sha256
+    assert case.ctx.configuration.resolved_sha256 != result.retrieval_config_sha256
+
+
 def test_stage_b_must_come_from_the_retrieval_configuration_the_observation_names():
     w = world()
-    with pytest.raises(ValueError, match="retrieval and context configuration"):
+    with pytest.raises(ValueError, match="ranked retrieval configuration"):
         build_row(observation(w, retrieval_config_sha256="e" * 64))
+
+
+def test_stage_b_context_identity_must_match_the_actual_context():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    evidence = evidence_for(w, case)
+    wrong = evidence.stage_b.model_copy(
+        update={
+            "configuration": evidence.stage_b.configuration.model_copy(
+                update={"resolved_sha256": "c" * 64}
+            )
+        }
+    )
+    with pytest.raises(ValueError):
+        build_row(
+            observation(
+                w, evidence=Evidence(w.document, CANONICAL, w.stage_a, wrong, case.inputs())
+            )
+        )
+
+
+def test_stage_b_context_reference_must_match_its_inputs():
+    w = world()
+    case = deliver(w, [w.chunk(P_A)])
+    evidence = evidence_for(w, case)
+    with pytest.raises(ValueError):
+        build_row(
+            observation(
+                w,
+                evidence=Evidence(
+                    w.document,
+                    CANONICAL,
+                    w.stage_a,
+                    evidence.stage_b,
+                    case.inputs(context_ref=ref("other_context")),
+                ),
+            )
+        )
 
 
 def test_retrieval_configuration_is_required_for_retrieval_and_absent_for_closed_book():
@@ -528,7 +599,7 @@ def test_unexecuted_or_closed_book_observation_has_no_generator_input():
         build_row(Observation(**{**cb.__dict__, "generator_input": link(result, case)}))
 
 
-def test_final_test_rows_are_not_built_before_the_readiness_gate():
+def test_final_test_rows_are_built_only_inside_the_final_test_evaluation():
     w = world()
     with pytest.raises(ValueError):
         build_row(observation(w, phase="final_test"))
@@ -549,10 +620,23 @@ def test_final_test_rows_are_not_built_before_the_readiness_gate():
         "matrix_arm": "closed_book",
         "condition": "CLOSED_BOOK",
     }
-    with pytest.raises(ValueError, match="readiness gate"):
+    with pytest.raises(ValueError, match="authorized final-test evaluation"):
         build_row(
             Observation(item=item, result=closed, score=stage_c.score(item, closed), **gate_only)
         )
+    with final_test_scope():
+        row, _ = build_row(
+            Observation(item=item, result=closed, score=stage_c.score(item, closed), **gate_only)
+        )
+        assert (row.phase, row.split, row.analysis_role) == (
+            "final_test",
+            "final_test",
+            "secondary",
+        )
+        with pytest.raises(ValueError):  # a development observation of a final-test item
+            build_row(
+                Observation(item=item, result=result, score=stage_c.score(item, result), **PLAN)
+            )
 
 
 def test_row_model_requires_the_recorded_generator_input_for_final_test_execution():
@@ -929,19 +1013,6 @@ def test_inventory_lists_included_missing_and_unresolved_observations(tmp_path):
 # ---- schemas and verification command -----------------------------------------------------
 
 
-def test_analysis_schemas_are_registered_and_current():
-    from biorag_repro.evaluation.analysis_models import AnalysisInventory
-    from scripts.export_schemas import SCHEMA_DIR, SCHEMAS, schema_bytes
-
-    for name, model in {
-        "analysis_row.schema.json": AnalysisRow,
-        "analysis_inventory.schema.json": AnalysisInventory,
-        "generator_input.schema.json": GeneratorInput,
-    }.items():
-        assert SCHEMAS[name] is model
-        assert (SCHEMA_DIR / name).read_bytes() == schema_bytes(model)
-
-
 def test_verify_command_accepts_a_published_table_and_rejects_tampering(tmp_path, capsys):
     from biorag_repro.evaluation.analysis_cli import main
 
@@ -978,8 +1049,8 @@ def test_read_back_checks_the_inventory_against_the_rows(tmp_path, monkeypatch):
     _, _, build_ref = publish_table(sample_table(), tmp_path)
     honest = analysis_storage.make_inventory
 
-    def miscounted(rows, csv_ref, roster, roster_ref):
-        return honest(rows, csv_ref, roster, roster_ref).model_copy(update={"row_count": 99})
+    def miscounted(*args):
+        return honest(*args).model_copy(update={"row_count": 99})
 
     monkeypatch.setattr(analysis_storage, "make_inventory", miscounted)
     with pytest.raises(ValueError, match="inventory"):

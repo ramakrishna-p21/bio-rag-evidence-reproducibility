@@ -34,16 +34,26 @@ holm_adjust <- function(p) {
   list(status = "ok", adjusted = stats::p.adjust(p, method = "holm"))
 }
 
-# Best/worst-case bounds over the whole eligible set: a known success/failure keeps its value;
-# an unresolved cell is assigned the value most favourable (upper) or least favourable (lower)
-# to JATS - PDF_DOCLING. The denominator is every eligible item. The distinct unresolved
-# states are counted, not merged.
+# Operational states: an execution that failed or never ran is missing, not a scientific outcome
+# (EXPERIMENT_PLAN section 9), so it is never assigned a favourable or unfavourable value.
+OPERATIONAL_STATES <- c("missing", "not_executed")
+
+# Best/worst-case bounds (EXPERIMENT_PLAN section 9): a known success/failure keeps its value; an
+# unresolved scientific cell is assigned the value most favourable (upper) or least favourable
+# (lower) to JATS - PDF_DOCLING. Items with an operational state in either representation are
+# left out of the bounds and counted; the denominator is every other eligible item. The distinct
+# unresolved states are counted, not merged.
 missingness_bounds <- function(jats_state, pdf_state, rule) {
-  n <- length(jats_state)
-  if (n == 0 || length(pdf_state) != n) estimate_error("bounds need equal, non-empty state vectors")
+  if (length(jats_state) == 0 || length(pdf_state) != length(jats_state)) {
+    estimate_error("bounds need equal, non-empty state vectors")
+  }
   known <- c(rule$success, rule$failure)
-  unknown <- rule$non_evaluable
-  if (!all(c(jats_state, pdf_state) %in% c(known, unknown))) estimate_error("state outside the outcome's vocabulary")
+  if (!all(c(jats_state, pdf_state) %in% c(known, rule$non_evaluable))) estimate_error("state outside the outcome's vocabulary")
+  operational <- jats_state %in% OPERATIONAL_STATES | pdf_state %in% OPERATIONAL_STATES
+  jats_state <- jats_state[!operational]
+  pdf_state <- pdf_state[!operational]
+  n <- length(jats_state)
+  if (n == 0) estimate_error("bounds need at least one item without an operational state")
   value <- function(state) ifelse(state == rule$success, 1, ifelse(state == rule$failure, 0, NA_real_))
   j <- value(jats_state)
   p <- value(pdf_state)
@@ -51,7 +61,8 @@ missingness_bounds <- function(jats_state, pdf_state, rule) {
   lower <- ifelse(is.na(j), 0, j) - ifelse(is.na(p), 1, p)
   counts <- table(c(sprintf("JATS|%s", jats_state[is.na(j)]), sprintf("PDF_DOCLING|%s", pdf_state[is.na(p)])))
   counts <- stats::setNames(as.integer(counts), as.character(names(counts)))
-  list(n_eligible = n, lower = sum(lower) / n, upper = sum(upper) / n,
+  list(n_eligible = n, n_operational_excluded = sum(operational),
+       lower = sum(lower) / n, upper = sum(upper) / n,
        n_unknown_jats = sum(is.na(j)), n_unknown_pdf = sum(is.na(p)),
        unknown_states = counts[order(names(counts), method = "radix")])
 }

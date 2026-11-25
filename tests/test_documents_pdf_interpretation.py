@@ -5,9 +5,9 @@ from types import SimpleNamespace as Item
 
 import pytest
 from test_documents_table_fidelity import _native_data, _typed_native
-from test_phase4_publication_authorization import CASES, attack, candidate
-from test_phase4_publication_authorization import authority as authority  # noqa: PLC0414
-from test_phase4_publication_authorization import pair as pair  # noqa: PLC0414
+from test_publication_authorization import CASES, attack, candidate
+from test_publication_authorization import authority as authority  # noqa: PLC0414
+from test_publication_authorization import pair as pair  # noqa: PLC0414
 
 from biorag_repro.core.identity import ArtifactInput
 from biorag_repro.core.manifest import ArtifactRef, BuildInput
@@ -17,6 +17,8 @@ from biorag_repro.documents.authorization import (
     validate_candidate,
     validate_scientific_pair,
 )
+from biorag_repro.documents.coverage import validate_pdf_coverage
+from biorag_repro.documents.ingestion import publish_validation, validate_build
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.documents.pdf import TRANSFORMATION_ID, canonicalize_native
 from biorag_repro.documents.pdf_ingest import (
@@ -26,7 +28,6 @@ from biorag_repro.documents.pdf_ingest import (
     canonical_build_ref,
     publish_pdf_result,
 )
-from biorag_repro.documents.phase4 import publish_validation, validate_build, validate_pdf_coverage
 
 
 def classification_fixture(label, layer="body", role="texts"):

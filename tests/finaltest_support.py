@@ -1,5 +1,6 @@
 """Synthetic final-test storage fixtures. Nothing here touches a real root or a real policy."""
 
+import ast
 import hashlib
 import json
 from pathlib import Path
@@ -9,6 +10,26 @@ from biorag_repro.finaltest.layout import StorageAuthorization
 
 CORPUS = hashlib.sha256(b"corpus").hexdigest()
 RELEASE = hashlib.sha256(b"release").hexdigest()
+
+# Problem codes the root verifier reports.
+INCOMPLETE = "history_inventory_incomplete"
+UNAUTH = "unauthorized_final_test_artifact"
+CONFLICT = "conflicting_final_test_artifact"
+
+
+# Method names that write to the file system; the source-scan tests forbid them in modules that
+# may publish only through the registry publishers.
+FS_WRITERS = {"write_bytes", "write_text", "mkdir", "unlink", "rename", "replace", "chmod", "touch"}
+
+
+def calls(path: Path) -> set[str]:
+    """Names of everything the module at `path` calls (function names and method names)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return {
+        n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+    }
 
 
 def authorization(base: Path, kind: str = "rehearsal", **changes: object) -> StorageAuthorization:

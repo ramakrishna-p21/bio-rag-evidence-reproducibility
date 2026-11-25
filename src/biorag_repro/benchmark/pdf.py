@@ -4,8 +4,8 @@ from pathlib import Path
 
 from pydantic import Field
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import verify_file_sha256
+from biorag_repro.core.records import Record
 
 
 class PdfHit(Record):

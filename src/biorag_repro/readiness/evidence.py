@@ -16,10 +16,12 @@ check that produces them:
   frozen specification file. The specifications are Git-ignored local files, so Git cleanliness
   says nothing about them; their bytes are hashed here and compared only with an approved
   reference.
-* G03: the canonical content of a final-test freeze record.
+* G03/G04/G05: the prospective production and retained qualification readers live in
+  `readiness/production.py` and are called by `evaluate.gather_all`.
 
-G04, G05, G07, G08, G10, G11 and G12 have no verifiable subject yet. They are `absent`
-(pending) and say what is missing. G13 is the one adapter that reads the policy: it takes the
+G08, G10 and G11 retain their own prerequisite states. G12 is retained only in historical
+report contracts and is not evaluated under current policy version 3. G13 is the one adapter
+that reads the policy: it takes the
 G11 storage-authorization slot as the source of the expected root identity and verifies the
 final-test root against that approved artifact (`finaltest.inventory.verify_root`). With the
 slot unset, or without the artifact it names, G13 is `unavailable`; nothing found on disk and
@@ -36,13 +38,14 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import StringConstraints, ValidationError, model_validator
 
 from biorag_repro.benchmark.freeze import verify_release_inputs
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.release import BenchmarkRelease
 from biorag_repro.benchmark.seeds import BenchmarkSeedRegistry
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import decode_jsonl
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.corpus.manifest import (
     ReleaseRecord,
     corpus_content_hash,
@@ -50,6 +53,11 @@ from biorag_repro.corpus.manifest import (
     parse_csv,
     validate_corpus,
     verify_source_bytes,
+)
+from biorag_repro.evaluation.seeds import (
+    APPROVED_REGISTRY_SHA256,
+    REGISTRY_PATH,
+    read_analysis_seed,
 )
 from biorag_repro.finaltest import layout as root_layout
 from biorag_repro.finaltest.inventory import (
@@ -82,6 +90,13 @@ FROZEN_SPECIFICATIONS = (
     "REPRODUCIBILITY_SPEC.md",
     "CORPUS_MANIFEST_SPEC.md",
     "IMPLEMENTATION_PLAN.md",
+    "RESEARCHER_AUTHORITY_AMENDMENT_V1.md",
+    "AMENDMENT_STAGE_A_RETROSPECTIVE_ACCOUNTING_V2.md",
+    "AMENDMENT_STAGE_B_HISTORICAL_CONTEXT_READBACK_V1.md",
+    "AMENDMENT_STAGE_B_HISTORICAL_PROVENANCE_V1.md",
+    "DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md",
+    "G12_COLAB_CAMPAIGN_AMENDMENT_V1.md",
+    "RESEARCHER_CLOUD_USE_DECISION_V1.md",
 )
 ENVIRONMENT_SPEC = "configs/environment.toml"
 RENV_LOCK = "analysis/renv.lock"
@@ -184,7 +199,12 @@ def corpus_sources(ctx: Context, release: BenchmarkRelease | None, problem: str 
 
 
 def benchmark_freeze(
-    ctx: Context, release: BenchmarkRelease | None, release_bytes: bytes | None, problem: str | None
+    ctx: Context,
+    release: BenchmarkRelease | None,
+    release_bytes: bytes | None,
+    problem: str | None,
+    *,
+    hash_only: bool = False,
 ) -> Gathered:
     scope = "data root: frozen benchmark release record"
     if release is None or release_bytes is None:
@@ -209,16 +229,60 @@ def benchmark_freeze(
             ref, data[name] = _data_ref("benchmark_" + name, ctx.data_root, getattr(release, name))
             out.refs.append(ref)
         split = _json_model(data["split"], PaperSplit)
-        items = decode_jsonl(data["items"], BenchmarkItem)
-        development = sum(1 for i in items if i.paper_id in set(split.development_ids))
-        final = sum(1 for i in items if i.paper_id in set(split.final_test_ids))
-        if len(items) != release.item_count or development + final != len(items):
-            return Gathered("failed", "benchmark_counts_differ", scope, "counts do not agree")
-        verify_release_inputs(release, ctx.data_root)
+        if hash_only:
+            # The separate witness is a researcher approval of counts from the completed
+            # freeze. This boundary must not parse the protected item stream.
+            witness_bytes = read_regular(ctx.repo, "approvals/benchmark_count_witness_v1.json")
+            witness = loads_strict(witness_bytes)
+            expected = {
+                "schema_version": "benchmark_count_witness_v1",
+                "researcher": "Rama Krishna Pudota",
+                "approved": True,
+                "benchmark_version": release.benchmark_version,
+                "release_record_sha256": sha256_bytes(release_bytes),
+                "items_sha256": release.items.sha256,
+                "split_sha256": release.split.sha256,
+                "validation_report_sha256": release.validation_report.sha256,
+                "item_count": release.item_count,
+            }
+            if not isinstance(witness, dict) or any(
+                witness.get(k) != v for k, v in expected.items()
+            ):
+                return Gathered("failed", "benchmark_count_witness_invalid", scope)
+            development = witness.get("development_items")
+            final = witness.get("final_test_items")
+            if (
+                not all(type(n) is int and n >= 0 for n in (development, final))
+                or development + final != release.item_count
+            ):
+                return Gathered("failed", "benchmark_counts_differ", scope)
+            out.refs.append(
+                file_ref(
+                    "benchmark_count_witness",
+                    "repo/approvals/benchmark_count_witness_v1.json",
+                    witness_bytes,
+                )
+            )
+            item_count = release.item_count
+        else:
+            items = decode_jsonl(data["items"], BenchmarkItem)
+            development = sum(1 for i in items if i.paper_id in set(split.development_ids))
+            final = sum(1 for i in items if i.paper_id in set(split.final_test_ids))
+            if len(items) != release.item_count or development + final != len(items):
+                return Gathered("failed", "benchmark_counts_differ", scope, "counts do not agree")
+            verify_release_inputs(release, ctx.data_root)
+            item_count = len(items)
         if not git_state.is_ancestor(ctx.repo, release.implementation_git_sha):
             return Gathered("failed", "implementation_commit_not_in_history", scope)
     except FileMissing as error:
-        return Gathered("failed", "benchmark_artifact_missing", scope, str(error))
+        return Gathered(
+            "failed",
+            "benchmark_count_witness_missing"
+            if hash_only and "witness" in str(error)
+            else "benchmark_artifact_missing",
+            scope,
+            str(error),
+        )
     except ModuleNotFoundError as error:
         return Gathered("unavailable", "benchmark_validation_dependency_missing", scope, str(error))
     except git_state.GitUnavailable as error:
@@ -231,7 +295,7 @@ def benchmark_freeze(
         "items_sha256": release.items.sha256,
         "split_sha256": release.split.sha256,
         "corpus_content_sha256": release.corpus_content_sha256,
-        "item_count": len(items),
+        "item_count": item_count,
         "development_items": development,
         "final_test_items": final,
         "development_papers": release.development_paper_count,
@@ -241,11 +305,11 @@ def benchmark_freeze(
         "benchmark_release_sha256": sha256_bytes(release_bytes),
         "benchmark_seed_registry_sha256": release.seed_registry.sha256,
     }
-    out.detail = f"{len(items)} items: {development} development, {final} final test"
+    out.detail = f"{item_count} items: {development} development, {final} final test"
     return out
 
 
-# ---- G03, G04, G05, G10, G11, G12: prerequisites that do not exist yet ---------------------
+# ---- G03, G04, G05, G10, G11: independently verified prerequisites --------------------------
 
 
 def _absent(reason: str, scope: str, detail: str) -> Gathered:
@@ -285,8 +349,9 @@ def generator_qualification() -> Gathered:
     return _absent(
         "independent_phase7_evidence_absent",
         "Phase 7 qualification",
-        "peak GPU memory and full-length-context evidence are not recorded by the "
-        "qualification interfaces; rehearsal, smoke and descriptive reports are not accepted",
+        "no published machine-verifiable gate subject binds the archived Phase 7 "
+        "fit, boundary and replay evidence; reports and scientific checkpoint approval "
+        "alone are not gate evidence",
     )
 
 
@@ -299,28 +364,31 @@ def model_parser_identities() -> Gathered:
     )
 
 
-def restart_recovery() -> Gathered:
-    return _absent(
-        "official_restart_evidence_absent",
-        "development restart and recovery",
-        "no official development run with recorded restart or retry behaviour has been accepted",
-    )
+def restart_recovery(ctx: Context) -> Gathered:
+    from biorag_repro.readiness.restart import restart_recovery as verify_restart
+
+    return verify_restart(ctx.data_root)
 
 
-def storage_authorization() -> Gathered:
-    return _absent(
-        "storage_authorization_absent",
-        "execution-host storage",
-        "no approved storage location; none is probed",
-    )
-
-
-def shared_gpu_authorization() -> Gathered:
-    return _absent(
-        "gpu_authorization_absent",
-        "shared-GPU use",
-        "no advisor or administrator authorization; local hardware is not an approval",
-    )
+def storage_authorization(
+    ctx: Context | None = None, policy: ApprovalPolicy | None = None
+) -> Gathered:
+    scope = "approved final-test storage and frozen corpus/benchmark identity"
+    if ctx is None or policy is None or policy.slots.storage_authorization is None:
+        return _absent("storage_authorization_absent", scope, "G11 policy slot is unset")
+    try:
+        authorization, path = _approved_storage(ctx, policy)
+    except AuthorityNotEstablished as error:
+        return Gathered("failed", error.cause, scope, str(error)[:300])
+    try:
+        evidence_bytes = read_regular(ctx.data_root, path)
+    except FileProblem as error:
+        return Gathered("failed", "storage_approval_unusable", scope, str(error)[:300])
+    if sha256_bytes(evidence_bytes) != policy.slots.storage_authorization:
+        return Gathered("failed", "storage_approval_changed", scope)
+    out = Gathered("ok", "checks_passed", scope, subject=authorization.model_dump(mode="json"))
+    out.refs.append(file_ref("storage_authorization", "data/" + path, evidence_bytes))
+    return out
 
 
 NO_AUTHORITY = "final_test_inventory_authority_not_established"
@@ -493,7 +561,121 @@ def parse_r_runtime(text: str) -> dict[str, Any]:
     return result
 
 
-def r_environment(ctx: Context) -> Gathered:
+G07_HOST_RECORD = "readiness/hosts/g07_analysis_host_v1.json"
+
+
+class AnalysisHostEvidence(Record):
+    """G07 as observed on the designated analysis host, retained for another host to check."""
+
+    schema_version: Literal["g07_analysis_host_evidence_v1"]
+    producing_host: str
+    platform: str
+    execution_source_identity_sha256: Sha256
+    subject: dict[str, Any]
+    subject_sha256: Sha256
+    observed_packages: dict[str, Any]  # diagnostic only, including library positions
+
+
+def export_analysis_host_evidence(ctx: Context, source: Gathered) -> bytes:
+    """Serialize a live, fully passing G07 result of the designated host (refused elsewhere)."""
+    live = r_environment(ctx)
+    identity = source.facts.get("execution_source_identity_sha256")
+    if live.state != "ok" or live.subject is None or identity is None:
+        raise ValueError(f"G07 does not pass live on this host ({live.reason})")
+    from biorag_repro.readiness.production import designated_host, host_designation
+
+    if not designated_host():
+        raise ValueError("evidence can only be exported from the designated analysis host")
+    designation = host_designation(
+        ctx, live.subject["analysis_sources_sha256"], live.facts["renv_lock_sha256"]
+    )
+    return canonical_json_bytes(
+        AnalysisHostEvidence(
+            schema_version="g07_analysis_host_evidence_v1",
+            producing_host=designation["designation"]["host"],
+            platform=designation["designation"]["platform"],
+            execution_source_identity_sha256=identity,
+            subject=live.subject,
+            subject_sha256=sha256_bytes(canonical_json_bytes(live.subject)),
+            observed_packages=live.facts["observed_packages"],
+        ).model_dump(mode="json")
+    )
+
+
+def _retained_analysis_host(
+    ctx: Context,
+    record_bytes: bytes,
+    source: Gathered | None,
+    lock_bytes: bytes,
+    locked: dict[str, str],
+    locked_r: str,
+    sources: dict[str, str],
+    out: Gathered,
+) -> Gathered:
+    """Accept G07 evidence made on the designated host when this host is not that host.
+
+    Everything that does not need R is re-derived here: the designation, lock, analysis
+    sources, locked versions and BLAS pin. The record must also name the same execution source
+    identity as this checkout, so it cannot outlive a source change. G06 is never read from it.
+    """
+    from biorag_repro.readiness.production import host_designation
+
+    out.refs.append(file_ref("analysis_host_evidence", "data/" + G07_HOST_RECORD, record_bytes))
+    try:
+        record = AnalysisHostEvidence.model_validate(loads_strict(record_bytes), strict=True)
+        designation = host_designation(
+            ctx, sources, sha256_bytes(lock_bytes), evaluating_host=False
+        )
+        designation_bytes = read_regular(
+            ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_25.json"
+        )
+        subject = record.subject
+        if record.subject_sha256 != sha256_bytes(canonical_json_bytes(subject)):
+            raise ValueError("subject differs from its recorded hash")
+        host = designation["designation"]["host"]
+        if (record.producing_host, record.platform, subject.get("host")) != (
+            host,
+            designation["designation"]["platform"],
+            host,
+        ):
+            raise ValueError("evidence was not produced on the designated analysis host")
+        identity = source.facts.get("execution_source_identity_sha256") if source else None
+        if source is None or source.state != "ok" or identity is None:
+            raise ValueError("this checkout has no verified execution source identity")
+        if record.execution_source_identity_sha256 != identity:
+            out.state, out.reason = "failed", "analysis_host_evidence_stale"
+            out.detail = "evidence names another execution source identity"
+            return out
+        packages = subject.get("packages")
+        if (
+            subject.get("kind") != "designated_analysis_environment_v1"
+            or subject.get("designation_sha256") != sha256_bytes(designation_bytes)
+            or subject.get("renv_lock_sha256") != sha256_bytes(lock_bytes)
+            or subject.get("analysis_sources_sha256") != sources
+            or subject.get("r_version") != locked_r
+            or not isinstance(packages, dict)
+            or {n: p.get("version") for n, p in packages.items()} != locked
+            or subject.get("blas_execution_pin")
+            != {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"}
+        ):
+            raise ValueError("evidence subject differs from the locked analysis environment")
+    except (FileProblem, ValueError, ValidationError, KeyError, AttributeError, TypeError) as error:
+        out.state, out.reason = "failed", "analysis_host_evidence_invalid"
+        out.detail = str(error)[:300]
+        return out
+    out.refs.append(
+        file_ref(
+            "analysis_designation",
+            "repo/docs/reports/g07_researcher_designation_evidence_2026_11_25.json",
+            designation_bytes,
+        )
+    )
+    out.state, out.reason, out.subject = "ok", "checks_passed", subject
+    out.detail = "retained evidence from the designated analysis host; this host was not probed"
+    return out
+
+
+def r_environment(ctx: Context, source: Gathered | None = None) -> Gathered:
     scope = "analysis lock and the R session the project resolves on the evaluating host"
     out = Gathered("absent", "analysis_host_not_designated", scope)
     try:
@@ -512,6 +694,24 @@ def r_environment(ctx: Context) -> Gathered:
     out.refs.append(file_ref("renv_lock", "repo/" + RENV_LOCK, lock_bytes))
     out.facts = {"renv_lock_sha256": sha256_bytes(lock_bytes)}
     out.add_snapshot("analysis_sources", {"kind": "analysis_sources", "sha256": sources})
+    from biorag_repro.readiness.production import designated_host
+
+    if not designated_host():
+        try:
+            record_bytes = read_regular(ctx.data_root, G07_HOST_RECORD)
+        except FileMissing:
+            pass  # no retained evidence: the live probe below reports what this host can show
+        except FileProblem as error:
+            out.state, out.reason, out.detail = (
+                "failed",
+                "analysis_host_evidence_invalid",
+                str(error)[:300],
+            )
+            return out
+        else:
+            return _retained_analysis_host(
+                ctx, record_bytes, source, lock_bytes, locked, locked_r, sources, out
+            )
     try:
         observed = parse_r_runtime(ctx.probes.r_runtime(ctx.repo / "analysis", sorted(locked)))
     except (OSError, subprocess.SubprocessError, ValueError) as error:
@@ -551,10 +751,46 @@ def r_environment(ctx: Context) -> Gathered:
         out.state, out.reason = "failed", "installed_r_packages_differ_from_lock"
         out.detail = f"{len(differing)} packages differ"
     else:
-        out.detail = (
-            "installed R packages match the lock; the official analysis host and workflow "
-            "are not designated, and a local restore does not authorize one"
-        )
+        from biorag_repro.readiness.production import host_designation
+
+        try:
+            designation = host_designation(ctx, sources, sha256_bytes(lock_bytes))
+        except FileMissing as error:
+            out.state, out.reason, out.detail = "absent", "analysis_designation_missing", str(error)
+        except (FileProblem, ValueError, KeyError, OSError) as error:
+            out.state, out.reason, out.detail = (
+                "failed",
+                "analysis_designation_invalid",
+                str(error)[:300],
+            )
+        else:
+            designation_bytes = read_regular(
+                ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_25.json"
+            )
+            out.refs.append(
+                file_ref(
+                    "analysis_designation",
+                    "repo/docs/reports/g07_researcher_designation_evidence_2026_11_25.json",
+                    designation_bytes,
+                )
+            )
+            out.state, out.reason = "ok", "checks_passed"
+            out.facts["observed_packages"] = observed["packages"]
+            out.subject = {
+                "kind": "designated_analysis_environment_v1",
+                "designation_sha256": sha256_bytes(designation_bytes),
+                "host": designation["designation"]["host"],
+                "renv_lock_sha256": sha256_bytes(lock_bytes),
+                "analysis_sources_sha256": sources,
+                "r_version": observed["rversion"],
+                # Versions only: a package's position in .libPaths() depends on renv sandbox
+                # state, so it is kept as diagnostic evidence (r_inspection) and not identity.
+                "packages": {n: {"version": p["version"]} for n, p in observed["packages"].items()},
+                "blas_execution_pin": {"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"},
+            }
+            out.detail = (
+                "designated host and locked runtime match; no official analysis execution claimed"
+            )
     return out
 
 
@@ -577,13 +813,32 @@ def seed_registry(ctx: Context, release: BenchmarkRelease | None) -> Gathered:
         return Gathered("failed", "seed_registry_missing", scope, str(error))
     except (FileProblem, ValueError, ValidationError) as error:
         return Gathered("failed", "seed_registry_invalid", scope, str(error)[:300])
-    out = Gathered(
-        "absent",
-        "production_analysis_seed_unapproved",
-        scope,
-        "the construction seeds verify; no production analysis seed is registered and "
-        "the synthetic rehearsal seed has no production authority",
-    )
+    try:
+        seed = read_analysis_seed(ctx.repo)
+    except FileMissing:
+        out = Gathered("absent", "production_analysis_seed_unapproved", scope)
+    except (FileProblem, ValueError) as error:
+        out = Gathered("failed", "production_analysis_seed_invalid", scope, str(error)[:300])
+    else:
+        out = Gathered(
+            "ok",
+            "checks_passed",
+            scope,
+            subject={
+                "kind": "seed_registries_v1",
+                "benchmark_seed_registry_sha256": release.seed_registry.sha256,
+                "analysis_seed_registry_sha256": APPROVED_REGISTRY_SHA256,
+            },
+        )
+        out.refs.append(
+            EvidenceRef(
+                kind="analysis_seed_registry",
+                locator="repo/" + REGISTRY_PATH,
+                sha256=APPROVED_REGISTRY_SHA256,
+                subject_kind="stored_file_bytes",
+            )
+        )
+        out.add_snapshot("registered_analysis_seed", seed.model_dump(mode="json"))
     out.refs.append(ref)
     return out
 
@@ -622,6 +877,14 @@ def scientific_source(ctx: Context) -> Gathered:
             str(error),
         )
         return out
+    execution_subject = {
+        "kind": "scientific_source_v1",
+        "tracked_scope": [list(e) for e in git_state.execution_entries(state.entries)],
+        "frozen_specifications": specs,
+    }
+    out.facts["execution_source_identity_sha256"] = sha256_bytes(
+        canonical_json_bytes(execution_subject)
+    )
     out.subject = {
         "kind": "scientific_source_v1",
         "tracked_scope": [list(e) for e in state.entries],

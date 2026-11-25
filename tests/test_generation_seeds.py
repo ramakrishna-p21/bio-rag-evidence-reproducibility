@@ -1,8 +1,8 @@
 """Generation seed registry. Seed integers are arbitrary synthetic test values."""
 
 import pytest
+from generation_support import resolve, synthetic_settings
 from pydantic import ValidationError
-from test_generation_config import resolve, synthetic_settings
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.generation.seeds import (

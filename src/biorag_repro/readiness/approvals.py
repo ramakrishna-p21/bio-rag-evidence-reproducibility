@@ -14,9 +14,9 @@ from pydantic import ValidationError
 
 from biorag_repro.readiness.files import FileProblem, loads_strict, read_regular
 from biorag_repro.readiness.git_state import APPROVAL_FILE
-from biorag_repro.readiness.policy import SLOT_NAMES, ApprovalPolicy
+from biorag_repro.readiness.policy import LEGACY_SLOT_NAMES, SLOT_NAMES, ApprovalPolicy
 
-POLICY_VERSION: Final = "1"
+POLICY_VERSION: Final = "3"
 
 
 class PolicyError(ValueError):
@@ -30,11 +30,23 @@ def load_policy(repo: Path) -> ApprovalPolicy:
     except FileProblem as error:
         raise PolicyError(f"{APPROVAL_FILE}: {error}") from error
     slots = value.get("slots") if isinstance(value, dict) else None
-    # ApprovalSlots defaults a missing slot to unset, which must not read as approved-nothing
-    if not isinstance(slots, dict) or set(SLOT_NAMES) - set(slots):
-        raise PolicyError(f"{APPROVAL_FILE} must name all {len(SLOT_NAMES)} slots")
-    if value["policy_version"] != POLICY_VERSION:
-        raise PolicyError(f"{APPROVAL_FILE}: policy_version must be {POLICY_VERSION!r}")
+    version = value.get("policy_version") if isinstance(value, dict) else None
+    expected = set(SLOT_NAMES if version == POLICY_VERSION else LEGACY_SLOT_NAMES)
+    if not isinstance(slots, dict) or set(slots) != expected:
+        raise PolicyError(f"{APPROVAL_FILE} must name exactly {len(expected)} active slots")
+    if version not in ("1", "2", POLICY_VERSION):
+        raise PolicyError(f"{APPROVAL_FILE}: unsupported policy_version")
+    if version in ("2", POLICY_VERSION):
+        try:
+            authority = loads_strict(read_regular(repo, "approvals/researcher_decisions.json"))
+            if (
+                authority["protocol_version"] != "researcher_authority_v1"
+                or authority["authority"] != "Rama Krishna Pudota"
+                or authority["authority_role"] != "researcher_of_record"
+            ):
+                raise ValueError("researcher authority differs from the prospective amendment")
+        except (FileProblem, KeyError, TypeError, ValueError) as error:
+            raise PolicyError(f"researcher authority record is unusable: {error}") from error
     try:
         return ApprovalPolicy.model_validate(value)
     except ValidationError as error:

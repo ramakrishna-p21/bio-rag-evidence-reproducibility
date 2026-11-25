@@ -36,11 +36,15 @@ def results_for(statuses):
 
 
 def oracle(statuses):
-    """Independent truth table: ready exactly when every one of the 13 statuses is `passed`."""
-    return "READY" if len(statuses) == 13 and all(s == "passed" for s in statuses) else "NOT_READY"
+    """Independent truth table: ready exactly when every current status is `passed`."""
+    return (
+        "READY"
+        if len(statuses) == len(MANDATORY_GATES) and all(s == "passed" for s in statuses)
+        else "NOT_READY"
+    )
 
 
-def test_thirteen_passing_gates_are_ready_under_a_fixture_policy_only():
+def test_twelve_passing_current_gates_are_ready_under_a_fixture_policy_only():
     outcome = decide(fx.all_passed(POLICY), POLICY)
     assert outcome.decision == "READY" and outcome.blockers == ()
     assert fx.report(POLICY).decision == "READY"
@@ -56,11 +60,12 @@ def test_one_blocking_gate_makes_the_decision_not_ready(gate, status):
 
 def test_truth_table_against_an_independent_oracle():
     rng = random.Random(7)
-    cases = [("passed",) * 13]
-    cases += [tuple(rng.choice(STATUSES) for _ in range(13)) for _ in range(300)]
+    size = len(MANDATORY_GATES)
+    cases = [("passed",) * size]
+    cases += [tuple(rng.choice(STATUSES) for _ in range(size)) for _ in range(300)]
     cases += [
-        tuple(s if i in pair else "passed" for i in range(13))
-        for pair in itertools.combinations(range(13), 2)
+        tuple(s if i in pair else "passed" for i in range(size))
+        for pair in itertools.combinations(range(size), 2)
         for s in ("failed", "pending", "unavailable")
     ]
     for statuses in cases:
@@ -70,10 +75,10 @@ def test_truth_table_against_an_independent_oracle():
 
 
 def test_blockers_follow_gate_order_whatever_the_input_order():
-    statuses = ("passed", "failed", "passed", "pending", *("passed",) * 7, "unavailable", "passed")
+    statuses = ("passed", "failed", "passed", "pending", *("passed",) * 6, "unavailable", "passed")
     shuffled = results_for(statuses)[::-1]
     outcome = decide(shuffled, POLICY)
-    assert [b.gate_id for b in outcome.blockers] == [MANDATORY_GATES[i] for i in (1, 3, 11)]
+    assert [b.gate_id for b in outcome.blockers] == [MANDATORY_GATES[i] for i in (1, 3, 10)]
     assert [b.status for b in outcome.blockers] == ["failed", "pending", "unavailable"]
 
 
@@ -97,7 +102,7 @@ def test_malformed_input_is_never_repaired_into_a_decision():
     with pytest.raises(ReportInvalid):
         decide([r.model_dump() for r in full], POLICY)  # dicts are not validated results
     with pytest.raises(ReportInvalid):
-        decide([None] * 13, POLICY)
+        decide([None] * len(MANDATORY_GATES), POLICY)
 
 
 def test_skipped_verification_cannot_be_dressed_as_a_pass():
@@ -183,7 +188,7 @@ def test_a_report_is_only_valid_for_the_policy_it_was_made_under():
     with pytest.raises(ReportInvalid):
         verify_report(report, REAL_POLICY)
     revoked = POLICY.model_copy(
-        update={"slots": POLICY.slots.model_copy(update={"gpu_authorization": None})}
+        update={"slots": POLICY.slots.model_copy(update={"storage_authorization": None})}
     )
     with pytest.raises(ReportInvalid):
         verify_report(report, revoked)

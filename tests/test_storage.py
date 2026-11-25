@@ -163,3 +163,38 @@ def test_failed_manifest_retains_verified_partial_output(tmp_path):
             manifest, target, {manifest.outputs[0].artifact.logical_ref: tmp_path / "missing"}
         )
     assert not target.exists()
+
+
+def test_explicit_identical_reuse_checks_bytes_and_never_rewrites(tmp_path):
+    target = tmp_path / "record.json"
+    content = b"complete immutable publication\n"
+    digest = sha256_bytes(content)
+    publish_bytes(target, content, digest)
+    before = target.stat()
+    checked = []
+    assert (
+        publish_bytes(
+            target,
+            content,
+            digest,
+            reuse_identical=True,
+            validate_temp=lambda path: checked.append(path.read_bytes()),
+        )
+        == digest
+    )
+    assert checked == [content]
+    assert target.stat().st_mtime_ns == before.st_mtime_ns
+    with pytest.raises(ValueError):
+        publish_bytes(target, b"altered", digest, reuse_identical=True)
+    target.write_bytes(b"tampered")
+    with pytest.raises(ValueError):
+        publish_bytes(target, content, digest, reuse_identical=True)
+
+
+def test_identical_reuse_refuses_symlinks(tmp_path):
+    original = tmp_path / "original"
+    original.write_bytes(b"same")
+    link = tmp_path / "link"
+    link.symlink_to(original)
+    with pytest.raises(ValueError):
+        publish_bytes(link, b"same", sha256_bytes(b"same"), reuse_identical=True)

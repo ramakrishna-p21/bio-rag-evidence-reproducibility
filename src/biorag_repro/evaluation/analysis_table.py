@@ -10,6 +10,7 @@ import io
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, get_args
 
 from biorag_repro.benchmark.development_view import DevelopmentView, check_development_items
@@ -42,13 +43,21 @@ from biorag_repro.evaluation.analysis_models import (
     column_type,
 )
 from biorag_repro.evaluation.attribution import A_FAILED, Execution, attribute
-from biorag_repro.evaluation.models import StageAJudgment
-from biorag_repro.evaluation.stage_a import item_digest, stage_a_ref
-from biorag_repro.evaluation.stage_a import validate_judgment as validate_stage_a
+from biorag_repro.evaluation.stage_a import in_final_test_scope, item_digest
+from biorag_repro.evaluation.stage_a_retrospective import Judgment as StageAJudgment
+from biorag_repro.evaluation.stage_a_retrospective import judgment_ref as stage_a_ref
+from biorag_repro.evaluation.stage_a_retrospective import (
+    validate_scientific_judgment as validate_stage_a,
+)
 from biorag_repro.evaluation.stage_b import Inputs, stage_b_ref
 from biorag_repro.evaluation.stage_b import validate_judgment as validate_stage_b
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
-from biorag_repro.evaluation.stage_c import check_result, score_ref, validate_score
+from biorag_repro.evaluation.stage_c import (
+    check_consistent,
+    check_result,
+    score_ref,
+    validate_score,
+)
 from biorag_repro.evaluation.stage_c_models import GenerationResult, StageCScore
 
 # Retrieval scope and retriever that each retrieval arm of the frozen matrix uses.
@@ -64,6 +73,25 @@ SCORING_REFERENCE = {
     "stage_c": "stage_c_score_v1",
     "table": "analysis_table_v1",
 }
+
+
+def scoring_reference(rules: str = "v1", stage_b_rules: str = "v1") -> dict[str, str]:
+    """The scoring identities a table was built under; v1 equals SCORING_REFERENCE."""
+    return SCORING_REFERENCE | {
+        "stage_b": f"stage_b_judgment_{stage_b_rules}",
+        "stage_c": f"stage_c_score_{rules}",
+    }
+
+
+def rules_of(reference: dict[str, str]) -> tuple[str, str]:
+    """(Stage C, Stage B) rules named by a table's reference; unknown identities are refused."""
+    for rules in ("v1", "v2"):
+        for stage_b_rules in ("v1", "v2"):
+            if reference == scoring_reference(rules, stage_b_rules):
+                return rules, stage_b_rules
+    raise ValueError("table names unknown scoring identities")
+
+
 ROW_GRAIN = "one planned observation: phase, matrix_arm, item_id, condition, repeat_index"
 PAIRING = (
     "JATS and PDF_DOCLING rows pair on item_id, matrix_arm and repeat_index; primary_row marks "
@@ -82,6 +110,7 @@ class Evidence:
     stage_a: StageAJudgment
     stage_b: StageBJudgment | None = None
     b_inputs: Inputs | None = None  # the records Stage B was judged from
+    stage_a_root: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -94,11 +123,12 @@ class Observation:
     condition: Condition
     repeat_index: int
     resolved_config_sha256: str  # full observation identity (REPRODUCIBILITY_SPEC section 2)
-    retrieval_config_sha256: str | None = None  # Phase 5 retrieval/context identity it contains
+    retrieval_config_sha256: str | None = None  # retrieval/context identity it contains
     result: GenerationResult | None = None
     score: StageCScore | None = None
     evidence: Evidence | None = None
     generator_input: GeneratorInput | None = None
+    retrospective_provenance_incomplete: bool = False
 
 
 @dataclass
@@ -106,13 +136,17 @@ class Table:
     rows: list[AnalysisRow]
     roster: PlannedRoster
     inputs: list[BuildInput] = field(default_factory=list)
+    stage_c_rules: str = "v1"
+    stage_b_rules: str = "v1"
 
 
 def _check_evidence(obs: Observation, evidence: Evidence) -> None:
     item = obs.item
     if evidence.document.representation != obs.condition:
         raise ValueError("evidence is for another representation than the observation's")
-    validate_stage_a(evidence.stage_a, item, evidence.document, evidence.canonical)
+    validate_stage_a(
+        evidence.stage_a, item, evidence.document, evidence.canonical, evidence.stage_a_root
+    )
     b, inputs = evidence.stage_b, evidence.b_inputs
     if b is None:
         if inputs is not None:
@@ -128,8 +162,8 @@ def _check_evidence(obs: Observation, evidence: Evidence) -> None:
     ):
         raise ValueError("Stage B was judged from other item, document or Stage A inputs")
     validate_stage_b(b, inputs)
-    if b.configuration.resolved_sha256 != obs.retrieval_config_sha256:
-        raise ValueError("retrieval and context configuration differs from the observation's")
+    if inputs.ranked.configuration.resolved_sha256 != obs.retrieval_config_sha256:
+        raise ValueError("ranked retrieval configuration differs from the observation's")
     expected = ARM_RETRIEVAL.get(obs.matrix_arm)
     if expected is None or (inputs.ranked.scope, inputs.ranked.retriever) != expected:
         raise ValueError("retrieval does not match the matrix arm")
@@ -166,9 +200,14 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
     item, result, score = obs.item, obs.result, obs.score
     if item.candidate_status != "accepted" or item.split is None:
         raise ValueError("only accepted, split benchmark items enter the analysis table")
-    if item.split == "final_test" or obs.phase == "final_test":
-        # Stage A already refuses these items; the final-test readiness gate lifts this later.
-        raise ValueError("final-test rows are not built before the final-test readiness gate")
+    final_test = item.split == "final_test" or obs.phase == "final_test"
+    if final_test and not (
+        in_final_test_scope() and item.split == "final_test" and obs.phase == "final_test"
+    ):
+        # Only the authorized final-test evaluation builds these rows (`final_test_scope`).
+        raise ValueError(
+            "final-test rows are built only inside an authorized final-test evaluation"
+        )
     key = observation_key(
         phase=obs.phase,
         benchmark_version=item.benchmark_version,
@@ -195,6 +234,13 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
             "a retrieval observation names its retrieval configuration; closed-book has none"
         )
     evidence = obs.evidence
+    if obs.retrospective_provenance_incomplete and (
+        obs.phase != "development"
+        or closed
+        or evidence is not None
+        or obs.generator_input is not None
+    ):
+        raise ValueError("incomplete retrospective provenance is development-only and unverified")
     if evidence is not None:
         _check_evidence(obs, evidence)
     if obs.generator_input is not None:
@@ -252,7 +298,15 @@ def build_row(obs: Observation) -> tuple[AnalysisRow, list[BuildInput]]:
         stage_c_reason=score.reason if score else None,
         stage_c_basis=score.basis if score else None,
         stage_c_artifact=score_ref(score).artifact_id if score else None,
-        **_outcomes(closed, a, b_status, b, score, _execution(result)),
+        **_outcomes(
+            closed,
+            a,
+            b_status,
+            b,
+            score,
+            _execution(result),
+            obs.retrospective_provenance_incomplete,
+        ),
     )
     return row, _inputs(item, a, b, score, link)
 
@@ -264,6 +318,7 @@ def _outcomes(
     b: StageBJudgment | None,
     score: StageCScore | None,
     execution: Execution,
+    retrospective_provenance_incomplete: bool = False,
 ) -> dict[str, Any]:
     out = attribute(
         closed_book=closed,
@@ -271,6 +326,7 @@ def _outcomes(
         stage_b=b_status if b else None,
         stage_c=score.status if score else None,
         execution=execution,
+        retrospective_provenance_incomplete=retrospective_provenance_incomplete,
     )
     return {
         "evidence_delivered": out.evidence_delivered,
@@ -327,6 +383,15 @@ def _order(row: AnalysisRow) -> tuple[str, str, str, int, str]:
 
 
 def build_table(observations: list[Observation], roster: PlannedRoster) -> Table:
+    versions = {o.score.scoring_rules for o in observations if o.score is not None}
+    if len(versions) > 1:
+        raise ValueError(f"mixed Stage C scoring rules in one analysis table: {sorted(versions)}")
+    b_versions = {
+        o.evidence.stage_b.rules for o in observations if o.evidence and o.evidence.stage_b
+    }
+    if len(b_versions) > 1:
+        raise ValueError(f"mixed Stage B rules in one analysis table: {sorted(b_versions)}")
+    check_consistent([o.score for o in observations if o.score is not None])
     built = [build_row(o) for o in observations]
     rows = sorted((r for r, _ in built), key=_order)
     unique: dict[tuple[str, str], BuildInput] = {}
@@ -337,7 +402,13 @@ def build_table(observations: list[Observation], roster: PlannedRoster) -> Table
                 raise ValueError("one artifact id names two different references")
     check_rows(rows)
     check_roster(rows, roster)
-    return Table(rows, roster, [unique[k] for k in sorted(unique)])
+    return Table(
+        rows,
+        roster,
+        [unique[k] for k in sorted(unique)],
+        next(iter(versions), "v1"),
+        next(iter(b_versions), "v1"),
+    )
 
 
 def roster_items_from_development_view(
@@ -355,6 +426,28 @@ def roster_items_from_development_view(
         raise ValueError("items are not the development-only view") from None
     if len(items) != view.development_item_count:
         raise ValueError("items differ from the development view membership")
+    return [
+        RosterItem(
+            item_id=item.item_id,
+            state="included",
+            paper_id=item.paper_id,
+            item_sha256=item_digest(item),
+        )
+        for item in sorted(items, key=lambda i: i.item_id)
+    ]
+
+
+FINAL_TEST_ITEMS = 305
+
+
+def roster_items_from_final_test(items: list[BenchmarkItem]) -> list[RosterItem]:
+    """Roster entries for exactly the frozen final-test items (from `read_final_test_items`)."""
+    if (
+        len(items) != FINAL_TEST_ITEMS
+        or len({i.item_id for i in items}) != FINAL_TEST_ITEMS
+        or any(i.split != "final_test" or i.candidate_status != "accepted" for i in items)
+    ):
+        raise ValueError("items are not the 305 accepted frozen final-test items")
     return [
         RosterItem(
             item_id=item.item_id,
@@ -549,8 +642,32 @@ def parse_csv(data: bytes) -> list[AnalysisRow]:
 # ---- inventory -----------------------------------------------------------------------------
 
 
+def stage_a_review_protocols(inputs: list[BuildInput]) -> dict[str, list[str]] | None:
+    """Report record provenance without changing scientific labels or row denominators."""
+    protocols: dict[str, list[str]] = defaultdict(list)
+    for entry in inputs:
+        if entry.role == "stage_a_judgment":
+            protocol = (
+                "researcher_approved_retrospective_transcription_v1"
+                if entry.artifact.logical_ref.startswith(
+                    "evaluation/stage_a/stage_a_retrospective/"
+                )
+                else "legacy_stage_a_judgment_v1"
+            )
+            protocols[protocol].append(entry.artifact.artifact_id)
+    if "researcher_approved_retrospective_transcription_v1" not in protocols:
+        return None
+    return {p: sorted(set(ids)) for p, ids in sorted(protocols.items())}
+
+
 def make_inventory(
-    rows: list[AnalysisRow], csv_ref: ArtifactRef, roster: PlannedRoster, roster_ref: ArtifactRef
+    rows: list[AnalysisRow],
+    csv_ref: ArtifactRef,
+    roster: PlannedRoster,
+    roster_ref: ArtifactRef,
+    stage_c_rules: str = "v1",
+    stage_b_rules: str = "v1",
+    inputs: list[BuildInput] | None = None,
 ) -> AnalysisInventory:
     counts: dict[str, int] = defaultdict(int)
     open_rows = []
@@ -589,7 +706,8 @@ def make_inventory(
         items=roster.items,
         planned_observations=len(roster.coordinates()),
         executed_observations=sum(r.execution_status != "planned_not_executed" for r in rows),
-        scoring_reference=SCORING_REFERENCE,
+        scoring_reference=scoring_reference(stage_c_rules, stage_b_rules),
+        stage_a_review_protocols=stage_a_review_protocols(inputs or []),
         columns=[
             ColumnSpec(name=n, type=_TYPES[n], nullable=n in _NULLABLE)  # type: ignore[arg-type]
             for n in COLUMNS

@@ -13,6 +13,7 @@ its own file. The exclusion is that exact path and nothing else under `approvals
 still has to be tracked and unmodified, and its content is pinned by the policy hash instead.
 """
 
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from biorag_repro.core.hashing import canonical_json_bytes
 
 SCOPE = ("src", "configs", "schemas", "scripts", "analysis", "pyproject.toml", "approvals")
 APPROVAL_FILE = "approvals/policy.json"
+EXECUTION_DECISION_FILE = "approvals/final_test_execution.json"
 
 
 class GitUnavailable(RuntimeError):
@@ -140,3 +142,44 @@ def is_ancestor(repo: Path, commit: str) -> bool:
     except (OSError, subprocess.SubprocessError) as error:
         raise GitUnavailable(f"git merge-base failed: {error}") from error
     return True
+
+
+def entries_at_revision(repo: Path, revision: str) -> list[tuple[str, str, str]]:
+    """Return the G09 tracked entries at an existing full commit revision."""
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise GitUnavailable("source revision is not a full lowercase Git SHA")
+    try:
+        resolved = _git(repo, "rev-parse", "--verify", revision + "^{commit}").decode().strip()
+    except GitUnavailable as error:
+        raise GitUnavailable("source revision is not an existing commit") from error
+    if resolved != revision:
+        raise GitUnavailable("source revision does not resolve to its exact commit")
+    listing = _records(_git(repo, "ls-tree", "-r", "-z", revision, "--", *SCOPE))
+    entries: list[tuple[str, str, str]] = []
+    for record in listing:
+        meta, _, path = record.partition("\t")
+        mode, kind, blob = meta.split(" ")
+        if kind != "blob":
+            raise GitUnavailable(f"non-blob scientific source entry at {path}")
+        if path != APPROVAL_FILE:
+            entries.append((mode, blob, path))
+    return sorted(entries, key=lambda entry: entry[2])
+
+
+def execution_entries(entries: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
+    """The code/configuration entries, excluding only the prospective decision record.
+
+    The full list remains the G09 subject. This filtered list is a second identity used to
+    show that adding the authorization record did not alter executable scientific source.
+    """
+    return [entry for entry in entries if entry[2] != EXECUTION_DECISION_FILE]
+
+
+def verify_execution_revision(repo: Path, state: GitState, revision: str) -> None:
+    """Require an ancestor whose execution source is byte-identical to the clean live tree."""
+    if not is_ancestor(repo, revision):
+        raise GitUnavailable("source revision is not an ancestor of live HEAD")
+    previous = execution_entries(entries_at_revision(repo, revision))
+    current = execution_entries(state.entries)
+    if previous != current:
+        raise GitUnavailable("execution source or configuration changed since source revision")

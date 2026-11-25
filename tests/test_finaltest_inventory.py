@@ -8,7 +8,7 @@ import stat
 from pathlib import Path
 
 import pytest
-from finaltest_support import authorization, made, oracle_chain_ok
+from finaltest_support import CONFLICT, INCOMPLETE, UNAUTH, authorization, made, oracle_chain_ok
 
 from biorag_repro.core.storage import publish_bytes
 from biorag_repro.finaltest import inventory, layout
@@ -22,9 +22,6 @@ from biorag_repro.finaltest.inventory import (
 )
 
 NO_PRIOR = "no_prior_final_test_execution"
-INCOMPLETE = "history_inventory_incomplete"
-UNAUTH = "unauthorized_final_test_artifact"
-CONFLICT = "conflicting_final_test_artifact"
 UNVERIFIED = "unverified_final_test_artifact"
 NOW = "2026-01-01T00:00:00Z"
 

@@ -1,6 +1,6 @@
 # Phase 11 audit: oracles that do not share code with the implementation under test.
 
-test_that("bounds equal the extremes found by enumerating every assignment of the unresolved cells", {
+test_that("bounds equal the extremes found by enumerating every assignment of the unresolved cells (operational missing excluded)", {
   rule <- list(success = "yes", failure = "no", non_evaluable = c("non_evaluable", "missing"))
   cases <- list(
     list(j = c("yes", "no", "missing", "yes"), p = c("no", "non_evaluable", "yes", "no")),
@@ -9,6 +9,9 @@ test_that("bounds equal the extremes found by enumerating every assignment of th
     list(j = c("non_evaluable", "yes"), p = c("non_evaluable", "missing"))
   )
   for (cs in cases) {
+    # Operational missing is not an unresolved outcome: those items leave the bounds.
+    keep <- cs$j != "missing" & cs$p != "missing"
+    cs <- list(j = cs$j[keep], p = cs$p[keep])
     n <- length(cs$j)
     unknown <- c(which(!cs$j %in% c("yes", "no")), n + which(!cs$p %in% c("yes", "no")))
     known <- c(ifelse(cs$j == "yes", 1, ifelse(cs$j == "no", 0, NA)), ifelse(cs$p == "yes", 1, ifelse(cs$p == "no", 0, NA)))

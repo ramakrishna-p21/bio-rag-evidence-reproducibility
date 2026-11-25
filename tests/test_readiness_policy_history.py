@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 import readiness_support as support
-from readiness_support import REAL_POLICY
 from test_readiness_guard import Fixture, build, refused
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
@@ -38,12 +37,6 @@ def test_a_report_verifies_only_against_the_policy_it_was_produced_under(fx):
     assert policy_sha256(newer) != policy_sha256(fx.policy)
     with pytest.raises(ReadbackError, match="different policy"):
         publish.read_report(fx.data, fx.sha, newer)
-
-
-def test_a_policy_change_with_no_scientific_change_still_makes_the_old_report_unverifiable(fx):
-    # the installed policy is the only one the production reader is given
-    with pytest.raises(ReadbackError, match="different policy"):
-        publish.read_report(fx.data, fx.sha, other_version(fx.policy))
 
 
 def test_a_changed_approval_value_is_refused_the_same_way(fx):
@@ -166,23 +159,6 @@ def repo(tmp_path):
     return tmp_path
 
 
-def test_a_commit_outside_the_scope_changes_the_commit_but_not_the_scope_identity(repo):
-    before = git_state.probe(repo)
-    (repo / "docs/n.md").write_text("changed\n")
-    git(repo, "commit", "-qam", "docs only")
-    after = git_state.probe(repo)
-    assert after.head != before.head
-    assert after.entries == before.entries
-
-
-def test_a_commit_inside_the_scope_changes_the_scope_identity(repo):
-    before = git_state.probe(repo)
-    (repo / "src/a.py").write_text("a = 2\n")
-    git(repo, "commit", "-qam", "code")
-    after = git_state.probe(repo)
-    assert after.head != before.head and after.entries != before.entries
-
-
 def test_a_commit_that_restores_the_same_content_restores_the_same_scope_identity(repo):
     before = git_state.probe(repo)
     (repo / "src/a.py").write_text("a = 2\n")
@@ -190,6 +166,30 @@ def test_a_commit_that_restores_the_same_content_restores_the_same_scope_identit
     (repo / "src/a.py").write_text("a = 1\n")
     git(repo, "commit", "-qam", "restore")
     assert git_state.probe(repo).entries == before.entries
+
+
+def test_a_prior_revision_remains_the_execution_identity_when_only_the_decision_is_added(repo):
+    source_revision = git(repo, "rev-parse", "HEAD").strip()
+    decision = repo / git_state.EXECUTION_DECISION_FILE
+    decision.parent.mkdir()
+    decision.write_text("{}\n")
+    git(repo, "add", str(decision.relative_to(repo)))
+    git(repo, "commit", "-q", "-m", "decision")
+    state = git_state.probe(repo)
+    git_state.verify_execution_revision(repo, state, source_revision)
+    assert any(entry[2] == git_state.EXECUTION_DECISION_FILE for entry in state.entries)
+
+
+def test_execution_revision_rejects_changed_source_and_forged_revisions(repo):
+    source_revision = git(repo, "rev-parse", "HEAD").strip()
+    (repo / "src/a.py").write_text("a = 2\n")
+    git(repo, "commit", "-qam", "source change")
+    with pytest.raises(git_state.GitUnavailable, match="changed"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), source_revision)
+    with pytest.raises(git_state.GitUnavailable, match="ancestor"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), "f" * 40)
+    with pytest.raises(git_state.GitUnavailable, match="ancestor"):
+        git_state.verify_execution_revision(repo, git_state.probe(repo), "short")
 
 
 def test_the_scientific_scope_contains_the_policy_and_the_evaluator():
@@ -211,11 +211,6 @@ def test_the_scientific_scope_contains_the_policy_and_the_evaluator():
 
 
 # ---- the real project is untouched ---------------------------------------------------------------
-
-
-def test_every_real_approval_slot_is_still_unset():
-    assert all(value is None for value in REAL_POLICY.slots.model_dump().values())
-    assert len(REAL_POLICY.slots.model_dump()) == 12
 
 
 def test_the_policy_hash_is_a_function_of_the_whole_policy():

@@ -67,7 +67,7 @@ test_that("a run publishes exactly five read-only files in a rehearsal directory
   for (f in list.files(base$result_dir, full.names = TRUE)) expect_equal(unname(file.mode(f) & as.octmode("0222")), as.octmode("0000"))
   expect_equal(unname(file.mode(base$result_dir) & as.octmode("0222")), as.octmode("0000"))
   expect_identical(base$record_sha256, sha256_file(file.path(base$result_dir, "run_record.json")))
-  expect_identical(base$scientific_result_sha256, "17c44709e57fd9ac259f3d239498693d31e34258f8577d9e73d0e6cb86b01e36")
+  expect_identical(base$scientific_result_sha256, "075ec3af857b5eb994080078260b56154be4078ceec4c5855ff128242d6cf63d")
 })
 
 test_that("a published result verifies, and only an external record hash authenticates the record", {
@@ -578,7 +578,7 @@ test_that("a cited preflight is hashed and recorded without being interpreted", 
   v <- verify_result(res$result_dir, expected_record_sha256 = res$record_sha256)
   expect_true(v$record_authenticated)
   # Science is untouched: same identity, same scientific bytes, same seed record as the run without one.
-  expect_identical(res$scientific_result_sha256, "17c44709e57fd9ac259f3d239498693d31e34258f8577d9e73d0e6cb86b01e36")
+  expect_identical(res$scientific_result_sha256, "075ec3af857b5eb994080078260b56154be4078ceec4c5855ff128242d6cf63d")
   expect_identical(res$scientific_result_sha256, base$scientific_result_sha256)
   for (f in names(SCIENTIFIC_SCHEMAS)) {
     expect_identical(read_bytes(file.path(res$result_dir, f)), read_bytes(file.path(base$result_dir, f)))

@@ -346,3 +346,47 @@ def test_valid_other_paper_context_cannot_be_submitted_for_selected_paper(prepar
     )
     with pytest.raises(ValueError, match="independently selected"):
         context.read(*refs, selected, cfg, root, None, root / "other-paper", fixture_counter=len)
+
+
+def test_candidate_lookup_limits_rehashing_after_full_index_validation(prepared, monkeypatch):
+    from biorag_repro.retrieval.chunking import verified_once
+
+    selected, cfg, root = prepared
+    baseline = context.assemble(selected, cfg, root, None, fixture_counter=len)
+    calls = []
+    original = context.read_chunking
+
+    def counted(*args, **kwargs):
+        calls.append(args[2].evidence.paper_id)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(context, "read_chunking", counted)
+    with verified_once():
+        # The full selected corpus is still independently read and validated.
+        bm25.read_index(selected.index, selected.index_manifest, selected.sources, root)
+        assert context.assemble(selected, cfg, root, None, fixture_counter=len) == baseline
+    assert calls == [selected.query.designated_paper_id]
+
+
+def test_explicit_resume_preserves_complete_files_and_finishes_missing_manifest(prepared):
+    selected, cfg, root = prepared
+    value = context.assemble(selected, cfg, root, None, fixture_counter=len)
+    refs = context.publish(value, selected, cfg, root, None, root, fixture_counter=len)
+    target, manifest = (root / ref.logical_ref for ref in refs)
+    before = target.stat().st_mtime_ns
+    manifest_bytes = manifest.read_bytes()
+    # A missing commit manifest is incomplete; only identical retained bytes may be reused.
+    manifest.unlink()
+    assert (
+        context.publish(
+            value, selected, cfg, root, None, root, fixture_counter=len, reuse_identical=True
+        )
+        == refs
+    )
+    assert target.stat().st_mtime_ns == before
+    assert manifest.read_bytes() == manifest_bytes
+    target.write_bytes(target.read_bytes() + b" ")
+    with pytest.raises(ValueError):
+        context.publish(
+            value, selected, cfg, root, None, root, fixture_counter=len, reuse_identical=True
+        )

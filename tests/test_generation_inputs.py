@@ -6,9 +6,8 @@ Prompt wording, configuration and questions are synthetic. The pinned Qwen token
 import json
 
 import pytest
+from generation_support import make_renderer, needs_tokenizer
 from pydantic import ValidationError
-from test_generation_prompt import needs_tokenizer
-from test_generation_roster import make_renderer
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef

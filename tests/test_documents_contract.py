@@ -1,8 +1,5 @@
 """Canonical document validation, schema, and immutable publication."""
 
-import json
-from pathlib import Path
-
 import pytest
 from pydantic import ValidationError
 
@@ -13,7 +10,6 @@ from biorag_repro.core.storage import read_manifest, read_project_json, serializ
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.models import CanonicalDocument, JatsConfiguration, TableData
 from biorag_repro.documents.storage import publish_canonical_jats
-from scripts.export_schemas import schema_bytes
 
 
 def document() -> CanonicalDocument:
@@ -50,11 +46,10 @@ def test_duplicate_node_and_broken_mapping_rejected():
         CanonicalDocument.model_validate(data)
 
 
-def test_schema_matches_authoritative_model_and_stored_bytes():
-    path = Path(__file__).resolve().parents[1] / "schemas" / "canonical_document.schema.json"
-    assert path.read_bytes() == schema_bytes(CanonicalDocument)
-    schema = json.loads(path.read_text())
-    assert schema["properties"]["schema_version"]["const"] == "4"
+def test_schema_version_and_serialization_round_trip():
+    schema = CanonicalDocument.model_json_schema()
+    assert schema["properties"]["schema_version"]["enum"] == ["4", "5"]
+    assert schema["properties"]["schema_version"]["default"] == "4"
     doc = document()
     encoded = serialize_project_json(doc, CanonicalDocument)
     assert CanonicalDocument.model_validate_json(encoded) == doc

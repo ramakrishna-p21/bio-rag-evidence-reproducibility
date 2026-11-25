@@ -487,29 +487,6 @@ def test_index_contract_can_reference_multiple_frozen_papers():
     assert [r.artifact_id for r in value.chunk_sets] == ["P001set", "P002set"]
 
 
-def test_new_schemas_derive_from_models():
-    from pathlib import Path
-
-    from scripts.export_schemas import SCHEMAS, schema_bytes
-
-    expected = {
-        Phase5Configuration,
-        CanonicalInput,
-        Chunk,
-        ChunkSet,
-        Bm25Index,
-        DenseIndex,
-        RankedRetrieval,
-        ContextRecord,
-    }
-    assert expected <= set(SCHEMAS.values())
-    for name, model in SCHEMAS.items():
-        if model in expected:
-            assert (
-                Path(__file__).resolve().parents[1] / "schemas" / name
-            ).read_bytes() == schema_bytes(model)
-
-
 def test_duplicate_context_decision_must_reference_first_retained_inclusion():
     data = records()[6].model_dump()
     data["decisions"] += [

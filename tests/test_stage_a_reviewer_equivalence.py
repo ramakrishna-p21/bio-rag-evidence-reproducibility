@@ -21,7 +21,7 @@ from biorag_repro.evaluation.models import (
     StageACandidate,
 )
 from biorag_repro.evaluation.stage_a import _index, automatic_judgment, locate, validate_judgment
-from biorag_repro.evaluation.storage import publish_judgment, read_judgment
+from biorag_repro.evaluation.stage_a_storage import publish_judgment, read_judgment
 
 MEAN_TABLE = (
     "<article><body><p>Unrelated sentence about Collins and 307.8 in prose.</p>"
@@ -313,3 +313,70 @@ def test_verbatim_reviewer_judgments_are_unchanged():
     result = judgment(item, document, "preserved", sets=[locus(document, PROSE_COMPONENTS)])
     validate_judgment(result, item, document, CANONICAL)
     assert b"equivalence_note" not in serialize_project_json(result, type(result))
+
+
+# ---- answer cells that span several rows or columns -----------------------------------------
+
+ROW_SPAN_TABLE = (
+    "<article><body><table-wrap><caption><p>Hazard ratios</p></caption><table>"
+    "<thead><tr><th>Group</th><th>HR</th></tr></thead><tbody>"
+    '<tr><th>VDD</th><td rowspan="2">1.104</td></tr>'
+    "<tr><th>VDA</th></tr>"
+    "<tr><th>Other</th><td>9.9</td></tr>"
+    "</tbody></table></table-wrap></body></article>"
+)
+COLUMN_SPAN_TABLE = (
+    "<article><body><table-wrap><caption><p>Hazard ratios</p></caption><table>"
+    "<thead><tr><th>Group</th><th>Adjusted</th><th>Crude</th><th>Other</th></tr></thead><tbody>"
+    '<tr><th>VDD</th><td colspan="2">1.104</td><td>9.9</td></tr>'
+    "</tbody></table></table-wrap></body></article>"
+)
+SPAN_DESCRIPTORS = [
+    ("subject", "vitamin D deficiency"),
+    ("relation", "hazard ratio"),
+    ("answer", "1.104"),
+]
+
+
+def span_verdict(table, row_label, column_label):
+    document = parse(table.encode())
+    item = make_item(document, SPAN_DESCRIPTORS)
+    note = "row and column labels of the answer cell"
+    parts = [
+        component(
+            "subject",
+            "vitamin D deficiency",
+            occurrences(document, row_label),
+            equivalence_note=note,
+        ),
+        component(
+            "relation", "hazard ratio", occurrences(document, column_label), equivalence_note=note
+        ),
+        component("answer", "1.104", occurrences(document, "1.104")),
+    ]
+    return verdict(item, document, parts)
+
+
+@pytest.mark.parametrize("row_label", ["VDD", "VDA"])
+def test_row_anchor_may_lie_in_any_row_covered_by_the_answer_cell(row_label):
+    assert span_verdict(ROW_SPAN_TABLE, row_label, "HR").label == "preserved"
+
+
+def test_row_anchor_outside_the_rows_covered_by_the_answer_cell_is_rejected():
+    with pytest.raises(ValueError, match="not linked to the answer cell"):
+        span_verdict(ROW_SPAN_TABLE, "Other", "HR")
+
+
+@pytest.mark.parametrize("column_label", ["Adjusted", "Crude"])
+def test_column_anchor_may_lie_over_any_column_covered_by_the_answer_cell(column_label):
+    assert span_verdict(COLUMN_SPAN_TABLE, "VDD", column_label).label == "preserved"
+
+
+def test_column_anchor_outside_the_columns_covered_by_the_answer_cell_is_rejected():
+    with pytest.raises(ValueError, match="not linked to the answer cell"):
+        span_verdict(COLUMN_SPAN_TABLE, "VDD", "Other")
+
+
+def test_row_anchor_for_a_spanned_answer_must_still_lie_left_of_it():
+    with pytest.raises(ValueError, match="not linked to the answer cell"):
+        span_verdict(ROW_SPAN_TABLE, "1.104", "HR")  # the answer cell itself is no anchor

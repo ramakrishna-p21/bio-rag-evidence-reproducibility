@@ -2,12 +2,14 @@
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from test_stage_a import CANONICAL
 from test_stage_b import P_A, P_B, P_C, altered_world, deliver, prose_world
 
-from biorag_repro.evaluation import stage_b, stage_b_storage, storage
+from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.evaluation import stage_a_storage, stage_b, stage_b_storage
 from biorag_repro.evaluation.analysis_table import Observation, build_row
 from biorag_repro.evaluation.judgment_evidence import EvidenceError, read_evidence
 
@@ -17,7 +19,7 @@ class Published:
 
     def __init__(self, tmp_path, w, case=None, *, with_b=True):
         self.root, self.w, self.case = tmp_path, w, case
-        a, am = storage.publish_judgment(w.stage_a, w.item, w.document, CANONICAL, tmp_path)
+        a, am = stage_a_storage.publish_judgment(w.stage_a, w.item, w.document, CANONICAL, tmp_path)
         self.a_row = {
             "item_id": w.item.item_id,
             "representation": w.document.representation,
@@ -217,3 +219,53 @@ def test_a_claim_of_recorded_generator_input_is_not_an_accepted_provenance(publi
     with pytest.raises(EvidenceError, match="not usable"):
         published.read(b_rows=[row])
     assert replace  # keep import used
+
+
+def test_historical_inventory_requires_explicit_reader(published):
+    row = {
+        **published.b_row,
+        "publication_type": "historical_supplied_context_v1",
+        "case_number": 14,
+        "accounting": published.b_row["judgment"],
+        "accounting_manifest": published.b_row["manifest"],
+    }
+    with pytest.raises(EvidenceError, match="explicit authorized reader"):
+        published.read(b_rows=[row])
+
+
+def test_historical_inventory_routes_without_ordinary_chunk_reader(published, monkeypatch):
+    from biorag_repro.evaluation import judgment_evidence
+
+    row = {
+        **published.b_row,
+        "publication_type": "historical_supplied_context_v1",
+        "case_number": 14,
+        "accounting": published.b_row["judgment"],
+        "accounting_manifest": published.b_row["manifest"],
+    }
+    inputs = published.case.inputs()
+    judgment = stage_b_storage.read_judgment(
+        stage_b.stage_b_ref(stage_b.deterministic_judgment(published.case.evaluate())),
+        published.root,
+        inputs,
+    )
+    monkeypatch.setattr(
+        judgment_evidence,
+        "read_case_publication",
+        lambda *args: (
+            judgment,
+            SimpleNamespace(judgment=ArtifactRef.model_validate(row["judgment"])),
+            inputs,
+        ),
+    )
+    a_path, b_path = published.write(b_rows=[row])
+    evidence = read_evidence(
+        stage_a_inventory=a_path,
+        stage_b_inventory=b_path,
+        root=published.root,
+        items=[published.w.item],
+        document_for=lambda item, rep: (published.w.document, CANONICAL),
+        inputs_for=lambda *args: (_ for _ in ()).throw(AssertionError("ordinary read called")),
+        historical_for=lambda row: (object(), {}),
+    )
+    assert evidence[key(published)].stage_b == judgment

@@ -101,16 +101,16 @@ tally <- function(df, cols) {
   out
 }
 
-# Denominator of each row: all counted rows in its `by` group, every state included. Each source
-# row is counted once, so the denominator is the size of the group, not of its evaluable part.
+# Denominator of each row: all counted rows in its `by` group (every row when `by` is empty), every
+# state included. Each source row is counted once, so the denominator is the size of the group, not
+# of its evaluable part. Also used by the supplement tables.
 with_denominator <- function(counts, by) {
-  if (nrow(counts) == 0) {
+  if (!nrow(counts)) {
     counts$denominator <- integer(0)
     return(counts)
   }
-  group <- do.call(paste, c(unname(as.list(counts[by])), sep = "\x1f"))
-  totals <- tapply(counts$n, group, sum)
-  counts$denominator <- as.integer(totals[group])
+  key <- if (length(by)) do.call(paste, c(lapply(unname(as.list(counts[by])), as.character), sep = "\x1f")) else rep("all", nrow(counts))
+  counts$denominator <- as.integer(tapply(counts$n, key, sum)[key])
   counts
 }
 
@@ -355,11 +355,11 @@ secondary_populations <- function(rows) {
          "rows of the representation", "none: composition and delivery are counted as recorded", "a row without a context record is no_context_record",
          nrow(representations(primary_repeat(rows[rows$matrix_arm == "scope_robustness", , drop = FALSE])))),
     desc("secondary_repeat_outcomes.csv", "confirmatory JATS and PDF_DOCLING, and closed_book CLOSED_BOOK, all repeats", "observation per prespecified repeat",
-         "rows of the arm, condition and repeat", "none: every correctness state is counted", "missing, non_evaluable and not_executed stay separate from no",
+         "rows of the arm, condition and repeat", "none: every correctness state is counted; repeats are replays under identical frozen settings, never pooled or ranked", "missing, non_evaluable and not_executed stay separate from no",
          nrow(repeat_groups(rows))),
     desc("secondary_repeat_variability.csv", "same as secondary_repeat_outcomes.csv", "item within arm and condition",
          "n_items: distinct items", "an item counts by its number of correct repeats only with three repeat rows each yes or no",
-         "missing repeat rows and unevaluable repeats are counted separately; correctness agreement only", nrow(repeat_groups(rows))),
+         "missing repeat rows and unevaluable repeats are counted separately; correctness agreement only: with greedy decoding (do_sample = false in the frozen configurations) this is computational replay consistency, not sampling variability", nrow(repeat_groups(rows))),
     desc("secondary_discordance.csv", "confirmatory arm, repeat 1, items present under both representations", "item",
          "paired items", "pair_class not_complete when either state is not success or failure", "all state pairs listed", prim),
     desc("secondary_correct_without_evidence.csv", "confirmatory arm, repeat 1, JATS and PDF_DOCLING rows", "item x representation",

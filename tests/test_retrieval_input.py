@@ -3,9 +3,9 @@
 from dataclasses import replace
 
 import pytest
-from test_phase4_publication_authorization import attack
-from test_phase4_publication_authorization import authority as authority  # noqa: PLC0414
-from test_phase4_publication_authorization import pair as pair  # noqa: PLC0414
+from test_publication_authorization import attack
+from test_publication_authorization import authority as authority  # noqa: PLC0414
+from test_publication_authorization import pair as pair  # noqa: PLC0414
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import BuildManifest
@@ -122,7 +122,7 @@ def test_incomplete_manifest_is_not_accepted_even_with_renewed_hash(pair, author
         }
     )
     (pair.output / altered.logical_ref).write_bytes(content)
-    from biorag_repro.documents.phase4 import publish_validation
+    from biorag_repro.documents.ingestion import publish_validation
 
     report = pair.jr.model_copy(update={"build_manifest": altered})
     index = pair.index.model_copy(

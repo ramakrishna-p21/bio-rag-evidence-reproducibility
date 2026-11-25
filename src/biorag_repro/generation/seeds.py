@@ -9,8 +9,8 @@ from typing import Annotated, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.generation.config import GeneratorConfiguration
 
 _REPEAT_NAME = re.compile(r"generation_repeat_([1-3])")

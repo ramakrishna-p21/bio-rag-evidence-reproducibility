@@ -8,6 +8,11 @@ is routed to adjudication because it can separate real referents (BRCA1/Brca1).
 Quantities (D3) are compared as exact rationals. There is no tolerance; a
 rounding interval applies only when the gold carries one. Unit conversion uses a
 small registry in which every conversion is checked for dimension.
+
+Scoring rules are versioned. "v1" is the published behavior and stays the default.
+"v2" additionally reads two numeric spellings and nothing else: English thousands
+separators in a complete, strictly grouped number ("1,234.5"), and a plain-text
+exponent whose sign directly follows "10" after a multiplication sign ("2.725 x 10-4").
 """
 
 import re
@@ -26,6 +31,7 @@ from biorag_repro.benchmark.models import (
 from biorag_repro.evaluation.stage_c_models import Status
 
 Answer = str | list[str]
+RULES = ("v1", "v2")
 
 
 @dataclass(frozen=True)
@@ -90,19 +96,31 @@ _OPERATORS = {
 }
 _OP = r"<=|>=|==|≤|≥|<|>|="
 _SUPERSCRIPT = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻", "0123456789+-")
-_QUANTITY = re.compile(
-    rf"""
-    (?:(?P<label>[A-Za-z][A-Za-z0-9_\- ]*?)\s*(?={_OP}))?   # metric label, only before an operator
-    (?P<op>{_OP})?\s*
-    (?P<sign>[+-])?
-    (?P<mantissa>\d+(?:\.\d*)?|\.\d+)
-    (?:[eE](?P<e_plain>[+-]?\d+)
-      |\s*[×xX·*]\s*10\s*(?:\^\s*(?P<e_caret>[+-]?\d+)|(?P<e_super>[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+))
-    )?
-    \s*(?P<unit>[A-Za-zμ%°][A-Za-zμ0-9%°/·^-]*)?
-    """,
-    re.VERBOSE,
-)
+
+
+def _quantity_pattern(adjacent_exponent: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"""
+        (?:(?P<label>[A-Za-z][A-Za-z0-9_\- ]*?)\s*(?={_OP}))?   # metric label, only before an operator
+        (?P<op>{_OP})?\s*
+        (?P<sign>[+-])?
+        (?P<mantissa>\d+(?:\.\d*)?|\.\d+)
+        (?:[eE](?P<e_plain>[+-]?\d+)
+          |\s*[×xX·*]\s*10\s*(?:\^\s*(?P<e_caret>[+-]?\d+)|(?P<e_super>[⁺⁻]?[⁰¹²³⁴⁵⁶⁷⁸⁹]+))
+          {adjacent_exponent}
+        )?
+        \s*(?P<unit>[A-Za-zμ%°][A-Za-zμ0-9%°/·^-]*)?
+        """,
+        re.VERBOSE,
+    )
+
+
+_QUANTITY = _quantity_pattern("")
+# v2: the explicit sign must touch the 10 ("10-4", "10+2"); "10 - 4", "104" are not exponents.
+_QUANTITY_V2 = _quantity_pattern(r"|\s*[×xX·*]\s*10(?P<e_adj>[+-]\d+)")
+# v2: a whole number grouped in threes from a nonzero first group, optional decimal fraction.
+# Digits, commas or points on either side (partial matches) and e-notation after it disqualify.
+_GROUPED = re.compile(r"(?<![\d.,])[1-9]\d{0,2}(?:,\d{3})+(?:\.\d+)?(?![\d,.]|[eE][+-]?\d)")
 _MAX_EXPONENT = 300
 
 
@@ -110,16 +128,25 @@ def _unit_name(unit: str | None) -> str:
     return normalize_text(unit or "").replace("µ", "μ")  # micro sign -> Greek mu
 
 
-def _score_quantity(gold: QuantityGold, answer: str) -> Verdict:
+def _score_quantity(gold: QuantityGold, answer: str, rules: str) -> Verdict:
     text = normalize_text(answer).replace("−", "-")
+    pattern = _QUANTITY
+    if rules == "v2":
+        text = _GROUPED.sub(lambda grouped: grouped.group().replace(",", ""), text)
+        pattern = _QUANTITY_V2
     if not text:
         return _incorrect("empty_answer", "blank answer")
     if not re.search(r"\d", text):
         return _incorrect("no_numeric_value", "the answer contains no number")
-    m = _QUANTITY.fullmatch(text.replace("µ", "μ"))
+    m = pattern.fullmatch(text.replace("µ", "μ"))
     if m is None:
         return _unresolved("uninterpretable_numeric_text", f"cannot interpret {text!r} exactly")
-    exponent = int(m["e_plain"] or m["e_caret"] or (m["e_super"] or "0").translate(_SUPERSCRIPT))
+    exponent = int(
+        m["e_plain"]
+        or m["e_caret"]
+        or m.groupdict().get("e_adj")
+        or (m["e_super"] or "0").translate(_SUPERSCRIPT)
+    )
     if abs(exponent) > _MAX_EXPONENT:
         return _unresolved("uninterpretable_numeric_text", "exponent outside the supported range")
     value = Fraction(Decimal(m["mantissa"])) * Fraction(10) ** exponent
@@ -272,6 +299,14 @@ def _score_set(gold: SetGold, answer: Answer) -> Verdict:
 # --- conclusions --------------------------------------------------------------
 
 
+def normalized_answer(answer: Answer, answer_class: str) -> str | list[str]:
+    """The answer in the scorer's own normalization (a categorical conclusion also drops one
+    final full stop); used to tell distinct answers apart, never to decide equivalence."""
+    if isinstance(answer, list):
+        return [normalized_answer(a, answer_class) for a in answer]  # type: ignore[misc]
+    return _sentence(answer) if answer_class == "categorical_conclusion" else normalize_text(answer)
+
+
 def _sentence(text: str) -> str:
     return normalize_text(text).removesuffix(".").rstrip()
 
@@ -291,7 +326,9 @@ def _score_conclusion(gold: ConclusionGold, answer: str) -> Verdict:
     )
 
 
-def score_answer(gold: Gold, answer: Answer) -> Verdict:
+def score_answer(gold: Gold, answer: Answer, rules: str = "v1") -> Verdict:
+    if rules not in RULES:
+        raise ValueError(f"unknown scoring rules {rules!r}")
     if isinstance(gold, SetGold):
         return _score_set(gold, answer)
     if isinstance(answer, list):
@@ -299,7 +336,7 @@ def score_answer(gold: Gold, answer: Answer) -> Verdict:
             return _incorrect("answer_shape_mismatch", "a single answer was required")
         answer = answer[0]
     if isinstance(gold, QuantityGold):
-        return _score_quantity(gold, answer)
+        return _score_quantity(gold, answer, rules)
     if isinstance(gold, EntityGold):
         return _score_entity(gold, answer)
     return _score_conclusion(gold, answer)

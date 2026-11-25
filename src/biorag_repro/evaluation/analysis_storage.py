@@ -2,9 +2,15 @@
 
 from pathlib import Path
 
-from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, verify_file_sha256
+from pydantic import BaseModel
+
+from biorag_repro.core.hashing import (
+    canonical_json_bytes,
+    read_verified_bytes,
+    sha256_bytes,
+)
 from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
-from biorag_repro.core.manifest import ArtifactRef, BuildManifest, DerivedOutput
+from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
 from biorag_repro.core.storage import (
     publish_bytes,
     publish_manifest,
@@ -23,20 +29,21 @@ from biorag_repro.evaluation.analysis_models import (
     PlannedRoster,
 )
 from biorag_repro.evaluation.analysis_table import (
-    SCORING_REFERENCE,
     Table,
     check_references,
     check_roster,
     check_rows,
     make_inventory,
     parse_csv,
+    rules_of,
+    scoring_reference,
     serialize_csv,
 )
 
 TRANSFORMATION = "analysis_table_v1"
 
 
-def _settings_sha256() -> str:
+def _settings_sha256(stage_c_rules: str = "v1", stage_b_rules: str = "v1") -> str:
     return sha256_bytes(
         canonical_json_bytes(
             {
@@ -45,7 +52,7 @@ def _settings_sha256() -> str:
                 "primary_repeat_index": PRIMARY_REPEAT_INDEX,
                 "primary_selection": PRIMARY_SELECTION,
                 "matrix": MATRIX_ID,
-                "scoring_reference": SCORING_REFERENCE,
+                "scoring_reference": scoring_reference(stage_c_rules, stage_b_rules),
             }
         )
     )
@@ -58,7 +65,7 @@ def _ref(kind: str, suffix: str, digest: str, table: Table) -> ArtifactRef:
             ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in table.inputs
         ],
         transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(),
+        transformation_settings_sha256=_settings_sha256(table.stage_c_rules, table.stage_b_rules),
         output_sha256=digest,
         output_format=suffix,
         serialization_version="1",
@@ -70,7 +77,9 @@ def _ref(kind: str, suffix: str, digest: str, table: Table) -> ArtifactRef:
     )
 
 
-def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, ArtifactRef]:
+def publish_table(
+    table: Table, root: Path, *, reuse_identical: bool = False
+) -> tuple[ArtifactRef, ArtifactRef, ArtifactRef]:
     """Publish the CSV, its inventory, the planned roster and the build manifest.
 
     Never replaces anything. Rows must be exactly the roster's planned observations.
@@ -82,19 +91,27 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     check_rows(rows)
     check_references(rows, table.inputs)
     check_roster(rows, table.roster)
-    canonical = Table(rows, table.roster, table.inputs)
+    canonical = Table(rows, table.roster, table.inputs, table.stage_c_rules, table.stage_b_rules)
     data = serialize_csv(rows)
     csv_ref = _ref("analysis_table", "csv", sha256_bytes(data), canonical)
     roster_bytes = serialize_project_json(table.roster, PlannedRoster)
     roster_ref = _ref("planned_roster", "json", sha256_bytes(roster_bytes), canonical)
-    inventory = make_inventory(rows, csv_ref, table.roster, roster_ref)
+    inventory = make_inventory(
+        rows,
+        csv_ref,
+        table.roster,
+        roster_ref,
+        table.stage_c_rules,
+        table.stage_b_rules,
+        table.inputs,
+    )
     inventory_bytes = serialize_project_json(inventory, AnalysisInventory)
     inventory_ref = _ref("analysis_inventory", "json", sha256_bytes(inventory_bytes), canonical)
     manifest = BuildManifest(
         schema_version="1",
         inputs=table.inputs,
         transformation_id=TRANSFORMATION,
-        transformation_settings_sha256=_settings_sha256(),
+        transformation_settings_sha256=_settings_sha256(table.stage_c_rules, table.stage_b_rules),
         outputs=[
             DerivedOutput(
                 artifact=csv_ref,
@@ -132,18 +149,21 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
         data,
         csv_ref.sha256,
         validate_temp=lambda p: parse_csv(p.read_bytes()),
+        reuse_identical=reuse_identical,
     )
     publish_bytes(
         paths[roster_ref.logical_ref],
         roster_bytes,
         roster_ref.sha256,
         validate_temp=lambda p: read_project_json(p, roster_ref.sha256, PlannedRoster),
+        reuse_identical=reuse_identical,
     )
     publish_bytes(
         paths[inventory_ref.logical_ref],
         inventory_bytes,
         inventory_ref.sha256,
         validate_temp=lambda p: read_project_json(p, inventory_ref.sha256, AnalysisInventory),
+        reuse_identical=reuse_identical,
     )
     build_id = sha256_bytes(
         canonical_json_bytes(
@@ -152,11 +172,79 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     )
     logical_ref = f"analysis/build/{build_id}.build.json"
     (root / logical_ref).parent.mkdir(parents=True, exist_ok=True)
-    digest = publish_manifest(manifest, root / logical_ref, paths)
+    digest = publish_manifest(manifest, root / logical_ref, paths, reuse_identical=reuse_identical)
     return (
         csv_ref,
         inventory_ref,
         ArtifactRef(artifact_id="build_" + digest, logical_ref=logical_ref, sha256=digest),
+    )
+
+
+def publish_derived_record(
+    value: BaseModel,
+    kind: str,
+    directory: str,
+    inputs: list[BuildInput],
+    transformation_id: str,
+    settings_sha256: str,
+    root: Path,
+    *,
+    reuse_identical: bool = False,
+) -> tuple[ArtifactRef, ArtifactRef]:
+    """Write a handoff-like record and its build manifest under `analysis/<directory>/`.
+
+    Nothing is replaced and nothing is checked beyond the bytes written.
+    """
+    model = type(value)
+    data = serialize_project_json(value, model)
+    digest = sha256_bytes(data)
+    artifact_id = derived_artifact_id(
+        artifact_kind=kind,
+        inputs=[ArtifactInput(i.role, i.artifact.artifact_id, i.artifact.sha256) for i in inputs],
+        transformation_id=transformation_id,
+        transformation_settings_sha256=settings_sha256,
+        output_sha256=digest,
+        output_format="json",
+        serialization_version="1",
+    )
+    ref = ArtifactRef(
+        artifact_id=artifact_id,
+        logical_ref=f"analysis/{directory}/{artifact_id}.json",
+        sha256=digest,
+    )
+    manifest = BuildManifest(
+        schema_version="1",
+        inputs=inputs,
+        transformation_id=transformation_id,
+        transformation_settings_sha256=settings_sha256,
+        outputs=[
+            DerivedOutput(
+                artifact=ref,
+                artifact_kind=kind,
+                output_format="json",
+                serialization_version="1",
+                identity_version="1",
+            )
+        ],
+        status="complete",
+    )
+    target = root / ref.logical_ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    publish_bytes(
+        target,
+        data,
+        digest,
+        validate_temp=lambda p: read_project_json(p, digest, model),
+        reuse_identical=reuse_identical,
+    )
+    build_ref = (
+        f"analysis/{directory}/{sha256_bytes(canonical_json_bytes([artifact_id]))}.build.json"
+    )
+    manifest_digest = publish_manifest(
+        manifest, root / build_ref, {ref.logical_ref: target}, reuse_identical=reuse_identical
+    )
+    return ref, ArtifactRef(
+        artifact_id="build_" + manifest_digest, logical_ref=build_ref, sha256=manifest_digest
     )
 
 
@@ -166,20 +254,21 @@ def read_table(build: ArtifactRef, root: Path) -> list[AnalysisRow]:
     outputs = {o.artifact_kind: o.artifact for o in manifest.outputs}
     if set(outputs) != {"analysis_table", "analysis_inventory", "planned_roster"}:
         raise ValueError("build manifest does not describe an analysis table")
-    if manifest.transformation_id != TRANSFORMATION or (
-        manifest.transformation_settings_sha256 != _settings_sha256()
-    ):
-        raise ValueError("analysis table was built under other settings")
     csv_ref, inventory_ref = outputs["analysis_table"], outputs["analysis_inventory"]
     roster_ref = outputs["planned_roster"]
-    verify_file_sha256(root / csv_ref.logical_ref, csv_ref.sha256)
-    rows = parse_csv((root / csv_ref.logical_ref).read_bytes())
-    check_references(rows, manifest.inputs)
-    roster = read_project_json(root / roster_ref.logical_ref, roster_ref.sha256, PlannedRoster)
-    check_roster(rows, roster)
     inventory = read_project_json(
         root / inventory_ref.logical_ref, inventory_ref.sha256, AnalysisInventory
     )
-    if inventory != make_inventory(rows, csv_ref, roster, roster_ref):
+    # The inventory names the scoring rules; the build's settings hash must agree with it.
+    rules = rules_of(inventory.scoring_reference)  # (Stage C, Stage B)
+    if manifest.transformation_id != TRANSFORMATION or (
+        manifest.transformation_settings_sha256 != _settings_sha256(*rules)
+    ):
+        raise ValueError("analysis table was built under other settings")
+    rows = parse_csv(read_verified_bytes(root / csv_ref.logical_ref, csv_ref.sha256))
+    check_references(rows, manifest.inputs)
+    roster = read_project_json(root / roster_ref.logical_ref, roster_ref.sha256, PlannedRoster)
+    check_roster(rows, roster)
+    if inventory != make_inventory(rows, csv_ref, roster, roster_ref, *rules, manifest.inputs):
         raise ValueError("inventory differs from the table it describes")
     return rows

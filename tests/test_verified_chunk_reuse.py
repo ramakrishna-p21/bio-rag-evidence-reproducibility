@@ -7,8 +7,7 @@ from test_bm25_publication import inputs  # noqa: F401
 from test_context_publication import prepared  # noqa: F401
 
 from biorag_repro.core.hashing import HashMismatchError
-from biorag_repro.documents import chunking
-from biorag_repro.retrieval import bm25, context
+from biorag_repro.retrieval import bm25, chunking, context
 from biorag_repro.retrieval.storage import record_ref
 
 

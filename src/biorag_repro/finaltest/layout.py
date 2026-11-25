@@ -1,16 +1,14 @@
 """Versioned layout and typed records of the final-test storage root.
 
 A root holds `ROOT.json`, an append-only registry of hash-chained events and a lock
-directory. Later passes add batches below it; none exist here.
+directory. No execution path exists in this version, so a valid root holds the genesis event
+only; the event types after genesis are kept so that stored events still parse, and the
+verifier reports any of them as unauthorized.
 
     final_test_v1/
         ROOT.json            genesis record of the root
         registry/NNNNNN.json registry events, one file each
         locks/registry.lock  empty file used only for flock
-
-    batches/<id>/manifest.json   structural batch record (one per matrix arm), added by P10-B
-
-Reserved for later passes and neither created nor permitted yet: `anchors/`, `runs/`.
 
 What is trusted. `StorageAuthorization` is the evidence artifact that policy slot G11
 (`storage_authorization`) is meant to approve: its canonical-JSON SHA-256 is the slot value.
@@ -25,10 +23,10 @@ import os
 import re
 from typing import Annotated, Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, StringConstraints, field_validator, model_validator
+from pydantic import BaseModel, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.generation.environment import check_utc
 
@@ -42,9 +40,6 @@ ROOT_FILE: Final = "ROOT.json"
 REGISTRY_DIR: Final = "registry"
 LOCKS_DIR: Final = "locks"
 LOCK_FILE: Final = "locks/registry.lock"
-BATCHES_DIR: Final = "batches"
-MANIFEST_NAME: Final = "manifest.json"
-WITNESS_SUFFIX: Final = ".witness.json"
 ANCHOR_SUFFIX: Final = ".anchor.json"
 # Event types the structural protocol can publish. Reservation is not authorization.
 OPERATIONAL_EVENTS: Final = (
@@ -53,7 +48,7 @@ OPERATIONAL_EVENTS: Final = (
     "batch_materialized",
     "batch_closed_incomplete",
 )
-# Published only into rehearsal roots (P10-C2B). In a final-test root the verifier treats them
+# Published only into rehearsal roots. In a final-test root the verifier treats them
 # like any other event that nothing is authorized to publish.
 REHEARSAL_EVENTS: Final = (
     "batch_inputs_bound",
@@ -62,83 +57,15 @@ REHEARSAL_EVENTS: Final = (
     "batch_completed",
 )
 EVENT_TYPES: Final = OPERATIONAL_EVENTS + REHEARSAL_EVENTS
-# Not part of `REQUIRED_ROLES`: the event model must parse these events exactly as before so
-# that a final-test root is judged by the same rules. The rehearsal verifier and publisher
-# enforce the roles. `inputs_binding` is the hash of the binding file; `run_record` is the hash
-# of the run record bytes decided before the event is written (they contain the run id).
-REHEARSAL_ROLES: Final = {
-    "batch_inputs_bound": ["batch_id", "materialization_event", "inputs_binding"],
-    "batch_authorized": [
-        "batch_id",
-        "inputs_bound_event",
-        "authorization_citation",
-        "run_record",
-        "readiness_report",
-    ],
-    # The event that authorizes a resume. `previous_authorization_event` is the file hash of the
-    # latest earlier batch_authorized or batch_resumed event of the same batch.
-    "batch_resumed": [
-        "batch_id",
-        "previous_authorization_event",
-        "continuity_assessment",
-        "authorization_citation",
-        "readiness_report",
-        "run_record",
-    ],
-    # The event that ends a batch. `authorization_basis` is the digest of the record that shows
-    # who may publish the completion: the batch's latest citation when the session that ran the
-    # batch publishes it, the continuity assessment of a fresh report when a new session does.
-    "batch_completed": [
-        "batch_id",
-        "previous_authorization_event",
-        "authorization_basis",
-        "completion_record",
-        "readiness_report",
-        "run_record",
-    ],
-}
-# Rehearsal-only files, relative to the root.
-SESSION_LOCK_FILE: Final = "locks/session.lock"
-# Who held the session last (pid, process start, host, open or closed). Written when the first
-# attempt of a session begins; read by the next session to decide whether recovery is safe.
-HOLDER_FILE: Final = "locks/session.holder"
-INPUTS_DIR: Final = "inputs"
-ROSTERS_DIR: Final = "rosters"
-BINDING_NAME: Final = "binding.json"
-CITATIONS_DIR: Final = "citations"
-CITATION_NAME: Final = "000001.json"
-# Batch-level completion evidence (rehearsal roots only). The continuity file exists only when
-# the completion was authorized by a fresh report.
-COMPLETION_NAME: Final = "completion.json"
-COMPLETION_CONTINUITY_NAME: Final = "completion.continuity.json"
-
-
-def citation_name(ordinal: int) -> str:
-    """The citation of the initial authorization is 1; the n-th resume is n + 1."""
-    return f"{ordinal:06d}.json"
-
-
-def continuity_name(ordinal: int) -> str:
-    """The continuity assessment cited by the citation of the same ordinal."""
-    return f"{ordinal:06d}.continuity.json"
-
-
-RUNS_DIR: Final = "runs"
-# Exact evidence roles, in order, of the batch events. The values are SHA-256 digests; batch_id
-# and ownership are derived identities (see batches.py), not file hashes. The genesis event's
-# evidence is checked against the approved authorization by the inventory verifier.
+# Exact evidence roles, in order, of the batch events, kept so that stored events parse as
+# before. The genesis event's evidence is checked against the approved authorization by the
+# inventory verifier.
 REQUIRED_ROLES: Final = {
     "batch_reserved": ["campaign_plan", "batch_id", "ownership", "batch_manifest"],
     "batch_materialized": ["batch_id", "batch_manifest", "reservation_event"],
     "batch_closed_incomplete": ["batch_id", "reservation_event", "observed_state"],
 }
 EVENT_NAME: Final = re.compile(r"^(\d{6})\.json$")
-
-
-class FrozenRecord(Record):
-    """A record whose published value cannot be changed in memory either."""
-
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True, frozen=True)
 
 
 class StorageAuthorization(Record):
@@ -287,46 +214,6 @@ class RegistryEvent(Record):
         if roles is not None and [c.role for c in self.evidence] != roles:
             raise ValueError(f"{self.event_type} must cite exactly {roles}")
         return self
-
-
-class HeadWitness(FrozenRecord):
-    """Consistency record for one registry event, kept outside the root.
-
-    A witness shows that the registry once held this event. It is written by the same software
-    that writes the registry and lives under the same data root, so it detects inconsistency
-    between two storage structures, not a coordinated rollback of both, and it is not an
-    authority for the latest head.
-    """
-
-    schema_version: Literal["1"] = "1"
-    layout_version: Literal["final_test_v1"]
-    root_id: Sha256
-    sequence: int
-    event_file_sha256: Sha256
-    event_identity_sha256: Sha256
-    previous_witness_sha256: Sha256 | None
-    created_utc: str
-
-    _utc = field_validator("created_utc")(check_utc)
-
-    @model_validator(mode="after")
-    def chain_start(self) -> Self:
-        if self.sequence < 1 or (self.sequence == 1) != (self.previous_witness_sha256 is None):
-            raise ValueError("only the first witness has no previous witness")
-        return self
-
-
-class HeadCheckpoint(FrozenRecord):
-    """A latest-head claim from a source the caller trusts independently of the root.
-
-    P10-B defines the shape and checks continuity against it, but no source in this repository
-    can establish that a checkpoint is the latest authorized head, so a checkpoint never makes
-    a history authoritative.
-    """
-
-    root_id: Sha256
-    sequence: int
-    event_file_sha256: Sha256
 
 
 def make_event(

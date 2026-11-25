@@ -1,12 +1,17 @@
 import pytest
-from readiness_support import REAL_POLICY, digest, fixture_policy
+from readiness_support import REAL_POLICY, digest
 from readiness_world import build_world, write
 
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.readiness import evidence
 from biorag_repro.readiness.evaluate import EvaluationError, evaluate, evaluator_identity
 from biorag_repro.readiness.models import MANDATORY_GATES
-from biorag_repro.readiness.policy import ApprovalPolicy, ApprovalSlots, policy_sha256
+from biorag_repro.readiness.policy import (
+    ApprovalPolicy,
+    ApprovalSlots,
+    policy_payload,
+    policy_sha256,
+)
 
 
 @pytest.fixture
@@ -23,17 +28,17 @@ def test_real_policy_gives_a_complete_not_ready_report(world):
     report = result.report
     assert report.decision == "NOT_READY"
     assert [g.gate_id for g in report.gates] == list(MANDATORY_GATES)
-    assert len(report.blockers) == 13  # nothing passes: no approval exists
+    assert len(report.blockers) == 12  # fixture identities differ from the real approvals
     got = statuses(report)
-    assert got["G01_corpus_sources"] == ("pending", "verified_pending_policy_approval")
-    assert got["G02_benchmark_freeze"] == ("pending", "verified_pending_policy_approval")
-    assert got["G09_scientific_source_revision"][0] == "pending"
+    assert got["G01_corpus_sources"] == ("failed", "policy_mismatch")
+    assert got["G02_benchmark_freeze"] == ("failed", "policy_mismatch")
+    assert got["G09_scientific_source_revision"][0] == "failed"
     assert got["G13_final_test_history_integrity"] == (
         "unavailable",
         "final_test_inventory_authority_not_established",
     )
     assert report.policy_sha256 == policy_sha256(REAL_POLICY)
-    assert all(v is None for v in REAL_POLICY.slots.model_dump().values())
+    assert REAL_POLICY.slots.final_test_freeze is not None
 
 
 def test_candidate_records_what_was_read(world):
@@ -46,13 +51,16 @@ def test_candidate_records_what_was_read(world):
     assert candidate.benchmark_release_sha256 == sha256_bytes(
         (world.data / evidence.BENCHMARK_RELEASE).read_bytes()
     )
-    assert candidate.freeze_record_sha256 is None and candidate.python_lock_sha256 is None
+    assert candidate.freeze_record_sha256 is None
+    assert candidate.python_lock_sha256 == sha256_bytes(
+        (world.repo / "configs/environment.toml").read_bytes()
+    )
 
 
 def test_policy_copy_and_observations_are_captured(world):
     result = evaluate(world.ctx, REAL_POLICY)
     assert result.snapshots[policy_sha256(REAL_POLICY)] == canonical_json_bytes(
-        REAL_POLICY.model_dump(mode="json")
+        policy_payload(REAL_POLICY)
     )
     cited = {
         r.sha256
@@ -120,7 +128,7 @@ def test_an_adapter_that_crashes_is_an_evaluation_error_not_not_ready(world, mon
     def crash():
         raise TypeError("bug")
 
-    monkeypatch.setattr(evidence, "generator_qualification", crash)
+    monkeypatch.setattr("biorag_repro.readiness.production.qualification", lambda ctx: crash())
     with pytest.raises(EvaluationError):
         evaluate(world.ctx, REAL_POLICY)
 
@@ -143,7 +151,3 @@ def test_a_gate_missing_from_the_gathered_set_is_an_evaluation_error(world, monk
 def test_evaluator_identity_follows_the_package_source():
     assert evaluator_identity() == evaluator_identity()
     assert len(evaluator_identity().code_sha256) == 64
-
-
-def test_fixture_policy_exists_only_in_tests():
-    assert fixture_policy().slots.corpus_identity is not None

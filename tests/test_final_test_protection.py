@@ -10,7 +10,6 @@ import ast
 import inspect
 import typing
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -21,7 +20,7 @@ from test_stage_b import P_A, P_B, P_C, prose_xml
 import biorag_repro
 from biorag_repro.evaluation import analysis_handoff, analysis_table
 from biorag_repro.evaluation.stage_a import IneligibleItem, check_item
-from biorag_repro.generation import attempts, driver, roster
+from biorag_repro.generation import attempts
 from biorag_repro.readiness.guard import FinalTestAuthorization
 from biorag_repro.readiness.models import Candidate, HostBinding
 
@@ -58,26 +57,6 @@ def authorization() -> FinalTestAuthorization:
 # ---- behavioural refusals ------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("mode", driver.MODES)
-def test_driver_refuses_a_final_test_scope_before_any_backend_starts(monkeypatch, mode):
-    started = []
-    prepared = SimpleNamespace(
-        config=SimpleNamespace(settings=None), scope=SimpleNamespace(phase="final_test")
-    )
-    monkeypatch.setattr(driver, "check_placement", lambda *a: None)
-    monkeypatch.setattr(driver, "prepare", lambda *a: prepared)
-    plan = SimpleNamespace(run_root=Path("r"), anchor_dir=Path("a"))
-    with pytest.raises(driver.DriverError, match="final_test scope cannot be executed"):
-        driver.execute(plan, [], mode=mode, start=lambda p: started.append(p))  # type: ignore[arg-type]
-    assert started == []
-
-
-def test_roster_refuses_a_scope_that_is_not_development_or_qualification():
-    scope = SimpleNamespace(phase="final_test")
-    with pytest.raises(roster.RosterMismatch, match="neither development nor qualification"):
-        roster._check_scope(scope, {}, ("b", "c"))  # type: ignore[arg-type]
-
-
 def test_run_phase_type_excludes_final_test():
     assert typing.get_args(attempts.RunPhase) == ("development", "qualification")
     with pytest.raises(ValidationError):
@@ -99,9 +78,11 @@ def test_analysis_table_refuses_final_test_phase_and_split():
         analysis_table.build_row(export.observation(w, phase="final_test"))
 
 
-def test_analysis_handoff_is_development_only():
+def test_final_test_handoff_is_official_and_names_its_custody_exception():
     field = analysis_handoff.AnalysisHandoff.model_fields["phase"]
-    assert typing.get_args(field.annotation) == ("development",)
+    assert typing.get_args(field.annotation) == ("development", "final_test")
+    source = inspect.getsource(analysis_handoff.AnalysisHandoff.origin_matches_runs)
+    assert "custody_exception is None" in source and "verified_official_run" in source
 
 
 # ---- a readiness result unlocks nothing ----------------------------------------------------
@@ -110,10 +91,6 @@ def test_analysis_handoff_is_development_only():
 @pytest.mark.parametrize(
     "function",
     [
-        driver.execute,
-        driver.prepare,
-        driver.dry_run,
-        roster.build_roster,
         check_item,
         analysis_table.build_row,
         analysis_handoff.build_handoff,
@@ -157,16 +134,16 @@ def test_only_the_readiness_package_refers_to_the_guard():
                 names = [a.name for a in node.names]
             if any("readiness.guard" in n or n == "guard" for n in names):
                 users.append(str(path.relative_to(SRC)))
-    # P10-C2B: finaltest/start.py is the one module that calls the guard (and always refuses
-    # afterwards in production); any other user is an unreviewed integration
-    assert set(users) == {"finaltest/start.py"}, f"{users} use the authorization guard"
+    # No module outside the readiness package uses the guard; any user is an unreviewed
+    # integration
+    assert users == [], f"{users} use the authorization guard"
 
 
 REVIEWED_REFERENCES = {
-    "generation/driver.py": {"execute"},
     "evaluation/stage_a.py": {"check_item"},
-    "evaluation/analysis_table.py": {"build_row"},
+    "evaluation/analysis_table.py": {"build_row", "roster_items_from_final_test"},
     "evaluation/analysis_models.py": {"analysis_role", "AnalysisRow", "Phase"},
+    "evaluation/analysis_handoff.py": {"AnalysisHandoff", "_describe", "derive_accounting"},
 }
 
 
@@ -189,6 +166,5 @@ def test_reviewed_final_test_sites_have_not_changed(relative):
     assert _referencing(relative) == REVIEWED_REFERENCES[relative]
 
 
-def test_run_and_handoff_types_do_not_name_final_test():
-    for relative in ("generation/attempts.py", "evaluation/analysis_handoff.py"):
-        assert _referencing(relative) == set()
+def test_run_types_do_not_name_final_test():
+    assert _referencing("generation/attempts.py") == set()

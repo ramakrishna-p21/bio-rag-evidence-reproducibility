@@ -432,7 +432,7 @@ def test_unusable_gold_is_not_scored_incorrect():
 
 def test_correct_answer_is_correct_whatever_evidence_did():
     """Stage C takes no Stage A/B argument: correctness cannot depend on them."""
-    assert list(inspect.signature(stage_c.score).parameters) == ["item", "result"]
+    assert list(inspect.signature(stage_c.score).parameters) == ["item", "result", "rules"]
     fields = set(StageCScore.model_fields) | set(GenerationResult.model_fields)
     assert not any("stage_a" in f or "stage_b" in f or "context" in f for f in fields)
     item = make_item(quantity("0.05"))
@@ -683,3 +683,83 @@ def test_other_incorrect_scores_stay_closed_to_review():
             at_utc="2026-11-05T12:00:00Z",
             rationale="x",
         )
+
+
+# --- categorical review consistency (S4) --------------------------------------
+
+SIGNIFICANT = {
+    "answer_class": "categorical_conclusion",
+    "subject": "tumours",
+    "relation": "immune-cell count",
+    "direction": "significantly increased",
+}
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ["Decreased", "Increased", "Tended to increase", "No significant difference"],
+)
+def test_uncurated_categorical_answers_are_routed_to_review_not_auto_scored(answer):
+    # reversed, significance dropped, hedged and non-significance-as-parity answers
+    assert verdict(SIGNIFICANT, answer) == ("non_evaluable", "wording_not_approved")
+
+
+def reviewed(item, answer, status, **coordinates):
+    result = make_result(item, answer=answer)
+    if coordinates:
+        result = rekey(result, **coordinates)
+    return adjudicated(item, result, status=status, rationale="C4(a)")[1]
+
+
+def test_identical_categorical_answer_gets_one_decision_across_arms_and_repeats():
+    item = make_item(SIGNIFICANT)
+    a = reviewed(item, "Increased", "incorrect")
+    b = reviewed(item, "Increased.", "correct", matrix_arm="pdf_bm25", repeat_index=2)
+    with pytest.raises(ValueError, match="different reviewer decisions"):
+        stage_c.check_consistent([a, b])
+    same = reviewed(item, "Increased.", "incorrect", matrix_arm="pdf_bm25", repeat_index=2)
+    stage_c.check_consistent([a, same, stage_c.score(item, make_result(item, answer="x"))])
+
+
+def test_consistency_is_per_item_rules_and_exact_normalized_text():
+    item = make_item(SIGNIFICANT)
+    other = make_item(SIGNIFICANT, item_id="q_002")
+    a = reviewed(item, "Increased", "incorrect")
+    stage_c.check_consistent(
+        [
+            a,
+            reviewed(other, "Increased", "correct"),  # another item
+            reviewed(item, "increased", "correct"),  # a different normalized text
+        ]
+    )
+    v2 = stage_c.adjudicate(
+        stage_c.score(item, make_result(item, answer="Increased"), "v2"),
+        status="correct",
+        reviewer="R",
+        at_utc="2026-11-05T12:00:00Z",
+        rationale="x",
+    )
+    stage_c.check_consistent([a, v2])
+
+
+def test_entity_reviews_are_not_grouped_by_the_categorical_check():
+    item = make_item(entity("TP53"))
+    first = reviewed(item, "TP53.", "correct")
+    second = reviewed(item, "It is not TP53.", "incorrect")
+    assert first.interpreted == second.interpreted == []
+    stage_c.check_consistent([first, second])
+
+
+def test_analysis_table_refuses_inconsistent_categorical_reviews():
+    from types import SimpleNamespace
+
+    from biorag_repro.evaluation.analysis_table import build_table
+
+    item = make_item(SIGNIFICANT)
+    scores = [
+        reviewed(item, "Increased", "incorrect"),
+        reviewed(item, "Increased", "correct", repeat_index=2),
+    ]
+    observations = [SimpleNamespace(score=s, evidence=None) for s in scores]
+    with pytest.raises(ValueError, match="different reviewer decisions"):
+        build_table(observations, roster=None)  # type: ignore[arg-type]

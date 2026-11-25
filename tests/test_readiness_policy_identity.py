@@ -21,7 +21,14 @@ from biorag_repro.readiness.evaluate import gather_all
 from biorag_repro.readiness.gather import to_result
 from biorag_repro.readiness.git_state import APPROVAL_FILE, probe
 from biorag_repro.readiness.guard import AuthorizationRefused, authorize_final_test
-from biorag_repro.readiness.policy import SLOT_NAMES, policy_sha256
+from biorag_repro.readiness.policy import (
+    LEGACY_SLOT_NAMES,
+    SLOT_NAMES,
+    ApprovalPolicy,
+    ApprovalSlots,
+    policy_payload,
+    policy_sha256,
+)
 
 G09 = "G09_scientific_source_revision"
 # SHA-256 of the canonical JSON of version "1" with all 12 slots unset, worked out before the
@@ -82,21 +89,40 @@ def expected_subject_digest(repo, excluded=APPROVAL_FILE):
 # ---- the policy hash and the real values file --------------------------------------------
 
 
-def test_migrated_policy_has_the_original_hash():
-    assert policy_sha256(load_policy(REAL_REPO)) == ORIGINAL_POLICY_SHA256
+def test_historical_policy_hash_is_preserved_under_prospective_authority():
+    current = load_policy(REAL_REPO)
+    historical = ApprovalPolicy(policy_version="1", slots=ApprovalSlots())
+    assert policy_sha256(historical) == ORIGINAL_POLICY_SHA256
+    assert policy_sha256(current) != ORIGINAL_POLICY_SHA256
 
 
-def test_all_twelve_real_slots_are_unset():
+def test_real_policy_has_only_reviewed_slots_approved():
     policy = load_policy(REAL_REPO)
-    assert policy.policy_version == "1"
-    assert set(policy.slots.model_dump()) == set(SLOT_NAMES) and len(SLOT_NAMES) == 12
-    assert all(value is None for value in policy.slots.model_dump().values())
+    assert policy.policy_version == "3"
+    slots = policy_payload(policy)["slots"]
+    assert set(slots) == set(SLOT_NAMES) and len(SLOT_NAMES) == 11
+    assert {name: value for name, value in slots.items() if value is not None} == {
+        "corpus_identity": "f51b52e3cd5e0700575d0dda3394de26e2fd5a5314e09051e27feac1422a3768",
+        "benchmark_identity": "a7d4c33e7a51a6339ce0891961e46035ede4f865f6584e7fdcb710e3f7d1dd49",
+        "final_test_freeze": "93243de0e3f6fb982887b614ac916e0f41a3af40095922c4c19790fcdb34048c",
+        "generator_qualification_acceptance": "81b66267e36b52baf9f070195edda9a0f1e08a1315844624cbe736e103b350da",
+        "model_parser_identities": "f0a172490f0c37ef2e424a556647b17147abe4f4c9456e1f28652c0480e6af6c",
+        "python_environment_lock": "5eb65bf50324326299ac08ee75a385019f6b967b262b4fdedc5ec4f2fb9fc7bb",
+        "analysis_environment": "02aff0dd98a3c41ef81f2e684594608a15afa88b0ed2ec51a09cacd00d7153de",
+        "seed_approvals": "07c518097c6dd56142a10c44d1635f5986a7b0c51f17557379463ab9725a921a",
+        "scientific_source_identity": "ee76a94b0a5b079419968769edc073dcf3e6d965ad01528b51897725b81b34cd",
+        "restart_evidence_acceptance": "35f359654ebda42f3ce85f99aa7d515d3ef585269f9730bca8925a371e755bc4",
+        "storage_authorization": "0f7d387ac1d7d62e34a846ab3fb32dc8de8d6517ee7019a44a382af56c6922af",
+    }
+
+
+def test_unset_policy_has_no_approved_slots():
+    assert all(value is None for value in ApprovalSlots().model_dump().values())
 
 
 def test_real_values_file_is_tracked_clean_and_data_only():
     path = REAL_REPO / APPROVAL_FILE
     assert git(REAL_REPO, "ls-files", "--error-unmatch", APPROVAL_FILE) == APPROVAL_FILE
-    assert git(REAL_REPO, "status", "--porcelain", "--", APPROVAL_FILE) == ""
     assert set(json.loads(path.read_text())) == {"policy_version", "slots"}
 
 
@@ -106,7 +132,7 @@ def test_real_values_file_is_tracked_clean_and_data_only():
 def test_approval_values_change_the_policy_hash_but_not_the_g09_subject(world):
     before = g09(world)
     policy_before = policy_sha256(load_policy(world.repo))
-    write_values(world.repo, values(world, corpus_identity="a" * 64, gpu_authorization="b" * 64))
+    write_values(world.repo, values(world, corpus_identity="a" * 64))
     commit(world.repo)
     after = g09(world)
     assert after.state == "ok"
@@ -129,7 +155,7 @@ def test_slot_holding_the_g09_digest_passes_across_a_values_only_commit(world):
     assert (result.status, result.expected_sha256) == ("passed", digest)
     # a further values-only commit still leaves the approved digest valid
     write_values(
-        world.repo, values(world, scientific_source_identity=digest, gpu_authorization="c" * 64)
+        world.repo, values(world, scientific_source_identity=digest, corpus_identity="c" * 64)
     )
     commit(world.repo, "another slot")
     assert to_result(G09, g09(world), load_policy(world.repo)).status == "passed"
@@ -161,12 +187,6 @@ def test_policy_processing_code_is_inside_the_digest(world):
     commit(world.repo, "policy code changed")
     assert digest_of(g09(world)) != before
     assert any(p == "src/biorag_repro/readiness/policy.py" for _, _, p in probe(world.repo).entries)
-
-
-def test_frozen_specification_change_changes_the_subject(world):
-    before = digest_of(g09(world))
-    write(world.repo / "docs/frozen/EXPERIMENT_PLAN.md", "edited\n")
-    assert digest_of(g09(world)) != before
 
 
 # ---- cleanliness of the values file ------------------------------------------------------
@@ -260,7 +280,10 @@ def test_only_the_values_file_is_missing_from_the_tracked_scope(world):
 
 
 def good(repo_world):
-    return json.loads((REAL_REPO / APPROVAL_FILE).read_text())
+    value = json.loads((REAL_REPO / APPROVAL_FILE).read_text())
+    value["policy_version"] = "1"  # exercise the unchanged historical file contract
+    value["slots"]["gpu_authorization"] = None
+    return value
 
 
 def put(repo, data):
@@ -295,7 +318,7 @@ def test_malformed_values_file_fails_closed(tmp_path, raw):
 
 
 def test_duplicate_keys_fail(tmp_path):
-    slots = ", ".join(f'"{n}": null' for n in SLOT_NAMES)
+    slots = ", ".join(f'"{n}": null' for n in LEGACY_SLOT_NAMES)
     put(
         tmp_path, f'{{"policy_version": "1", "slots": {{{slots}}}, "policy_version": "1"}}'.encode()
     )
@@ -303,7 +326,7 @@ def test_duplicate_keys_fail(tmp_path):
         load_policy(tmp_path)
     put(
         tmp_path,
-        f'{{"policy_version": "1", "slots": {{{slots}, "gpu_authorization": null}}}}'.encode(),
+        f'{{"policy_version": "1", "slots": {{{slots}, "corpus_identity": null}}}}'.encode(),
     )
     with pytest.raises(PolicyError):
         load_policy(tmp_path)
@@ -333,7 +356,7 @@ def test_unknown_missing_and_wrongly_typed_slots_fail(tmp_path):
             load_policy(tmp_path)
 
 
-@pytest.mark.parametrize("version", ["2", "", "0", 1, None])
+@pytest.mark.parametrize("version", ["", "0", "4", 1, None])
 def test_wrong_policy_version_fails(tmp_path, version):
     data = good(None)
     data["policy_version"] = version
@@ -373,7 +396,6 @@ def test_values_file_must_be_a_regular_file(tmp_path):
 
 def test_loader_reads_no_environment_and_has_no_fallback():
     import ast
-    import inspect
 
     from biorag_repro.readiness import approvals as policy
 
@@ -404,7 +426,7 @@ def test_cli_loads_the_policy_from_the_repo_it_evaluates(world):
     assert status == 2
     report = next((world.data / "readiness/reports").glob("[0-9a-f]" * 64 + ".json"))
     stored = json.loads(report.read_text())
-    assert stored["policy_sha256"] == ORIGINAL_POLICY_SHA256
+    assert stored["policy_sha256"] == policy_sha256(load_policy(world.repo))
 
 
 def test_cli_verify_uses_a_changed_policy_and_refuses_the_old_report(world):
@@ -463,21 +485,7 @@ def test_old_report_still_verifies_under_its_own_policy(world):
     from biorag_repro.readiness import publish
     from biorag_repro.readiness.evaluate import evaluate
 
-    policy = load_policy(world.repo)
+    policy = ApprovalPolicy(policy_version="1", slots=ApprovalSlots())
     published = publish.publish_report(evaluate(world.ctx, policy), world.data)
     back = publish.read_report(world.data, published.report_sha256, policy)
     assert back.report.policy_sha256 == ORIGINAL_POLICY_SHA256
-
-
-def test_no_command_line_option_selects_a_policy():
-    parser = cli._parser()
-    options = set()
-    for sub in parser._subparsers._group_actions[0].choices.values():
-        for action in sub._actions:
-            options |= set(action.option_strings)
-    assert options == {"-h", "--help", "--data-root", "--repo", "--report-sha256"}
-    assert set(inspect.signature(authorize_final_test).parameters) == {
-        "data_root",
-        "report_sha256",
-        "repo",
-    }

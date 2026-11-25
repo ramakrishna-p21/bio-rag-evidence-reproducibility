@@ -8,7 +8,7 @@ from xml.etree import ElementTree as ET
 from pydantic import Field
 
 from biorag_repro.benchmark.flags import flag_items
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.benchmark.review import (
     CandidateState,
     DecisionEvent,
@@ -18,6 +18,7 @@ from biorag_repro.benchmark.review import (
 from biorag_repro.benchmark.split import PaperSplit
 from biorag_repro.benchmark.storage import jsonl_sha256
 from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.corpus.manifest import CorpusManifest, verify_source_bytes
 

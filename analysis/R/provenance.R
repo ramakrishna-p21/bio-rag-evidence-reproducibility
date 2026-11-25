@@ -149,10 +149,26 @@ code_state <- function(analysis_dir) {
 
 # ---- seed -------------------------------------------------------------------------------------
 
-# Only an explicitly labelled rehearsal seed is accepted. There is no default and no production label.
+FINAL_TEST_SEED_LABEL <- "final_test"
+
+# Labels of the accepted origins. Only an official final-test run is the frozen confirmatory
+# analysis; official development and synthetic runs have no scientific authority.
+origin_labels <- function(official, final_test) {
+  if (official && final_test) {
+    list(purpose = "final_test_confirmatory", seed_label = FINAL_TEST_SEED_LABEL,
+         authority = "frozen_confirmatory_analysis")
+  } else if (official) {
+    list(purpose = "development_rehearsal", seed_label = "development_rehearsal", authority = "none")
+  } else {
+    list(purpose = "synthetic_rehearsal", seed_label = REHEARSAL_SEED_LABEL, authority = "none")
+  }
+}
+
+# An explicit seed label is required; there is no default.
 check_seed <- function(seed, label) {
-  if (!identical(label, REHEARSAL_SEED_LABEL)) {
-    run_error("seed", sprintf("the seed label must be '%s'; no production seed is approved", REHEARSAL_SEED_LABEL))
+  if (!(is.character(label) && length(label) == 1L && !is.na(label) &&
+        label %in% c(REHEARSAL_SEED_LABEL, "development_rehearsal", FINAL_TEST_SEED_LABEL))) {
+    run_error("seed", sprintf("the seed label must be '%s'; production analysis is unavailable through this rehearsal interface", REHEARSAL_SEED_LABEL))
   }
   ok <- is.numeric(seed) && length(seed) == 1 && !is.na(seed) && is.finite(seed) && seed == round(seed) &&
     abs(seed) <= .Machine$integer.max
@@ -169,14 +185,34 @@ parse_seed <- function(text) {
   as.integer(value)
 }
 
-# The seed as the run record states it. It stays tied to the frozen name `primary_bootstrap` only
-# in the spec; this value is not registered there and has no scientific authority.
-seed_record <- function(seed, label, handoff) {
+# Historical rehearsals retain their unregistered seed semantics. Official development
+# records bind the approved registry through fresh Python verification.
+seed_record <- function(seed, label, handoff, registration = NULL) {
   seed <- check_seed(seed, label)
+  official <- identical(handoff$input_origin, "verified_official_run")
+  expected_label <- origin_labels(official, identical(handoff$phase, "final_test"))$seed_label
+  if (!identical(label, expected_label)) run_error("seed", "the rehearsal seed label differs from the verified input origin")
+  registry_sha <- handoff$scoring_reference$primary_bootstrap_registry_sha256
+  if (!is.null(registry_sha)) {
+    if (!identical(handoff$input_origin, "verified_official_run") ||
+        is.null(registration) || !identical(registration$registry_sha256, registry_sha) ||
+        !identical(registration$record$name, "primary_bootstrap") ||
+        !identical(as.integer(registration$record$value), seed) ||
+        !identical(registration$record$resamples, primary_resamples(handoff)) ||
+        !identical(registration$record$rng_algorithm, "Mersenne-Twister") ||
+        !identical(registration$record$normal_kind, "Inversion") ||
+        !identical(registration$record$sample_kind, "Rejection") ||
+        "primary_bootstrap_seed" %in% unlist(handoff$awaiting_approval)) {
+      run_error("seed", "registered seed differs from the freshly verified Python handoff")
+    }
+    return(list(value = seed, label = label, spec_name = "primary_bootstrap", registry = registry_sha,
+                status = "registered_analysis_seed", production_seed = "approved_for_frozen_procedure",
+                rng = BOOTSTRAP_RNG, quantile_type = BOOTSTRAP_QUANTILE_TYPE, n_resamples = primary_resamples(handoff)))
+  }
   if (!"primary_bootstrap_seed" %in% unlist(handoff$awaiting_approval)) {
     run_error("seed", "the handoff no longer lists the production seed as awaiting approval; this pass has no approved seed")
   }
   list(value = seed, label = label, spec_name = handoff$analysis_spec$bootstrap_seed_name, registry = "not_registered",
-       status = "synthetic_rehearsal_not_scientific", production_seed = "awaiting_approval",
+       status = paste0(expected_label, "_not_scientific"), production_seed = "awaiting_approval",
        rng = BOOTSTRAP_RNG, quantile_type = BOOTSTRAP_QUANTILE_TYPE, n_resamples = primary_resamples(handoff))
 }

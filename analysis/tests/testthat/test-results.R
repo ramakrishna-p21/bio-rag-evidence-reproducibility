@@ -71,12 +71,15 @@ test_that("coprimary table holds the hand-computed fixture values", {
   expect_equal(cell_num(ev$bound_lower), 0, tolerance = 1e-15)
   expect_equal(cell_num(ev$bound_upper), 2 / 9, tolerance = 1e-15)
   expect_equal(c(ev$bound_n_unknown_jats, ev$bound_n_unknown_pdf), c("1", "1"))
-  # answer_correct: d sum = 0 (+1, -1, -1, +1 and zeros), 7 complete pairs, bounds [-1/9, 2/9].
+  expect_identical(ev$bound_n_operational_excluded, "0")
+  # answer_correct: d sum = 0 (+1, -1, -1, +1 and zeros), 7 complete pairs. The two items with
+  # operational failures are missing, not unresolved, so the bounds are [0, 0] over 7 items.
   expect_equal(c(ac$n_eligible, ac$n_complete, ac$n_papers), c("9", "7", "5"))
   expect_equal(cell_num(ac$rd), 0, tolerance = 1e-15)
-  expect_equal(cell_num(ac$bound_lower), -1 / 9, tolerance = 1e-15)
-  expect_equal(cell_num(ac$bound_upper), 2 / 9, tolerance = 1e-15)
-  expect_equal(c(ac$bound_n_unknown_jats, ac$bound_n_unknown_pdf), c("1", "2"))
+  expect_equal(cell_num(ac$bound_lower), 0, tolerance = 1e-15)
+  expect_equal(cell_num(ac$bound_upper), 0, tolerance = 1e-15)
+  expect_equal(c(ac$bound_n_unknown_jats, ac$bound_n_unknown_pdf), c("0", "0"))
+  expect_identical(ac$bound_n_operational_excluded, "2")
   expect_identical(c(ev$summary_status, ev$boot_status, ev$test_status, ev$holm_status), rep("ok", 4))
   expect_identical(ev$test_reason, "NA")
   expect_identical(c(ev$boot_n_resamples, ev$boot_n_empty), c("10000", "0"))
@@ -245,7 +248,7 @@ test_that("golden hashes of the synthetic rehearsal outputs (seed 20260601)", {
   # claimed only for this R / platform / lock. A change here means the computation or the format
   # changed and needs a recorded decision; on another machine compare the values with tolerance.
   expect_identical(unname(r$file_sha256[["coprimary_results.csv"]]),
-                   "b3f1420b8afb629bef6a96e8ecef7b89d3303091205c14a92e2ae05b39a95cc2")
+                   "2f27d0f51c50279825ce29bf3749da12af051b4da0f8c104f214a14fb36e1239")
   expect_identical(r$scientific_result_sha256,
-                   "17c44709e57fd9ac259f3d239498693d31e34258f8577d9e73d0e6cb86b01e36")
+                   "075ec3af857b5eb994080078260b56154be4078ceec4c5855ff128242d6cf63d")
 })

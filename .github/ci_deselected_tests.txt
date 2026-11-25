@@ -1,0 +1,18 @@
+# Tests that CI deselects because they read private research records that are not in the
+# repository (git-ignored docs/reports and local artifacts). They are acceptance tests of the
+# readiness gates and run in full on the researcher's machine, where they pass (see
+# docs/REPRODUCING.md). One entry per test function; a parametrized function is deselected as a
+# whole. CI checks that exactly 22 test cases are deselected.
+tests/test_readiness_production.py::test_g03_stays_pending_while_the_reviewed_source_identity_is_stale
+tests/test_readiness_production.py::test_g03_refuses_altered_production_identity
+tests/test_readiness_production.py::test_g04_original_archive_change_fails
+tests/test_readiness_production.py::test_g05_missing_asset_fails
+tests/test_readiness_production.py::test_g05_missing_asset_has_no_subject
+tests/test_readiness_production.py::test_g07_wrong_host_fails_after_designation
+tests/test_readiness_production.py::test_g07_accepts_retained_evidence_from_the_designated_host
+tests/test_readiness_production.py::test_g07_rejects_altered_substituted_or_stale_evidence
+tests/test_readiness_production.py::test_g07_evidence_needs_a_verified_source_identity
+tests/test_readiness_production.py::test_g07_evidence_cannot_be_exported_from_another_host
+tests/test_readiness_production.py::test_retained_g07_evidence_does_not_stand_in_for_the_live_g06_check
+tests/test_readiness_production.py::test_the_designated_host_exports_evidence_that_the_generation_host_accepts
+tests/test_readiness_production.py::test_g07_library_positions_are_diagnostic_and_not_identity

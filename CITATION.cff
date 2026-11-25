@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below. A citation for the manuscript will be added when it is available."
+type: software
+title: "Evaluating Reproducibility in Retrieval-Augmented Scientific Question Answering for Bioinformatics"
+abstract: >-
+  Research software for a controlled study of how two representations of the same scientific
+  publication (PubMed Central JATS XML and Docling-converted PDF) affect evidence preservation,
+  retrieval, the context supplied to a generator, and scientific answer correctness in
+  retrieval-augmented question answering for bioinformatics.
+version: 0.1.0
+authors:
+  - family-names: Pudota
+    given-names: Rama Krishna
+keywords:
+  - retrieval-augmented generation
+  - scientific question answering
+  - reproducibility
+  - bioinformatics
+  - document representation

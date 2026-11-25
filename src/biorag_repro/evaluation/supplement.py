@@ -33,13 +33,13 @@ from typing import Annotated, Final, Literal, Self
 
 from pydantic import Field, StringConstraints, model_validator
 
-from biorag_repro.benchmark.models import BenchmarkItem, JatsRef, PdfRef, Record
+from biorag_repro.benchmark.models import BenchmarkItem, JatsRef, PdfRef
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import publish_bytes, serialize_project_json
 from biorag_repro.documents.models import CanonicalDocument, CanonicalNode
 from biorag_repro.evaluation.analysis_handoff import AnalysisHandoff, VerifiedHandoff
 from biorag_repro.evaluation.analysis_models import MISSING, AnalysisRow
-from biorag_repro.evaluation.analysis_result import ResultError, read_result_files
 from biorag_repro.evaluation.analysis_table import (
     Observation,
     build_row,
@@ -162,6 +162,14 @@ class SupplementError(ValueError):
 
 class OfficialSupplementUnavailable(SupplementError):
     """Raised for any attempt to build a supplement from other than a verified rehearsal."""
+
+
+class ResultError(ValueError):
+    """A published supplement fails verification; `stage` names the boundary."""
+
+    def __init__(self, stage: str, message: str):
+        super().__init__(f"[{stage}] {message}")
+        self.stage = stage
 
 
 # ---- answer identity ------------------------------------------------------------------------
@@ -539,8 +547,11 @@ def evidence_observation_row(obs: Observation, row: AnalysisRow) -> Cells:
     for form, n in counts.items():
         out[f"stage_a_sets_{form}"] = str(n)
     out["stage_a_form"] = "no_located_evidence" if not set_forms else _combine_sets(set_forms)
-    if evidence.stage_b is not None:
-        delivered = [_container(document, d.container_node_id) for d in evidence.stage_b.delivered]
+    b = evidence.stage_b
+    if b is not None and b.rules == "v2" and b.basis == "reviewer":
+        out["stage_b_form"] = "not_attributed"  # whole-context review: form is not inferred
+    elif b is not None:
+        delivered = [_container(document, d.container_node_id) for d in b.delivered]
         out["stage_b_form"] = "none_delivered" if not delivered else _combine_sets(delivered)
     return out
 
@@ -707,7 +718,14 @@ def read_supplement(
     """
     if verified.official or verified.handoff.input_origin != "synthetic_rehearsal":
         raise OfficialSupplementUnavailable("only a verified synthetic rehearsal is supported")
-    files = read_result_files(root, relative, (*TABLES, RECORD_FILE))
+    directory = root / relative
+    names = {*TABLES, RECORD_FILE}
+    present = {p.name for p in directory.iterdir()}
+    if present != names:
+        raise ResultError(
+            "file_set", f"missing {sorted(names - present)}, unexpected {sorted(present - names)}"
+        )
+    files = {name: (directory / name).read_bytes() for name in names}
     if sha256_bytes(files[RECORD_FILE]) != record_sha256:
         raise ResultError("hash", "the supplement record differs from the trusted SHA-256")
     record = SupplementRecord.model_validate_json(files[RECORD_FILE], strict=True)

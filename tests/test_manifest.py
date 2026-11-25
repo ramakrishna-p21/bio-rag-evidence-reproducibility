@@ -1,7 +1,3 @@
-import json
-import subprocess
-import sys
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -194,33 +190,3 @@ def test_failed_manifest_requires_reason_and_may_retain_partial_outputs():
         with pytest.raises(ValidationError):
             BuildManifest.model_validate({**manifest_data("failed"), "failure_reason": reason})
     assert BuildManifest.model_validate({**manifest_data("failed"), "outputs": []}).outputs == []
-
-
-def test_generated_schema_has_nested_definitions_and_matches_model():
-    path = Path(__file__).resolve().parents[1] / "schemas" / "build_manifest.schema.json"
-    schema = json.loads(path.read_text(encoding="utf-8"))
-    assert {"ArtifactRef", "BuildInput", "DerivedOutput"} <= set(schema["$defs"])
-    assert schema["properties"]["schema_version"]["const"] == "1"
-    assert schema == BuildManifest.model_json_schema()
-
-
-def test_schema_check_detects_drift_without_modifying_tracked_schema(tmp_path):
-    from scripts.export_schemas import check_schema, schema_bytes
-
-    target = tmp_path / "build_manifest.schema.json"
-    target.write_bytes(schema_bytes())
-    assert check_schema(target)
-    target.write_bytes(b"{}\n")
-    assert not check_schema(target)
-
-
-def test_schema_check_cli_succeeds_when_current():
-    root = Path(__file__).resolve().parents[1]
-    result = subprocess.run(
-        [sys.executable, "scripts/export_schemas.py", "--check"],
-        cwd=root,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr

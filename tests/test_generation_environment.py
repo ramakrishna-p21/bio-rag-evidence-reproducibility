@@ -1,8 +1,8 @@
 """Environment capture with injected probes. No hardware is required."""
 
 import pytest
+from generation_support import QWEN_REVISION
 from pydantic import ValidationError
-from test_generation_config import QWEN_REVISION
 
 from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.storage import serialize_project_json

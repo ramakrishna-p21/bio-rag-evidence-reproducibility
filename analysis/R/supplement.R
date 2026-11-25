@@ -71,23 +71,18 @@ supplement_error <- function(message) input_error("supplement_input", message)
 
 # Python's canonical JSON of {analysis_table_sha256, definitions_version, files, handoff_sha256, kind}.
 python_supplement_id <- function(handoff_sha256, csv_sha256, file_sha256) {
-  ordered <- file_sha256[order(names(file_sha256), method = "radix")]
-  files <- paste(sprintf("{\"name\":\"%s\",\"sha256\":\"%s\"}", names(ordered), unlist(ordered, use.names = FALSE)),
-                 collapse = ",")
+  files <- files_json(file_sha256)
   sha256_raw(charToRaw(sprintf(
     "{\"analysis_table_sha256\":\"%s\",\"definitions_version\":\"1\",\"files\":[%s],\"handoff_sha256\":\"%s\",\"kind\":\"%s\"}",
     csv_sha256, files, handoff_sha256, SUPPLEMENT_PY_KIND)))
 }
 
 supplement_summary_id <- function(handoff_sha256, csv_sha256, supplement_sha256, file_sha256) {
-  hex <- function(x) is.character(x) && length(x) == 1 && grepl("^[0-9a-f]{64}$", x)
-  if (!all(vapply(list(handoff_sha256, csv_sha256, supplement_sha256), hex, logical(1))) ||
-      !setequal(names(file_sha256), SUPPLEMENT_DATA_FILES) || !all(vapply(file_sha256, hex, logical(1)))) {
+  if (!all(vapply(list(handoff_sha256, csv_sha256, supplement_sha256), is_sha256_hex, logical(1))) ||
+      !setequal(names(file_sha256), SUPPLEMENT_DATA_FILES) || !all(vapply(file_sha256, is_sha256_hex, logical(1)))) {
     run_error("identity", "supplement summary identity inputs must be SHA-256 hex strings for exactly its tables")
   }
-  ordered <- file_sha256[order(names(file_sha256), method = "radix")]
-  files <- paste(sprintf("{\"name\":\"%s\",\"sha256\":\"%s\"}", names(ordered), unlist(ordered, use.names = FALSE)),
-                 collapse = ",")
+  files <- files_json(file_sha256)
   sha256_raw(charToRaw(sprintf(
     "{\"csv_sha256\":\"%s\",\"files\":[%s],\"handoff_sha256\":\"%s\",\"kind\":\"supplement_summary\",\"supplement_sha256\":\"%s\"}",
     csv_sha256, files, handoff_sha256, supplement_sha256)))
@@ -183,16 +178,6 @@ tabulate_groups <- function(df, cols) {
   out
 }
 
-with_denominator <- function(counts, group) {
-  if (!nrow(counts)) {
-    counts$denominator <- integer(0)
-    return(counts)
-  }
-  key <- if (length(group)) do.call(paste, c(lapply(unname(as.list(counts[group])), as.character), sep = "\x1f")) else rep("all", nrow(counts))
-  counts$denominator <- as.integer(tapply(counts$n, key, sum)[key])
-  counts
-}
-
 # Confirmatory repeat 1 of one condition per item: the primary-row population, one row per item.
 supplement_primary_rows <- function(rows) {
   rows[rows$matrix_arm == "confirmatory" & rows$repeat_index == 1L, , drop = FALSE]
@@ -279,6 +264,9 @@ check_supplement_tables <- function(tables) {
 # ---- computation, record, publication ---------------------------------------------------------
 
 compute_supplement <- function(handoff_path, handoff_sha256, csv_path, supplement_dir, supplement_record_sha256) {
+  if (identical(handoff_origin(handoff_path, handoff_sha256), "verified_official_run")) {
+    run_error("origin", "the Python-supplement analyses are deferred for official inputs: official-origin support is not implemented")
+  }
   inputs <- read_inputs(handoff_path, handoff_sha256, csv_path)
   if (!identical(inputs$input_origin, "synthetic_rehearsal")) {
     run_error("origin", sprintf("input_origin '%s' is not accepted; only a synthetic rehearsal is", inputs$input_origin))
@@ -345,37 +333,17 @@ run_supplement <- function(handoff_path, handoff_sha256, csv_path, supplement_di
 # ---- verification -----------------------------------------------------------------------------
 
 verify_supplement_summary <- function(dir, expected_record_sha256 = NULL, require_read_only = FALSE, primary_dir = NULL) {
-  if (!dir.exists(dir)) verify_error("supplement summary directory not found")
-  present <- list.files(dir, all.files = TRUE, no.. = TRUE)
-  if (length(setdiff(SUPPLEMENT_FILES, present))) verify_error(sprintf("missing file(s): %s", paste(setdiff(SUPPLEMENT_FILES, present), collapse = ", ")))
-  if (length(setdiff(present, SUPPLEMENT_FILES))) verify_error(sprintf("unexpected file(s): %s", paste(setdiff(present, SUPPLEMENT_FILES), collapse = ", ")))
-  paths <- stats::setNames(file.path(dir, SUPPLEMENT_FILES), SUPPLEMENT_FILES)
-  if (any(nzchar(Sys.readlink(paths))) || any(dir.exists(paths))) verify_error("every supplement summary file must be a regular file")
-  sealed <- all(bitwAnd(as.integer(file.mode(c(paths, dir))), 146L) == 0L)
-  if (require_read_only && !sealed) verify_error("published files and directory must be read-only")
-  record_bytes <- read_bytes(paths[[SUPPLEMENT_SUMMARY_RECORD]])
-  record_sha256 <- sha256_raw(record_bytes)
-  if (!is.null(expected_record_sha256) && !identical(record_sha256, expected_record_sha256)) {
-    verify_error(sprintf("%s sha256 %s differs from the trusted %s", SUPPLEMENT_SUMMARY_RECORD, record_sha256, expected_record_sha256))
-  }
-  record <- tryCatch(jsonlite::fromJSON(rawToChar(record_bytes), simplifyVector = FALSE),
-                     error = function(e) verify_error("supplement_summary_record.json is not valid JSON"))
-  if (!is.list(record)) verify_error("supplement_summary_record.json is not a JSON object")
+  opened <- open_published(dir, SUPPLEMENT_FILES, SUPPLEMENT_SUMMARY_RECORD, "supplement summary", expected_record_sha256, require_read_only)
+  paths <- opened$paths; sealed <- opened$sealed; record <- opened$record; record_sha256 <- opened$record_sha256
   claims <- list(
     list("kind", SUPPLEMENT_SUMMARY_KIND), list("schema_version", "1"), list("purpose", "synthetic_rehearsal"),
     list("scientific_authority", "none"), list("banner", SYNTHETIC_BANNER), list("analysis_label", SUPPLEMENT_LABEL),
     list(c("inputs", "input_origin"), "synthetic_rehearsal"))
-  for (cl in claims) {
-    if (!identical(get_path(record, cl[[1]]), cl[[2]])) verify_error(sprintf("record field %s must be %s", paste(cl[[1]], collapse = "."), format(cl[[2]])))
-  }
+  check_claims(record, claims)
   scientific <- get_path(record, "scientific_files")
   if (!is.list(scientific) || !setequal(names(scientific), SUPPLEMENT_DATA_FILES)) verify_error("the record must list exactly the supplement summary tables")
   bytes <- lapply(stats::setNames(SUPPLEMENT_DATA_FILES, SUPPLEMENT_DATA_FILES), function(n) read_bytes(paths[[n]]))
-  for (n in names(bytes)) {
-    if (!identical(scientific[[n]]$sha256, sha256_raw(bytes[[n]])) || !identical(as.numeric(scientific[[n]]$bytes), as.numeric(length(bytes[[n]])))) {
-      verify_error(sprintf("%s differs from the hash and size recorded for it", n))
-    }
-  }
+  check_listed(scientific, bytes)
   id <- tryCatch(supplement_summary_id(record$inputs$handoff_sha256, record$inputs$csv_sha256, record$inputs$supplement_sha256,
                                        vapply(scientific, function(e) e$sha256, "")),
                  error = function(e) verify_error("the identity inputs of the record are malformed"))
@@ -387,12 +355,7 @@ verify_supplement_summary <- function(dir, expected_record_sha256 = NULL, requir
   cited <- get_path(record, c("primary_result", "run_record_sha256"))
   if (!is.null(primary_dir)) {
     if (!is_sha256_hex(cited)) verify_error("the record cites no primary result to check against")
-    p <- verify_result(primary_dir, expected_record_sha256 = cited)
-    if (!identical(p$scientific_result_sha256, record$primary_result$scientific_result_sha256) ||
-        !identical(p$record$inputs$handoff_sha256, record$inputs$handoff_sha256) ||
-        !identical(p$record$inputs$csv_sha256, record$inputs$csv_sha256)) {
-      verify_error("the cited primary result does not match the record")
-    }
+    check_cited_primary(record, primary_dir, cited)
   }
   list(ok = TRUE, sealed = sealed, record_sha256 = record_sha256, record_authenticated = !is.null(expected_record_sha256),
        supplement_summary_sha256 = id, record = record, tables = tables)

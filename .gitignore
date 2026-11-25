@@ -49,3 +49,10 @@ Thumbs.db
 /corpus/derived/
 /artifacts/
 /runs/
+
+# Visualization: generated outputs and the private plotting library
+/figures/output/
+/figures/environment/library/
+
+# Raw notebooks are kept in the private archive, not in Git
+*.ipynb

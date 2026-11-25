@@ -11,9 +11,9 @@ from typing import Annotated, Any, Self
 
 from pydantic import JsonValue, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes, validate_sha256
+from biorag_repro.core.records import Record
 from biorag_repro.generation.config import EVIDENCE_BUDGET_TOKENS, GeneratorConfiguration
 from biorag_repro.generation.parsing import OUTPUT_SCHEMAS, PARSER_VERSIONS
 from biorag_repro.generation.receipt import token_ids_sha256

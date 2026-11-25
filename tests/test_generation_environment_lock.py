@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from biorag_repro.core.hashing import sha256_bytes
-from biorag_repro.core.storage import HashMismatchError
+from biorag_repro.core.hashing import HashMismatchError, sha256_bytes
 from biorag_repro.generation.environment import EnvironmentProbes, GitState, GpuDevice, GpuReading
 from biorag_repro.generation.environment_lock import (
     EnvironmentInventory,
@@ -320,9 +319,9 @@ def test_capture_normalises_names_and_omits_host_identity():
     assert inv.gpus == [GPU]
 
 
-def test_committed_spec_is_provisional_and_pins_match_pyproject():
+def test_committed_approved_lock_pins_match_pyproject_and_rejects_another_host():
     spec = tomllib.loads((ROOT / "configs/environment.toml").read_text())
-    assert spec["status"] == "provisional" and spec["unresolved"]
+    assert spec["status"] == "approved_lock" and spec["unresolved"] == []
     extras = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"][
         "optional-dependencies"
     ]
@@ -331,14 +330,16 @@ def test_committed_spec_is_provisional_and_pins_match_pyproject():
         for requirement in extras[group]:
             name, _, version = requirement.partition("==")
             declared[name.lower().replace("_", "-")] = version
+    torch = declared.pop("torch")
     assert declared.items() <= spec["packages"].items()
+    assert spec["packages"]["torch"].split("+")[0] == torch
     report = verify_environment(
         (ROOT / "configs/environment.toml").read_bytes(),
         inventory(),
         expected_spec_sha256=None,
         inventory_source="live",
     )
-    assert report.outcome == "not_approved"
+    assert report.outcome == "differs_from_approved_lock"
 
 
 def test_cli_writes_report_and_uses_distinct_exit_codes(tmp_path):

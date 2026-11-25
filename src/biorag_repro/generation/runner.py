@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from biorag_repro.benchmark.models import Record
+from biorag_repro.core.records import Record
 from biorag_repro.evaluation.stage_c_models import GenerationResult
 from biorag_repro.generation.attempts import (
     Coordinates,
@@ -347,6 +347,6 @@ class NonOfficialResults:
 def nonofficial_results(store: RunStore) -> NonOfficialResults:
     if store.record.official:
         raise NonOfficialBackend(
-            "this is an official run; official evidence comes from generation.official"
+            "this is an official run; official-evidence verification is an outstanding Phase 8 requirement"
         )
     return NonOfficialResults(store.record.backend_kind, decided_results(store))

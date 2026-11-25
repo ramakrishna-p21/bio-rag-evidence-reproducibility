@@ -26,8 +26,8 @@ from biorag_repro.documents.models import (
 )
 
 TRANSFORMATION_ID = "docling_pdf_adapter_v3"
-HERON_REVISION = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
-TABLE_REVISION = "fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+FOOTNOTE_TRANSFORMATION_ID = "docling_pdf_adapter_v4"
+FIGURE_FOOTNOTE_TRANSFORMATION_ID = "docling_pdf_adapter_v5"
 ASSETS = (
     (
         "docling-project--docling-layout-heron/config.json",
@@ -64,8 +64,6 @@ QUALIFIED_INVENTORY_CANONICAL_SHA256 = (
     "a39c21bbc5e24830963f54757e65f54e5ee17c5e7d5b4d0e096c4c6a1eef754a"
 )
 QUALIFIED_LOCK_SHA256 = "8298439ddc230726d65c959e61e0aa0f847cdad65bd2cb44da7003857bcf97de"
-QUALIFIED_OPTIONS_SHA256 = "ea907fead9260281b219bca5f42ce49f384be5cb967f5ed8030623d0c997ca98"
-QUALIFIED_BACKEND_SHA256 = "2cbd70bd43815d3f42e1f555612394005ed5b8cfddc19dc562236aa97a398ce4"
 
 
 class PdfConfiguration(Record):
@@ -259,8 +257,15 @@ def canonicalize_native(
     native_artifact: ArtifactRef,
     configuration_sha256: str,
     saved_native: dict[str, Any] | None = None,
+    *,
+    preserve_native_table_footnotes: bool = False,
+    preserve_native_figure_footnotes: bool = False,
 ) -> CanonicalDocument:
     """Reconcile typed order with all saved native objects and child links."""
+    if (
+        preserve_native_table_footnotes or preserve_native_figure_footnotes
+    ) and saved_native is None:
+        raise ValueError("native footnote preservation requires saved native JSON")
     walked = [item for item, _ in native_document.iterate_items(with_groups=True)]
     inventory = {}
     for name in ("body", "furniture"):
@@ -322,6 +327,44 @@ def canonicalize_native(
         if any(ref not in refs for ref in caption_refs):
             raise ValueError("unresolved native caption link")
         caption_ids = [refs[ref] for ref in caption_refs]
+        footnote_ids = []
+        if (
+            (preserve_native_table_footnotes or preserve_native_figure_footnotes)
+            and kind == "table"
+        ) or (preserve_native_figure_footnotes and kind == "figure"):
+            raw_objects = {
+                obj["self_ref"]: obj
+                for name in (
+                    "groups",
+                    "texts",
+                    "pictures",
+                    "tables",
+                    "form_items",
+                    "key_value_items",
+                )
+                for obj in saved_native.get(name, [])
+            }
+            raw_item = raw_objects[native_ref]
+            links = raw_item.get("footnotes", [])
+            if not isinstance(links, list) or any(
+                not isinstance(link, dict)
+                or set(link) != {"$ref"}
+                or not isinstance(link["$ref"], str)
+                for link in links
+            ):
+                raise ValueError("malformed native footnote reference")
+            footnotes = [link["$ref"] for link in links]
+            typed_footnotes = [link.cref for link in getattr(item, "footnotes", [])]
+            if footnotes != typed_footnotes or len(set(footnotes)) != len(footnotes):
+                raise ValueError("native footnote links differ between typed and saved objects")
+            if any(ref not in refs or ref not in raw_objects for ref in footnotes):
+                raise ValueError("unresolved native footnote object")
+            if preserve_native_figure_footnotes and kind == "figure":
+                if any(raw_objects[ref].get("label") != "footnote" for ref in footnotes):
+                    raise ValueError("native figure footnote target has a contradictory role")
+                if set(footnotes) & set(caption_refs):
+                    raise ValueError("native figure caption and footnote roles contradict")
+            footnote_ids = [refs[ref] for ref in footnotes]
         mapping = SourceMapping(
             kind="docling",
             state="exact_native",
@@ -478,7 +521,8 @@ def canonicalize_native(
                 grid_cell_node_ids=grid,
                 caption_node_ids=caption_ids,
                 caption_relation_state="present" if caption_ids else "unavailable",
-                footnote_relation_state="unavailable",
+                footnote_node_ids=footnote_ids,
+                footnote_relation_state="present" if footnote_ids else "unavailable",
             )
         node = CanonicalNode(
             node_id=refs[native_ref],
@@ -500,6 +544,9 @@ def canonicalize_native(
             mapping=mapping,
             segments=segments,
             target_node_ids=caption_ids if kind == "figure" else [],
+            figure_footnote_node_ids=footnote_ids
+            if kind == "figure" and preserve_native_figure_footnotes
+            else None,
             relation_state=("exact_native" if caption_ids else "unavailable")
             if kind == "figure"
             else None,
@@ -528,11 +575,14 @@ def canonicalize_native(
                     )
                 )
     return CanonicalDocument(
+        schema_version="5" if preserve_native_figure_footnotes else "4",
         paper_id=paper_id,
         representation="PDF_DOCLING",
         source=source,
         native_artifact=native_artifact,
-        transformation_id=TRANSFORMATION_ID,
+        transformation_id=FIGURE_FOOTNOTE_TRANSFORMATION_ID
+        if preserve_native_figure_footnotes
+        else (FOOTNOTE_TRANSFORMATION_ID if preserve_native_table_footnotes else TRANSFORMATION_ID),
         configuration_sha256=configuration_sha256,
         status="complete",
         nodes=nodes,

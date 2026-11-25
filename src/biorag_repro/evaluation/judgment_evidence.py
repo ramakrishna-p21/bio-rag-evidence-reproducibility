@@ -2,7 +2,7 @@
 
 An inventory row is only an index. Every judgment is read back through its authoritative
 reader, which recomputes its validity from the benchmark item, the canonical document and
-(for Stage B) the Phase 5 records; the row's label, status, reviewer and timestamp must then
+(for Stage B) the context records; the row's label, status, reviewer and timestamp must then
 agree with the stored record. Nothing is invented for a missing judgment:
 
 * no Stage A row            -> no entry (the caller sees `None`, a planned observation
@@ -17,28 +17,46 @@ agree with the stored record. Nothing is invented for a missing judgment:
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
 from pydantic import StringConstraints
 
-from biorag_repro.benchmark.models import BenchmarkItem, Record
+from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import read_manifest, read_project_json
-from biorag_repro.documents.chunking import read_chunking
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation import stage_b_storage
 from biorag_repro.evaluation.analysis_table import Evidence
 from biorag_repro.evaluation.models import StageAJudgment
+from biorag_repro.evaluation.stage_a_storage import read_judgment as read_stage_a
 from biorag_repro.evaluation.stage_b import Inputs
+from biorag_repro.evaluation.stage_b_historical_publication import (
+    Authority as HistoricalAuthority,
+)
+from biorag_repro.evaluation.stage_b_historical_publication import read_case_publication
 from biorag_repro.evaluation.stage_b_models import StageBJudgment
-from biorag_repro.evaluation.storage import read_judgment as read_stage_a
-from biorag_repro.generation.roster import ContextSource
 from biorag_repro.retrieval import bm25
 from biorag_repro.retrieval import context as phase5
-from biorag_repro.retrieval.models import ChunkSet
+from biorag_repro.retrieval.chunking import read_chunking
+from biorag_repro.retrieval.models import ChunkSet, ConfigurationRef
 from biorag_repro.retrieval.storage import record_ref
 from biorag_repro.retrieval.validation import load_canonical_input
+
+
+@dataclass(frozen=True)
+class ContextSource:
+    """A published context and the independent selection it must be recomputed from."""
+
+    context: ArtifactRef
+    manifest: ArtifactRef
+    selection: phase5.Selection
+    configuration: ConfigurationRef
+    configuration_root: Path
+    root: Path
+
 
 Nonblank = Annotated[str, StringConstraints(pattern=r"\S")]
 RowT = TypeVar("RowT", "StageARow", "StageBRow")
@@ -74,6 +92,13 @@ class StageBRow(Record):
     at_utc: str | None = None
 
 
+class HistoricalStageBRow(StageBRow):
+    publication_type: Literal["historical_supplied_context_v1"]
+    case_number: int
+    accounting: ArtifactRef
+    accounting_manifest: ArtifactRef
+
+
 def _rows(path: Path, model: type[RowT]) -> list[RowT]:
     try:
         data = json.loads(path.read_bytes())
@@ -101,6 +126,7 @@ def read_evidence(
     items: Sequence[BenchmarkItem],
     document_for: DocumentFor,
     inputs_for: InputsFor,
+    historical_for: Callable[[HistoricalStageBRow], tuple[HistoricalAuthority, dict]] | None = None,
 ) -> Mapping[Key, Evidence]:
     """Validated evidence per (item_id, representation); absent keys have no judgment.
 
@@ -108,7 +134,21 @@ def read_evidence(
     """
     by_id = {item.item_id: item for item in items}
     a_rows = _rows(stage_a_inventory, StageARow)
-    b_rows = [] if stage_b_inventory is None else _rows(stage_b_inventory, StageBRow)
+    if stage_b_inventory is None:
+        b_rows = []
+    else:
+        try:
+            data = json.loads(stage_b_inventory.read_bytes())
+            if not isinstance(data, list):
+                raise TypeError("an inventory is a JSON list")
+            b_rows = [
+                HistoricalStageBRow.model_validate(row)
+                if "publication_type" in row
+                else StageBRow.model_validate(row)
+                for row in data
+            ]
+        except (OSError, TypeError, ValueError) as error:
+            raise EvidenceError(f"inventory {stage_b_inventory} is not usable: {error}") from error
 
     stage_a: dict[Key, tuple[StageAJudgment, CanonicalDocument, ArtifactRef]] = {}
     for row in a_rows:
@@ -142,8 +182,23 @@ def read_evidence(
         a = stage_a[key][0]
         _check_manifest(root, b_row.manifest, b_row.judgment)
         try:
-            b_inputs = inputs_for(by_id[b_row.item_id], b_row.representation, a)
-            b_judgment = stage_b_storage.read_judgment(b_row.judgment, root, b_inputs)
+            if isinstance(b_row, HistoricalStageBRow):
+                if historical_for is None:
+                    raise EvidenceError("historical row requires its explicit authorized reader")
+                authority, case_inputs = historical_for(b_row)
+                b_judgment, accounting, b_inputs = read_case_publication(
+                    b_row.accounting,
+                    b_row.accounting_manifest,
+                    b_row.case_number,
+                    authority,
+                    case_inputs,
+                    root,
+                )
+                if accounting.judgment != b_row.judgment or b_inputs.stage_a != a:
+                    raise EvidenceError("historical row disagrees with its accounting or Stage A")
+            else:
+                b_inputs = inputs_for(by_id[b_row.item_id], b_row.representation, a)
+                b_judgment = stage_b_storage.read_judgment(b_row.judgment, root, b_inputs)
         except (OSError, ValueError) as error:
             raise EvidenceError(f"Stage B judgment for {key}: {error}") from error
         if (b_row.status, b_row.basis, b_row.reviewer, b_row.at_utc) != (
@@ -164,9 +219,9 @@ def read_evidence(
 
 
 class SourceInputs:
-    """`document_for` and `inputs_for` built from the Phase 5 context sources of a roster.
+    """`document_for` and `inputs_for` built from the context sources of a roster.
 
-    Every record is re-read through the authoritative Phase 5 readers; the sources only say
+    Every record is re-read through the authoritative context readers; the sources only say
     where to look. Designated-paper sources are supported: Stage B inputs name one chunk set.
     """
 

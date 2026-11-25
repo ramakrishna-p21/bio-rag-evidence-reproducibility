@@ -8,6 +8,8 @@
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
 #   Rscript run_analysis.R derive --handoff F --handoff-sha256 H --csv F --primary DIR --out-root DIR \
 #           [--primary-record-sha256 H]
+#   An official handoff needs --primary-record-sha256 (the authenticated primary record). Its fresh Python verification
+#   is inherited from that record and is not repeated; supplement stays refused for official inputs.
 #   Rscript run_analysis.R verify-derived --result DIR [--record-sha256 H] [--primary DIR] \
 #           [--rerun --handoff F --handoff-sha256 H --csv F]
 #   Rscript run_analysis.R supplement --handoff F --handoff-sha256 H --csv F --supplement DIR \
@@ -22,15 +24,15 @@ for (f in c("read_inputs.R", "accounting.R", "estimates.R", "bootstrap.R", "infe
 }
 
 OPTIONS <- list(
-  run = c("handoff", "handoff-sha256", "csv", "lock-sha256", "seed", "seed-label", "out-root", "preflight", "preflight-sha256"),
-  verify = c("result", "record-sha256", "lock-sha256", "handoff", "handoff-sha256", "csv"),
+  run = c("handoff", "handoff-sha256", "csv", "lock-sha256", "seed", "seed-label", "out-root", "preflight", "preflight-sha256", "official-request", "python"),
+  verify = c("result", "record-sha256", "lock-sha256", "handoff", "handoff-sha256", "csv", "official-request", "python"),
   derive = c("handoff", "handoff-sha256", "csv", "primary", "out-root", "primary-record-sha256"),
   "verify-derived" = c("result", "record-sha256", "primary", "handoff", "handoff-sha256", "csv"),
   supplement = c("handoff", "handoff-sha256", "csv", "supplement", "supplement-record-sha256", "out-root", "primary",
                  "primary-record-sha256"),
   "verify-supplement" = c("result", "record-sha256", "primary", "handoff", "handoff-sha256", "csv", "supplement")
 )
-REQUIRED <- list(run = setdiff(OPTIONS$run, c("preflight", "preflight-sha256")), verify = "result",
+REQUIRED <- list(run = setdiff(OPTIONS$run, c("preflight", "preflight-sha256", "official-request", "python")), verify = "result",
                  derive = setdiff(OPTIONS$derive, "primary-record-sha256"), "verify-derived" = "result",
                  supplement = setdiff(OPTIONS$supplement, c("primary", "primary-record-sha256")),
                  "verify-supplement" = "result")
@@ -58,6 +60,9 @@ parse_cli <- function(args) {
   if (length(missing)) run_error("usage", sprintf("missing option(s): %s", paste0("--", missing, collapse = ", ")))
   if (command == "run" && xor("preflight" %in% names(out), "preflight-sha256" %in% names(out))) {
     run_error("usage", "--preflight and --preflight-sha256 are used together")
+  }
+  if (command %in% c("run", "verify") && xor("official-request" %in% names(out), "python" %in% names(out))) {
+    run_error("usage", "--official-request and --python are used together")
   }
   if (command %in% c("verify", "verify-derived", "verify-supplement")) {
     rerun_opts <- c("handoff", "handoff-sha256", "csv", if (command == "verify-supplement") "supplement")
@@ -89,8 +94,8 @@ main <- function(args) {
   if (a$command == "run" || (a$command == "verify" && isTRUE(a$rerun))) require_blas_pin()
   if (a$command == "run") {
     r <- run_analysis(a$handoff, a[["handoff-sha256"]], a$csv, a[["lock-sha256"]], parse_seed(a$seed), a[["seed-label"]],
-                      a[["out-root"]], script_dir, preflight_path = a$preflight, preflight_sha256 = a[["preflight-sha256"]])
-    cat("synthetic rehearsal: no scientific authority; the seed is not a registered or approved seed\n")
+                      a[["out-root"]], script_dir, preflight_path = a$preflight, preflight_sha256 = a[["preflight-sha256"]], official_request = a[["official-request"]], python = a$python)
+    cat(if (identical(r$purpose, "final_test_confirmatory")) "official final-test analysis (frozen confirmatory method; custody exception recorded in the handoff)\n" else if (is.null(a[["official-request"]])) "synthetic rehearsal: no scientific authority; the seed is not a registered or approved seed\n" else "development rehearsal: no scientific authority\n")
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("run_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("scientific_result_sha256: ", r$scientific_result_sha256, "\n", sep = "")
@@ -101,7 +106,7 @@ main <- function(args) {
   } else if (a$command == "derive") {
     r <- run_derived(a$handoff, a[["handoff-sha256"]], a$csv, a$primary, a[["out-root"]], script_dir,
                      expected_primary_record_sha256 = a[["primary-record-sha256"]])
-    cat("SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS\n")
+    cat(if (identical(r$purpose, OFFICIAL_SECONDARY_PURPOSE)) paste0(OFFICIAL_SECONDARY_BANNER, "\n") else "SYNTHETIC REHEARSAL \u2014 NOT SCIENTIFIC FINDINGS\n")
     cat("result directory: ", r$result_dir, "\n", sep = "")
     cat("secondary_record.json sha256: ", r$record_sha256, "\n", sep = "")
     cat("secondary_result_sha256: ", r$secondary_result_sha256, "\n", sep = "")
@@ -124,7 +129,8 @@ main <- function(args) {
     }
   } else if (a$command == "verify-derived") {
     v <- verify_secondary(a$result, a[["record-sha256"]], primary_dir = a$primary)
-    cat("content verified: secondary files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    cat(sprintf("content verified: secondary files, hashes and tables are internally consistent (%s)\n",
+                if (identical(v$record$purpose, OFFICIAL_SECONDARY_PURPOSE)) "official secondary descriptive analysis; exploratory, not confirmatory; primary verification inherited" else "synthetic rehearsal; no scientific authority"))
     cat("read-only seal: ", if (v$sealed) "present (local file permissions only)" else "ABSENT", "\n", sep = "")
     cat(if (v$record_authenticated) "record authenticated against the supplied sha256\n" else "record NOT authenticated: no --record-sha256 was supplied\n")
     if (!is.null(a$primary)) cat("cited primary result verified against ", a$primary, "\n", sep = "")
@@ -133,8 +139,11 @@ main <- function(args) {
       cat("re-execution: ", r$comparison, "\n", sep = "")
     }
   } else {
-    v <- verify_result(a$result, a[["record-sha256"]], a[["lock-sha256"]])
-    cat("content verified: files, hashes and tables are internally consistent (synthetic rehearsal; no scientific authority)\n")
+    v <- verify_result(a$result, a[["record-sha256"]], a[["lock-sha256"]],
+                       official_request = a[["official-request"]], python = a$python, project_dir = script_dir)
+    cat(sprintf("content verified: files, hashes and tables are internally consistent (%s)\n",
+                if (identical(v$record$purpose, "final_test_confirmatory")) v$record$purpose
+                else paste0(v$record$purpose, "; no scientific authority")))
     if (v$sealed) {
       cat("read-only seal: present (local file permissions only; not proof of immutability)\n")
     } else {
@@ -150,7 +159,8 @@ main <- function(args) {
       cat("record NOT authenticated: no --record-sha256 was supplied (internal consistency is not authentication)\n")
     }
     if (isTRUE(a$rerun)) {
-      r <- verify_rerun(a$result, a$handoff, a[["handoff-sha256"]], a$csv)
+      r <- verify_rerun(a$result, a$handoff, a[["handoff-sha256"]], a$csv,
+                        official_request = a[["official-request"]], python = a$python, project_dir = script_dir)
       cat("re-execution: ", r$comparison, "\n", sep = "")
     }
   }

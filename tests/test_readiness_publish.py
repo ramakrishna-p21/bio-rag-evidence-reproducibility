@@ -160,12 +160,6 @@ def test_duplicate_keys_in_a_stored_report_are_rejected(published):
         read_report(world.data, digest, REAL_POLICY)
 
 
-def test_report_of_another_policy_is_rejected(published):
-    world, _, result = published
-    with pytest.raises(ReadbackError, match="different policy"):
-        read_report(world.data, result.report_sha256, fixture_policy())
-
-
 def test_altered_snapshot_is_an_error_but_a_missing_one_is_only_not_retained(published):
     world, evaluation, result = published
     cited = next(

@@ -6,34 +6,44 @@ or a source occurrence ID inside an included chunk, is not delivery by itself.
 Nothing here reads generator output or benchmark gold.
 """
 
+import weakref
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
+from pathlib import Path
 
 from biorag_repro.benchmark.models import BenchmarkItem
-from biorag_repro.core.hashing import sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.core.storage import serialize_project_json
 from biorag_repro.documents.models import CanonicalDocument
-from biorag_repro.evaluation.models import Placement, StageAJudgment
-from biorag_repro.evaluation.stage_a import _blocking, _spans, item_digest, stage_a_ref
-from biorag_repro.evaluation.stage_a import validate_judgment as validate_stage_a
+from biorag_repro.evaluation.models import Placement
+from biorag_repro.evaluation.stage_a import _blocking, _spans, item_digest
+from biorag_repro.evaluation.stage_a_retrospective import Judgment
+from biorag_repro.evaluation.stage_a_retrospective import judgment_ref as stage_a_ref
+from biorag_repro.evaluation.stage_a_retrospective import (
+    validate_scientific_judgment as validate_stage_a,
+)
 from biorag_repro.evaluation.stage_b_models import (
     ComponentSpan,
     Delivered,
     Determination,
     Diagnosis,
     Reason,
+    Rules,
+    Span,
     StageBCandidate,
     StageBIdentity,
     StageBJudgment,
     Status,
     composition_of,
 )
+from biorag_repro.evaluation.stage_records import stage_record_ref
 from biorag_repro.retrieval.context import POLICY, _same_evidence
 from biorag_repro.retrieval.models import Chunk, ChunkSet, ContextRecord, RankedRetrieval
 from biorag_repro.retrieval.storage import record_ref
 
 OPEN, CLOSE = "[evidence]\n", "\n[/evidence]"
+REUSE_LIMIT = 200_000  # remembered objects per command; beyond this nothing more is remembered
 # Later entries got further through the pipeline before the evidence was lost.
 LOSS_ORDER: list[Reason] = [
     "excluded_in_chunking",
@@ -41,21 +51,106 @@ LOSS_ORDER: list[Reason] = [
     "lost_in_packing",
     "partial_components",
 ]
+# Rules v2: these say only that the recorded placements were lost. Another passage of the
+# supplied context may still carry the set, so they need a whole-context review.
+LINEAGE_LOSSES = set(LOSS_ORDER)
 
 
 @dataclass(frozen=True)
 class Inputs:
-    """Records the caller obtained through the authoritative Phase 5 readers."""
+    """Records the caller obtained through the authoritative context readers."""
 
     item: BenchmarkItem
     document: CanonicalDocument
-    stage_a: StageAJudgment
+    stage_a: Judgment
     context: ContextRecord
     ranked: RankedRetrieval
     chunk_set: ChunkSet
     chunks: dict[str, Chunk]
     canonical: ArtifactRef
     context_ref: ArtifactRef
+    stage_a_root: Path | None = None
+
+
+class _Unchanged:
+    """Objects seen once, with a deep copy and what was computed from them.
+
+    An entry is used only while the very same live object still equals its copy, so a later
+    change to a record is never answered from memory. Entries die with their objects.
+    """
+
+    def __init__(self) -> None:
+        self.entries: dict[int, tuple[weakref.ref, object, object]] = {}
+
+    def value(self, obj: object) -> object | None:
+        entry = self.entries.get(id(obj))
+        if entry is not None and entry[0]() is obj and entry[1] == obj:
+            return entry[2]
+        return None
+
+    def remember(self, obj: object, value: object) -> None:
+        key = id(obj)
+        if key not in self.entries and len(self.entries) >= REUSE_LIMIT:
+            return
+        forget = weakref.ref(obj, lambda _: self.entries.pop(key, None))
+        self.entries[key] = (forget, obj.model_copy(deep=True), value)
+
+
+_reuse: ContextVar[_Unchanged | None] = ContextVar("stage_b_reuse", default=None)
+
+
+@contextmanager
+def reuse_checks() -> Iterator[None]:
+    """Within one command, do not recompute two pure checks on records already verified.
+
+    Covers the Stage A read-back of a judgment against its item and canonical document, and the
+    identity hash of a chunk or chunk set. Failures are never remembered, and every check that
+    depends on the individual context still runs.
+    """
+    token = _reuse.set(_Unchanged())
+    try:
+        yield
+    finally:
+        _reuse.reset(token)
+
+
+def _ref(record: Chunk | ChunkSet) -> ArtifactRef:
+    seen = _reuse.get()
+    if seen is None:
+        return record_ref(record)
+    ref = seen.value(record)
+    if ref is None:
+        ref = record_ref(record)
+        seen.remember(record, ref)
+    return ref.model_copy(deep=True)
+
+
+def _read_back_stage_a(i: "Inputs") -> None:
+    """validate_stage_a, skipped only for a judgment already read back against these same,
+    unchanged item and document objects, canonical reference and approval root."""
+    seen = _reuse.get()
+    if seen is None:
+        validate_stage_a(i.stage_a, i.item, i.document, i.canonical, i.stage_a_root)
+        return
+    done = seen.value(i.stage_a) or []
+    if (
+        any(
+            item() is i.item
+            and document() is i.document
+            and canonical == i.canonical
+            and root == i.stage_a_root
+            for item, document, canonical, root in done
+        )
+        and seen.value(i.item) is not None
+        and seen.value(i.document) is not None
+    ):
+        return
+    validate_stage_a(i.stage_a, i.item, i.document, i.canonical, i.stage_a_root)
+    for record in (i.item, i.document):
+        if seen.value(record) is None:
+            seen.remember(record, True)
+    entry = (weakref.ref(i.item), weakref.ref(i.document), i.canonical.model_copy(), i.stage_a_root)
+    seen.remember(i.stage_a, [*done, entry])
 
 
 @dataclass
@@ -72,7 +167,7 @@ class Supplied:
 
 def _verify(i: Inputs) -> Supplied:
     item, ctx, ranked = i.item, i.context, i.ranked
-    validate_stage_a(i.stage_a, item, i.document, i.canonical)
+    _read_back_stage_a(i)
     if (
         i.chunk_set.input.canonical != i.canonical
         or i.chunk_set.input.paper_id != item.paper_id
@@ -93,7 +188,7 @@ def _verify(i: Inputs) -> Supplied:
 
     def authentic(chunk_id: str) -> Chunk:
         chunk = i.chunks.get(chunk_id)
-        if chunk is None or record_ref(chunk).artifact_id != chunk_id:
+        if chunk is None or _ref(chunk).artifact_id != chunk_id:
             raise ValueError("supplied chunk does not match its recorded identity")
         if chunk.input.representation != i.document.representation:
             raise ValueError("chunk representation differs from the item's arm")
@@ -111,7 +206,7 @@ def _verify(i: Inputs) -> Supplied:
     text, designated_n, other_n = "", 0, 0
     for hit in ranked.hits:
         chunk = authentic(hit.chunk.artifact_id)
-        if record_ref(chunk) != hit.chunk or chunk.input.paper_id != hit.paper_id:
+        if _ref(chunk) != hit.chunk or chunk.input.paper_id != hit.paper_id:
             raise ValueError("ranked chunk differs from the supplied chunk")
         if chunk.input.paper_id == item.paper_id and hit.chunk.artifact_id not in designated:
             raise ValueError("designated-paper chunk is not part of the item's chunk set")
@@ -289,7 +384,7 @@ def _identity(i: Inputs, v: Supplied) -> StageBIdentity:
         stage_a=stage_a_ref(i.stage_a),
         context=i.context_ref,
         retrieval=i.context.retrieval,
-        chunk_set=record_ref(i.chunk_set),
+        chunk_set=_ref(i.chunk_set),
         configuration=i.context.configuration,
         composition=composition_of(v.designated_included, v.other_included),
         designated_chunks_included=v.designated_included,
@@ -359,25 +454,19 @@ def dependencies(value: StageBCandidate | StageBJudgment) -> list[tuple[str, Art
     return items
 
 
+def kind_of(value: StageBCandidate | StageBJudgment) -> str:
+    return "stage_b_candidate" if isinstance(value, StageBCandidate) else "stage_b_judgment"
+
+
+def transformation_id(value: StageBCandidate | StageBJudgment) -> str:
+    rules = "v1" if isinstance(value, StageBCandidate) else value.rules
+    return f"{kind_of(value)}_{rules}"
+
+
 def stage_b_ref(value: StageBCandidate | StageBJudgment) -> ArtifactRef:
     """Identify a record by its bytes and the exact Stage A, context and chunk lineage."""
-    kind = "stage_b_candidate" if isinstance(value, StageBCandidate) else "stage_b_judgment"
-    digest = sha256_bytes(serialize_project_json(value, type(value)))
-    artifact_id = derived_artifact_id(
-        artifact_kind=kind,
-        inputs=[
-            ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies(value)
-        ],
-        transformation_id=f"{kind}_v1",
-        transformation_settings_sha256=None,
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    return ArtifactRef(
-        artifact_id=artifact_id,
-        logical_ref=f"evaluation/stage_b/{kind}/{artifact_id}.json",
-        sha256=digest,
+    return stage_record_ref(
+        value, kind_of(value), "stage_b", dependencies(value), transformation_id(value)
     )
 
 
@@ -389,10 +478,68 @@ _STATUS: dict[str, Status] = {
 }
 
 
-def deterministic_judgment(candidate: StageBCandidate) -> StageBJudgment:
-    """The only reviewer-free judgment: a restatement of an automatic determination."""
+def _unambiguous_prose(i: Inputs, v: Supplied, delivered: Delivered) -> bool:
+    """Rules v2: an automatic positive needs prose whose every component occurs once in the
+    supplying chunk, on one line. Tables, captions and repeated wording go to review."""
+    node = next((n for n in i.document.nodes if n.node_id == delivered.container_node_id), None)
+    if node is None or node.table is not None or node.kind not in {"paragraph", "list_item"}:
+        return False
+    _, chunk, offset = v.included[delivered.chunk_id]
+    text = chunk.rendered_text
+    lines = set()
+    for span in delivered.spans:
+        if span.role in {"row", "column"} or len(_spans(text, span.text)) != 1:
+            return False
+        lines.add(text.count("\n", 0, span.start - offset))
+        lines.add(text.count("\n", 0, span.end - offset))
+    return len(lines) == 1
+
+
+def _checked(candidate: StageBCandidate, i: Inputs) -> Supplied:
+    if evaluate(i) != candidate:
+        raise ValueError("candidate differs from the evaluator output for these inputs")
+    return _verify(i)
+
+
+def _v2_delivered(candidate: StageBCandidate, i: Inputs) -> list[Delivered]:
+    v = _checked(candidate, i)
+    return [d for d in candidate.delivered if _unambiguous_prose(i, v, d)]
+
+
+def needs_review_v2(candidate: StageBCandidate, i: Inputs) -> bool:
+    """Whether rules v2 leave this context to a whole-context reviewer."""
+    if candidate.determination == "needs_review":
+        _checked(candidate, i)
+        return True
+    if candidate.determination == "automatic_not_delivered":
+        _checked(candidate, i)
+        return candidate.reason in LINEAGE_LOSSES
+    if candidate.determination == "automatic_delivered":
+        return not _v2_delivered(candidate, i)
+    _checked(candidate, i)
+    return False
+
+
+def deterministic_judgment(
+    candidate: StageBCandidate, rules: Rules = "v1", inputs: Inputs | None = None
+) -> StageBJudgment:
+    """The only reviewer-free judgment: a restatement of an automatic determination.
+
+    Rules v2 keep only the Stage A states, composition losses and unambiguous verbatim prose;
+    v2 automatic delivery is rechecked against the inputs the candidate was evaluated from.
+    """
     if candidate.determination == "needs_review":
         raise ValueError("a review case has no deterministic judgment")
+    delivered = candidate.delivered
+    if rules == "v2":
+        if candidate.reason in LINEAGE_LOSSES:
+            raise ValueError("a lineage-only loss needs whole-context review under rules v2")
+        if candidate.determination == "automatic_delivered":
+            if inputs is None:
+                raise ValueError("v2 automatic delivery is checked against its inputs")
+            delivered = _v2_delivered(candidate, inputs)
+            if not delivered:
+                raise ValueError("delivered evidence is not unambiguous prose: needs review")
     identity = {k: getattr(candidate, k) for k in StageBIdentity.model_fields}
     return StageBJudgment(
         **identity,
@@ -400,13 +547,79 @@ def deterministic_judgment(candidate: StageBCandidate) -> StageBJudgment:
         basis="deterministic",
         candidate=stage_b_ref(candidate),
         reason=candidate.reason,
-        delivered=candidate.delivered,
+        delivered=delivered,
+        rules=rules,
     )
 
 
 def validate_candidate(candidate: StageBCandidate, i: Inputs) -> None:
     if evaluate(i) != candidate:
         raise ValueError("candidate differs from the evaluator output for these inputs")
+
+
+def cite(i: Inputs, chunk_id: str, quote: str, occurrence: int | None = None) -> Span:
+    """Exact span of a quote inside one included designated-paper chunk of the context."""
+    v = _verify(i)
+    entry = v.included.get(chunk_id)
+    if entry is None or entry[1].input.paper_id != i.item.paper_id:
+        raise ValueError("cited chunk is not a designated-paper chunk of the supplied context")
+    _, chunk, offset = entry
+    text, hits = chunk.rendered_text, []
+    at = text.find(quote) if quote else -1
+    while at >= 0:
+        hits.append(at)
+        at = text.find(quote, at + 1)
+    if not hits:
+        raise ValueError("quote is not in the cited chunk")
+    if occurrence is None:
+        if len(hits) > 1:
+            raise ValueError(f"quote occurs {len(hits)} times in the chunk; give its occurrence")
+        occurrence = 1
+    if not 1 <= occurrence <= len(hits):
+        raise ValueError("occurrence out of range")
+    start = offset + hits[occurrence - 1]
+    return Span(chunk_id=chunk_id, start=start, end=start + len(quote), text=quote)
+
+
+def _check_span(i: Inputs, v: Supplied, span: Span) -> None:
+    entry = v.included.get(span.chunk_id)
+    if entry is None or entry[1].input.paper_id != i.item.paper_id:
+        raise ValueError("cited chunk is not a designated-paper chunk of the supplied context")
+    _, chunk, offset = entry
+    if not (offset <= span.start and span.end <= offset + len(chunk.rendered_text)):
+        raise ValueError("cited span lies outside its chunk")
+    if i.context.exact_context[span.start : span.end] != span.text:
+        raise ValueError("cited span is not in the exact supplied context")
+
+
+def _validate_review(judgment: StageBJudgment, i: Inputs, candidate: StageBCandidate) -> None:
+    """Rules v2 whole-context review: every citation is exact supplied text; a positive cites
+    every component of one set (from any number of chunks); a negative names a missing or
+    unfaithful component of every set. Whether the text means it is the reviewer's judgment."""
+    if not needs_review_v2(candidate, i):
+        raise ValueError("a reviewer may decide only cases rules v2 routes to review")
+    v = _verify(i)
+    sets = [len(s.components) for s in i.item.evidence_sets]
+    named = [(c.set_index, c.component_index) for c in judgment.citations] + [
+        (m.set_index, m.component_index) for m in judgment.missing_components
+    ]
+    for set_index, component_index in named:
+        if set_index >= len(sets) or component_index >= sets[set_index]:
+            raise ValueError("citation names a set or component the item does not have")
+    for span in [*judgment.citations, *judgment.conflict_citations]:
+        _check_span(i, v, span)
+    cited = {(c.set_index, c.component_index) for c in judgment.citations}
+    complete = [s for s, n in enumerate(sets) if all((s, k) in cited for k in range(n))]
+    if judgment.status == "delivered":
+        if len({c.set_index for c in judgment.citations}) != 1 or not complete:
+            raise ValueError("delivered cites every component of one evidence set")
+    elif judgment.status == "not_delivered":
+        if {m.set_index for m in judgment.missing_components} != set(range(len(sets))):
+            raise ValueError("not_delivered names a missing or unfaithful component of every set")
+        if complete and judgment.reason not in {"unfaithful_in_context", "ambiguous_referent"}:
+            raise ValueError(
+                "a fully cited set is lost only as unfaithful_in_context or ambiguous_referent"
+            )
 
 
 def validate_judgment(judgment: StageBJudgment, i: Inputs) -> None:
@@ -418,8 +631,11 @@ def validate_judgment(judgment: StageBJudgment, i: Inputs) -> None:
     if judgment.candidate != stage_b_ref(candidate):
         raise ValueError("judgment cites a candidate that is not the evaluator output")
     if judgment.basis == "deterministic":
-        if judgment != deterministic_judgment(candidate):
+        if judgment != deterministic_judgment(candidate, judgment.rules, i):
             raise ValueError("deterministic judgment is not reproduced by the evaluator")
+        return
+    if judgment.rules == "v2":
+        _validate_review(judgment, i, candidate)
         return
     if candidate.determination != "needs_review":
         raise ValueError("a reviewer may decide only cases the evaluator routed to review")

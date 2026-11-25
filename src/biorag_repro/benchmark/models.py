@@ -4,9 +4,10 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from biorag_repro.core.hashing import validate_sha256
+from biorag_repro.core.records import Record
 
 AnswerClass = Literal[
     "quantitative_value",
@@ -16,10 +17,6 @@ AnswerClass = Literal[
     "categorical_conclusion",
 ]
 SourceStatus = Literal["present_equivalent", "absent", "materially_different", "unresolved"]
-
-
-class Record(BaseModel):
-    model_config = ConfigDict(strict=True, extra="forbid", validate_default=True)
 
 
 class QuantityGold(Record):

@@ -19,7 +19,7 @@ from test_stage_a import (
 
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.evaluation import stage_b
-from biorag_repro.evaluation.models import StageAJudgment
+from biorag_repro.evaluation.models import AnswerSurface, StageAJudgment
 from biorag_repro.evaluation.stage_a import automatic_judgment, locate, stage_a_ref
 from biorag_repro.evaluation.stage_b_models import Delivered, StageBIdentity, StageBJudgment
 from biorag_repro.evaluation.stage_b_storage import (
@@ -449,6 +449,21 @@ def test_reviewer_attested_equivalence_is_delivered_only_after_review():
     sets = [locus(document, PROSE_COMPONENTS)]
     subject = sets[0].placements[0].components[0]
     subject.equivalence_note = "descriptor paraphrases the sentence subject"
+    stage_a = judgment(item, document, "preserved", sets=sets)
+    w = finish(document, result, item, stage_a)
+    outcome = deliver(w, [w.chunk(P_A)]).evaluate()
+    assert outcome.determination == "needs_review"
+    assert not outcome.delivered
+
+
+def test_reviewer_attested_answer_surface_is_delivered_only_after_review():
+    document, _, _, _, result = build(prose_xml(P_A, P_B), counter=lambda s: len(s.split()) * 9)
+    item = make_item(document, PROSE_COMPONENTS)
+    sets = [locus(document, PROSE_COMPONENTS)]
+    answer = sets[0].placements[0].components[2]
+    answer.answer_surface = AnswerSurface(
+        canonical_text="−1.2 × 10⁻³ in the cohort", note="same value; cohort is the sample"
+    )
     stage_a = judgment(item, document, "preserved", sets=sets)
     w = finish(document, result, item, stage_a)
     outcome = deliver(w, [w.chunk(P_A)]).evaluate()

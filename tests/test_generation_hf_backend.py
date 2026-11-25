@@ -10,10 +10,9 @@ from importlib import metadata
 
 import pytest
 import torch
+from generation_support import ROOT, artifact, needs_tokenizer, resolve, synthetic_settings
 from test_generation_attempts import Clock
-from test_generation_config import resolve, synthetic_settings
 from test_generation_environment import cpu_probes
-from test_generation_prompt import ROOT, artifact, needs_tokenizer
 from test_generation_receipts import CONTEXT, CONTEXT_REF
 from tiny_model import EOS, PAD, load_once
 
@@ -147,6 +146,8 @@ def approved(monkeypatch, tiny):
         generator_config, "APPROVED_CHECKPOINTS", {("Qwen/Qwen3-8B", REV): manifest}
     )
     monkeypatch.setattr(hf_backend, "is_official_device", lambda device: True)
+    monkeypatch.setattr(generator_config, "require_qualified_settings", lambda settings: None)
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA L4")
     return manifest
 
 
@@ -179,12 +180,17 @@ def test_an_approved_checkpoint_on_cpu_is_still_not_official(tiny, monkeypatch):
     assert backend_for(candidate(), tiny, device="cpu").identity.kind == "smoke"
 
 
-def test_cpu_is_never_official_and_nothing_is_approved_by_default(tiny):
-    assert generator_config.APPROVED_CHECKPOINTS == {}
+def test_cpu_is_never_official_and_synthetic_checkpoint_is_unapproved(tiny):
+    assert ("Qwen/Qwen3-8B", REV) not in generator_config.APPROVED_CHECKPOINTS
     assert not hf_backend.is_official_device("cpu")
     assert not hf_backend.is_official_device("cuda")
     assert not hf_backend.is_official_device("cuda:0,1")
     assert hf_backend.is_official_device("cuda:1")
+    assert backend_for(candidate(), tiny).identity.kind == "smoke"
+
+
+def test_checkpoint_approval_does_not_extend_to_another_gpu(approved, tiny, monkeypatch):
+    monkeypatch.setattr(torch.cuda, "get_device_name", lambda device: "NVIDIA RTX 3090")
     assert backend_for(candidate(), tiny).identity.kind == "smoke"
 
 

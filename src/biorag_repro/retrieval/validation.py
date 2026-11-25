@@ -8,8 +8,8 @@ from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.storage import read_project_json
 from biorag_repro.documents.authorization import ScientificAuthority, validate_scientific_pair
+from biorag_repro.documents.ingestion import Phase4GateIndex, Phase4Validation
 from biorag_repro.documents.models import CanonicalDocument, CanonicalNode, SourceMapping
-from biorag_repro.documents.phase4 import Phase4GateIndex, Phase4Validation
 from biorag_repro.retrieval.models import (
     Bm25Index,
     CanonicalInput,
@@ -29,7 +29,7 @@ class CanonicalAuthority:
     """Caller-selected evidence, not a deserializable approval or execution proof.
 
     The caller must select reviewed evidence outside the submitted input record.
-    Existing Phase 4 validation supplies the frozen release/config/native checks.
+    Existing source validation supplies the frozen release/config/native checks.
     """
 
     corpus_root: Path

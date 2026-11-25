@@ -22,7 +22,6 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.config import ResolvedConfiguration
 from biorag_repro.core.hashing import sha256_bytes, validate_sha256
 from biorag_repro.core.identity import (
@@ -33,6 +32,7 @@ from biorag_repro.core.identity import (
     observation_key,
 )
 from biorag_repro.core.manifest import ArtifactRef, BuildInput, BuildManifest, DerivedOutput
+from biorag_repro.core.records import Record
 from biorag_repro.core.storage import (
     publish_bytes,
     publish_manifest,
@@ -145,7 +145,8 @@ def _check_backend_purpose(kind: str, purpose: str) -> None:
 
 RunPhase = Literal["development", "qualification"]
 
-# Environment evidence stored with an official run (see environment_gate).
+# Environment evidence stored with an official run. Its writer was removed in Phase 2.5, so an
+# official run cannot start until a Phase 8 replacement exists.
 EVIDENCE_DIR = "environment_evidence"
 LOCK_FILE = f"{EVIDENCE_DIR}/lock.toml"
 VERIFICATION_FILE = f"{EVIDENCE_DIR}/verification.json"

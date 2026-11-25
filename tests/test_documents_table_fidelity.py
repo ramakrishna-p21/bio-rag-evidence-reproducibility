@@ -10,6 +10,14 @@ from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.identity import ArtifactInput, raw_source_artifact_id
 from biorag_repro.core.manifest import ArtifactRef, BuildInput
 from biorag_repro.core.storage import serialize_project_json
+from biorag_repro.documents.coverage import validate_pdf_coverage
+from biorag_repro.documents.ingestion import (
+    JatsBuild,
+    Phase4GateIndex,
+    publish_gate_index,
+    publish_validation,
+    validate_build,
+)
 from biorag_repro.documents.jats import ingest_jats
 from biorag_repro.documents.models import CanonicalDocument
 from biorag_repro.documents.pdf import TRANSFORMATION_ID, canonicalize_native
@@ -19,14 +27,6 @@ from biorag_repro.documents.pdf_ingest import (
     _ref,
     canonical_build_ref,
     publish_pdf_result,
-)
-from biorag_repro.documents.phase4 import (
-    JatsBuild,
-    Phase4GateIndex,
-    publish_gate_index,
-    publish_validation,
-    validate_build,
-    validate_pdf_coverage,
 )
 from biorag_repro.documents.storage import publish_canonical_jats
 

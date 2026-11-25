@@ -98,7 +98,7 @@ def test_saved_native_reuse_records_original_attempt_without_new_conversion(tmp_
     )
     assert renewed.canonical_artifact != original.canonical_artifact
     assert renewed.build_manifest != original.build_manifest
-    from biorag_repro.documents.phase4 import validate_build
+    from biorag_repro.documents.ingestion import validate_build
 
     checked = validate_build(renewed, tmp_path)
     assert checked.canonical_build_artifact is not None

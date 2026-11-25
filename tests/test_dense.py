@@ -157,3 +157,32 @@ def test_shape_dtype_count_and_top_twenty():
     ids = [f"c{i:02}" for i in reversed(range(24))]
     ranked = dense.rank_vectors(vectors, vectors[0], ids, ["P001"] * 24, None)
     assert [ids[i] for i, _ in ranked] == [f"c{i:02}" for i in range(20)]
+
+
+@pytest.mark.parametrize(
+    "installed, accepted",
+    [
+        ("2.15.0+cpu", True),
+        ("2.15.0+cu132", True),  # the approved generation lock's build
+        ("2.15.0+cu128", False),
+        ("2.15.0", False),
+        ("2.15.1+cpu", False),
+        ("2.14.0+cu132", False),
+    ],
+)
+def test_only_the_cpu_and_approved_lock_torch_builds_are_accepted(installed, accepted):
+    from biorag_repro.retrieval.dense import check_torch_build
+
+    if accepted:
+        assert check_torch_build(installed) == installed
+    else:
+        with pytest.raises(ValueError, match="version mismatch"):
+            check_torch_build(installed)
+
+
+def test_dense_execution_records_only_cpu_inference():
+    from typing import Literal
+
+    from biorag_repro.retrieval.models import DenseExecution
+
+    assert DenseExecution.model_fields["device"].annotation == Literal["cpu"]

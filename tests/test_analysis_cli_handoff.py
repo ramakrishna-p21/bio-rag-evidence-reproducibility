@@ -1,4 +1,3 @@
-# ruff: noqa: F811
 """The rehearsal-only handoff check of biorag-analysis.
 
 It checks stored bytes, hashes, lineage and the published table of a *rehearsal* handoff. It can
@@ -7,9 +6,7 @@ official handoff.
 """
 
 import pytest
-from test_analysis_handoff import CODE, official_table, pair, publish, rehearsal, world
-from test_generation_official import recognised, view  # noqa: F401  (fixtures)
-from test_generation_prompt import needs_tokenizer
+from test_analysis_handoff import pair, publish, rehearsal, stored, world
 
 from biorag_repro.evaluation import analysis_handoff as ah
 from biorag_repro.evaluation.analysis_cli import main
@@ -76,18 +73,17 @@ def test_the_two_operations_take_their_own_references(tmp_path):
         main(["verify-handoff", "--root", str(tmp_path), "--build", built.logical_ref])
 
 
-@needs_tokenizer
-def test_an_official_handoff_is_not_accepted_by_the_standalone_check(
-    tmp_path,
-    view,
-    tiny,
-    recognised,
-    capsys,
-):
-    verified, root, build = official_table(tmp_path, view, tiny)
-    handoff = ah.build_handoff(build, root, code=CODE, official_runs=[verified])
-    _, built = ah.publish_handoff(handoff, root, official_runs=[verified])
-    assert main(handoff_args(root, built)) == 2
+def test_an_official_handoff_is_not_accepted_by_the_standalone_check(tmp_path, capsys):
+    _, _, handoff = rehearsal(tmp_path, pair(world()))
+    run = ah.SourceRun(
+        run_id="run_x", completion=handoff.table_build, run_record_sha256="1" * 64,
+        resolved_config_sha256="2" * 64, raw_config_sha256="3" * 64, roster_sha256="4" * 64,
+        matrix_arm="confirmatory", backend_kind="official", observations=2,
+    )  # fmt: skip
+    claimed = handoff.model_copy(
+        update={"input_origin": "verified_official_run", "source_runs": [run]}
+    )
+    assert main(handoff_args(tmp_path, stored(tmp_path, claimed))) == 2
     captured = capsys.readouterr()
     assert "valid" not in captured.out
-    assert "freshly verified official runs" in captured.err
+    assert "claims an official origin" in captured.err

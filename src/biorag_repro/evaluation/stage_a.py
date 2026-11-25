@@ -5,15 +5,22 @@ evidence of absence or corruption: those labels need a reviewer's judgment.
 """
 
 import re
+import unicodedata
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
+from itertools import pairwise
 
 from biorag_repro.benchmark.models import BenchmarkItem
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
-from biorag_repro.core.identity import ArtifactInput, derived_artifact_id
 from biorag_repro.core.manifest import ArtifactRef
-from biorag_repro.core.storage import serialize_project_json
-from biorag_repro.documents.chunking import discover_occurrences
-from biorag_repro.documents.models import CanonicalDocument, TableCell, TableData
+from biorag_repro.documents.models import (
+    CanonicalDocument,
+    CanonicalNode,
+    TableCell,
+    TableData,
+)
 from biorag_repro.evaluation.models import (
     ComponentLocus,
     Placement,
@@ -22,6 +29,9 @@ from biorag_repro.evaluation.models import (
     StageAJudgment,
     Suggestion,
 )
+from biorag_repro.evaluation.stage_records import stage_record_ref
+from biorag_repro.evaluation.surface import surface_problem
+from biorag_repro.retrieval.chunking import discover_occurrences
 from biorag_repro.retrieval.models import SourceOccurrence
 
 BLOCKS = {"paragraph", "list_item", "caption", "title", "formula", "figure", "reference"}
@@ -32,6 +42,21 @@ _NUMBER = re.compile(r"\d[\d.,]*")
 _SD_TAIL = re.compile(r"\s*±\s*\d+(?:\.\d+)?\s*")
 _MEAN_STATEMENT = re.compile(r"\bmean\s*±", re.IGNORECASE)
 _SUGGESTION_LIMIT = 5
+# Dashes and quotation marks differ between sources and Docling; minus signs, plus signs,
+# comparison symbols, Greek letters and super/subscripts carry scientific meaning and stay.
+_TYPOGRAPHY = {
+    **dict.fromkeys(map(ord, "\u2010\u2011\u2012\u2013\u2014\u2015"), "-"),
+    **dict.fromkeys(map(ord, "\u2018\u2019"), "'"),
+    **dict.fromkeys(map(ord, "\u201c\u201d"), '"'),
+    0xAD: None,  # soft hyphen
+}
+_Box = tuple[int, float, float, float, float]  # page, left, top, right, bottom
+_Layouts = dict[int, tuple[float, float, bool]]
+_TEXT_FLOW = {"title", "paragraph", "list_item"}
+_NOT_A_HEADING_PARENT = {"figure", "table", "table_cell", "caption"}
+_WIDE = 0.6  # box at least this fraction of the page text width spans the columns
+_COLUMN_SLACK = 0.08  # fraction of the text width allowed across the column midline
+_VERTICAL_TOLERANCE = 2.0  # points; Docling boxes are approximate
 
 
 class IneligibleItem(ValueError):
@@ -42,17 +67,39 @@ def item_digest(item: BenchmarkItem) -> str:
     return sha256_bytes(canonical_json_bytes(item.model_dump(mode="json")))
 
 
+_FINAL_TEST: ContextVar[bool] = ContextVar("final_test_evaluation", default=False)
+
+
+@contextmanager
+def final_test_scope() -> Iterator[None]:
+    """Admit final-test items, and only them, inside an authorized final-test evaluation.
+
+    Outside this scope final-test items stay refused, so development code cannot reach them.
+    """
+    token = _FINAL_TEST.set(True)
+    try:
+        yield
+    finally:
+        _FINAL_TEST.reset(token)
+
+
+def in_final_test_scope() -> bool:
+    return _FINAL_TEST.get()
+
+
 def check_item(item: BenchmarkItem, document: CanonicalDocument, canonical: ArtifactRef) -> None:
-    """Require an accepted development item whose source is this canonical document's source."""
-    if item.split == "final_test":
+    """Require an accepted paired-equivalent item of the active split whose source is this
+    canonical document's source. The split is development unless `final_test_scope` is active."""
+    split = "final_test" if _FINAL_TEST.get() else "development"
+    if item.split == "final_test" and split != "final_test":
         raise IneligibleItem("final-test items are protected from development evaluation")
     if (
         item.candidate_status != "accepted"
-        or item.split != "development"
+        or item.split != split
         or item.jats_status != "present_equivalent"
         or item.pdf_status != "present_equivalent"
     ):
-        raise IneligibleItem("item is not an accepted paired-equivalent development item")
+        raise IneligibleItem(f"item is not an accepted paired-equivalent {split} item")
     if item.paper_id != document.paper_id:
         raise IneligibleItem("item and canonical document name different papers")
     refs = item.jats_refs if document.representation == "JATS" else item.pdf_refs
@@ -119,7 +166,24 @@ class Index:
     order: dict[str, int] = field(default_factory=dict)
 
 
+_LAST_INDEX: list[tuple[ArtifactRef, CanonicalDocument, "Index"]] = []
+
+
 def _index(document: CanonicalDocument, canonical: ArtifactRef) -> Index:
+    """The occurrence index of one canonical document.
+
+    Indexing a large document is expensive and every unit of a review packet needs it twice,
+    so the most recent index is reused when the same artifact and an equal document are asked
+    for again. A finished index is never modified, so sharing it cannot change a result.
+    """
+    if _LAST_INDEX and _LAST_INDEX[0][0] == canonical and _LAST_INDEX[0][1] == document:
+        return _LAST_INDEX[0][2]
+    index = _build_index(document, canonical)
+    _LAST_INDEX[:] = [(canonical, document, index)]
+    return index
+
+
+def _build_index(document: CanonicalDocument, canonical: ArtifactRef) -> Index:
     nodes = {n.node_id: n for n in document.nodes}
     cell_of: dict[str, tuple[str, TableCell]] = {}
     linked: dict[str, str] = {}
@@ -460,22 +524,7 @@ def stage_a_dependencies(value: StageACandidate | StageAJudgment) -> list[tuple[
 def stage_a_ref(value: StageACandidate | StageAJudgment) -> ArtifactRef:
     """Identify a record by its exact bytes and its canonical, item and candidate lineage."""
     kind = "stage_a_candidate" if isinstance(value, StageACandidate) else "stage_a_judgment"
-    dependencies = stage_a_dependencies(value)
-    digest = sha256_bytes(serialize_project_json(value, type(value)))
-    artifact_id = derived_artifact_id(
-        artifact_kind=kind,
-        inputs=[ArtifactInput(role, ref.artifact_id, ref.sha256) for role, ref in dependencies],
-        transformation_id=f"{kind}_v1",
-        transformation_settings_sha256=None,
-        output_sha256=digest,
-        output_format="json",
-        serialization_version="1",
-    )
-    return ArtifactRef(
-        artifact_id=artifact_id,
-        logical_ref=f"evaluation/stage_a/{kind}/{artifact_id}.json",
-        sha256=digest,
-    )
+    return stage_record_ref(value, kind, "stage_a", stage_a_dependencies(value), f"{kind}_v1")
 
 
 def automatic_judgment(candidate: StageACandidate, candidate_ref: ArtifactRef) -> StageAJudgment:
@@ -524,8 +573,11 @@ def _mean_sd_matches(
 def _row_anchor(cell: TableCell, answer: TableCell) -> bool:
     if cell.mapping.kind == "docling" and cell.is_header and not cell.native_row_header:
         return False
-    return cell.row <= answer.row < cell.row + cell.row_span and (
-        cell.column + cell.column_span <= answer.column
+    # The answer cell may span several rows; any covered row links a row label to it.
+    return (
+        cell.row < answer.row + answer.row_span
+        and answer.row < cell.row + cell.row_span
+        and (cell.column + cell.column_span <= answer.column)
     )
 
 
@@ -534,8 +586,10 @@ def _column_anchor(cell: TableCell, answer: TableCell) -> bool:
         return False
     if cell.mapping.kind == "docling" and not cell.native_column_header:
         return False
-    return cell.column <= answer.column < cell.column + cell.column_span and (
-        cell.row + cell.row_span <= answer.row
+    return (
+        cell.column < answer.column + answer.column_span
+        and answer.column < cell.column + cell.column_span
+        and cell.row + cell.row_span <= answer.row
     )
 
 
@@ -606,6 +660,180 @@ def _scope_titles(index: Index, container: str) -> set[str]:
     return titles
 
 
+def _heading_key(text: str) -> str:
+    """Comparison key for a heading: typography is ignored, scientific signs and symbols are not."""
+    text = "".join(
+        unicodedata.normalize("NFKC", c) if "\ufb00" <= c <= "\ufb06" else c for c in text
+    )
+    text = unicodedata.normalize("NFC", text).translate(_TYPOGRAPHY)
+    return " ".join(text.split()).casefold()
+
+
+def _boxes(node: CanonicalNode) -> list[_Box] | None:
+    """(page, left, top, right, bottom) per provenance entry; None if any entry is unusable."""
+    boxes = []
+    for entry in node.mapping.provenance:
+        box = entry.bbox
+        if (
+            entry.page_no is None
+            or box is None
+            or box.coord_origin != "BOTTOMLEFT"
+            or box.b > box.t
+        ):
+            return None
+        boxes.append((entry.page_no, box.l, box.t, box.r, box.b))
+    return boxes or None
+
+
+def _layouts(nodes: list[CanonicalNode]) -> _Layouts:
+    """Per page: text extent and whether the page's own text boxes demonstrate two columns."""
+    boxes: dict[int, list[tuple[float, float]]] = {}
+    for n in nodes:
+        if n.kind in _TEXT_FLOW and n.native_content_layer == "body":
+            for page, left, _, right, _ in _boxes(n) or []:
+                boxes.setdefault(page, []).append((left, right))
+    layouts = {}
+    for page, spans in boxes.items():
+        low, high = min(s[0] for s in spans), max(s[1] for s in spans)
+        middle, slack = (low + high) / 2, _COLUMN_SLACK * (high - low)
+        narrow = [s for s in spans if s[1] - s[0] < _WIDE * (high - low)]
+        two = any(s[1] <= middle + slack for s in narrow) and any(
+            s[0] >= middle - slack for s in narrow
+        )
+        layouts[page] = (low, high, two)
+    return layouts
+
+
+def _column(box: _Box, layouts: _Layouts) -> str | None:
+    """'full', 'left' or 'right'; a page without demonstrated columns is read as one column.
+
+    None when a box on a two-column page cannot be placed in a column.
+    """
+    low, high, two = layouts[box[0]]
+    width, middle = high - low, (low + high) / 2
+    if not two or box[3] - box[1] >= _WIDE * width:
+        return "full"
+    if box[3] <= middle + _COLUMN_SLACK * width:
+        return "left"
+    if box[1] >= middle - _COLUMN_SLACK * width:
+        return "right"
+    return None
+
+
+def _reads_forward(before: _Box, after: _Box, layouts: _Layouts) -> bool:
+    """Whether `after` can follow `before` in reading order on this page layout.
+
+    Only layouts this check can establish are accepted: a later page, the same column or a
+    full-width box lower on the page, or the left column followed by the right column.
+    """
+    if after[0] != before[0]:
+        return after[0] > before[0]
+    first, second = _column(before, layouts), _column(after, layouts)
+    if first is None or second is None:
+        return False
+    if first == second or "full" in (first, second):
+        return after[2] <= before[4] + _VERTICAL_TOLERANCE
+    return first == "left"
+
+
+def _flat_heading(
+    index: Index, container: str, item: BenchmarkItem, set_index: int | None = None
+) -> str | None:
+    """The flat PDF heading that may anchor scope for `container`, or None (fail closed).
+
+    The canonical PDF has no section ancestry, so nothing is inferred from a nearby title
+    alone. The heading must be the nearest preceding title in the same document, equal one
+    of the item's frozen PDF section labels (a check on existing canonical text, never a
+    source of text), and the page and column geometry along the reading chain from the
+    heading to the container must contradict nothing. Tables, tied or competing headings,
+    unpositioned or unmeasurable nodes, and a complete verbatim placement of the same
+    evidence elsewhere in the heading's extent all reject. Structural identity is not
+    scientific sufficiency; that stays with the reviewer.
+    """
+    document = index.document
+    if document.representation != "PDF_DOCLING":
+        return None
+    nodes = document.nodes
+    block = next(n for n in nodes if n.node_id == container)
+    if block.kind not in {"paragraph", "list_item"} or block.native_content_layer != "body":
+        return None
+    before = [
+        t
+        for t in nodes[: block.order]
+        if t.kind == "title" and t.native_content_layer != "furniture"
+    ]
+    if not before:
+        return None
+    heading = before[-1]
+    parent = next((n for n in nodes if n.node_id == heading.parent_node_id), None)
+    if (
+        heading.native_content_layer != "body"
+        or heading.native_label != "section_header"
+        or heading.node_id not in index.units
+        or (parent is not None and parent.kind in _NOT_A_HEADING_PARENT)
+    ):
+        return None
+    labels = {_heading_key(r.section) for r in item.pdf_refs if r.section}
+    if _heading_key(" ".join(u.text for u in index.units[heading.node_id])) not in labels:
+        return None
+    chain = [
+        n
+        for n in nodes[heading.order : block.order + 1]
+        if n.kind in _TEXT_FLOW and n.native_content_layer == "body"
+    ]
+    measured = [_boxes(n) for n in chain]
+    if any(m is None for m in measured) or any(
+        n.native_order_state == "unpositioned" for n in chain
+    ):
+        return None
+    entries = [e for m in measured if m for e in m]
+    layouts = _layouts(nodes)
+    if any(not _reads_forward(a, b, layouts) for a, b in pairwise(entries)):
+        return None
+    # Body text outside the chain that sits on a page the chain skips, before the heading on
+    # a later page, or after the block on an earlier page means the order is not established.
+    inside = {n.node_id for n in chain}
+    first_page, last_page = entries[0][0], entries[-1][0]
+    for n in nodes:
+        if n.node_id in inside or n.kind not in _TEXT_FLOW or n.native_content_layer != "body":
+            continue
+        pages = [e[0] for e in _boxes(n) or []]
+        if pages and (
+            any(first_page < page < last_page for page in pages)
+            or (n.order < heading.order and max(pages) > first_page)
+            or (n.order > block.order and min(pages) < last_page)
+        ):
+            return None
+    end = next(
+        (
+            n.order
+            for n in nodes[block.order + 1 :]
+            if n.kind == "title" and n.native_content_layer != "furniture"
+        ),
+        len(nodes),
+    )
+    for other in index.units:
+        position = next(n.order for n in nodes if n.node_id == other)
+        if other == container or not heading.order < position < end:
+            continue
+        for number in range(len(item.evidence_sets)) if set_index is None else [set_index]:
+            components: list[tuple[str, str]] = [
+                (c.role, c.text) for c in item.evidence_sets[number].components
+            ]
+            if _place(index, other, components, [], number, set()) is not None:
+                return None
+    return heading.node_id
+
+
+def _scope_titles_for(
+    index: Index, container: str, item: BenchmarkItem, set_index: int | None = None
+) -> set[str]:
+    """Native ancestor titles, plus the accepted flat PDF heading when there is one."""
+    titles = _scope_titles(index, container)
+    heading = _flat_heading(index, container, item, set_index)
+    return titles | {heading} if heading is not None else titles
+
+
 def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> None:
     for locus in judgment.sets:
         if locus.set_index >= len(item.evidence_sets):
@@ -621,8 +849,8 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                 for n in index.document.nodes
                 if n.node_id == placement.container_node_id
             )
+            scope = _scope_titles_for(index, placement.container_node_id, item, locus.set_index)
             for component in placement.components:
-                scope = _scope_titles(index, placement.container_node_id)
                 for occ_id in component.occurrence_ids:
                     owner = index.where.get(occ_id)
                     if owner == placement.container_node_id:
@@ -632,11 +860,19 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                         raise ValueError("occurrence is not text in the named container")
                 if component.equivalence_note is not None:
                     continue  # attested; the anchors are checked structurally below
+                surface = component.answer_surface
+                if surface is not None:
+                    if table:
+                        raise ValueError("an answer surface applies to prose containers only")
+                    others = [c.text for c in placement.components if c is not component]
+                    if problem := surface_problem(component.text, surface, others):
+                        raise ValueError(f"answer surface rejected: {problem}")
+                carried = surface.canonical_text if surface else component.observed_text
                 if component.form == "mean_sd":
                     if not table:
                         raise ValueError("mean ± SD applies to table cells only")
                     found = _mean_sd_matches(index, placement.container_node_id, component.text)
-                elif component.observed_text is None:
+                elif carried is None:
                     found = _component_matches(
                         index, placement.container_node_id, component.role, component.text, table
                     )
@@ -644,7 +880,7 @@ def _check_loci(judgment: StageAJudgment, item: BenchmarkItem, index: Index) -> 
                     found = [
                         (u, s)
                         for u in index.units[placement.container_node_id]
-                        if (s := _spans(u.text, component.observed_text, bounded=False))
+                        if (s := _spans(u.text, carried, bounded=False))
                     ]
                 allowed = {i for unit, spans in found for i in unit.ids(spans)}
                 if not allowed or not set(component.occurrence_ids) <= allowed:

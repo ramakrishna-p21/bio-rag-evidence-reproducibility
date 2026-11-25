@@ -85,9 +85,9 @@ def test_g01_altered_release_record_fails(world):
     assert gathered(world, "G01_corpus_sources").state == "failed"
 
 
-def test_g01_self_consistent_but_unapproved_stays_pending(world):
+def test_g01_self_consistent_fixture_differs_from_real_approval(world):
     result = to_result("G01_corpus_sources", gathered(world, "G01_corpus_sources"), REAL_POLICY)
-    assert result.status == "pending" and result.reason_code == "verified_pending_policy_approval"
+    assert result.status == "failed" and result.reason_code == "policy_mismatch"
 
 
 # ---- G02 ----------------------------------------------------------------------------------
@@ -162,12 +162,50 @@ def test_g02_does_not_leak_item_text_into_evidence_or_detail(world):
     assert "TP53" not in blob and "Question about" not in blob
 
 
+def test_g02_hash_only_requires_exact_approved_witness_without_decoding(world, monkeypatch):
+    from biorag_repro.benchmark.release import BenchmarkRelease
+
+    raw = (world.data / evidence.BENCHMARK_RELEASE).read_bytes()
+    release = BenchmarkRelease.model_validate_json(raw)
+
+    def forbidden(*args):
+        raise AssertionError("protected items were decoded")
+
+    monkeypatch.setattr(evidence, "decode_jsonl", forbidden)
+    monkeypatch.setattr(evidence, "verify_release_inputs", forbidden)
+    gate = gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"]
+    assert gate.reason == "benchmark_count_witness_missing"
+    witness = {
+        "schema_version": "benchmark_count_witness_v1",
+        "researcher": "Rama Krishna Pudota",
+        "approved": True,
+        "benchmark_version": release.benchmark_version,
+        "release_record_sha256": sha256_bytes(raw),
+        "items_sha256": release.items.sha256,
+        "split_sha256": release.split.sha256,
+        "validation_report_sha256": release.validation_report.sha256,
+        "item_count": release.item_count,
+        "development_items": 2,
+        "final_test_items": 3,
+    }
+    approval = world.repo / "approvals/benchmark_count_witness_v1.json"
+    approval.parent.mkdir(exist_ok=True)
+    approval.write_text(json.dumps(witness))
+    assert gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"].state == "ok"
+    witness["approved"] = False
+    approval.write_text(json.dumps(witness))
+    assert gather_all(world.ctx, g02_hash_only=True)["G02_benchmark_freeze"].state == "failed"
+
+
 # ---- G06 ----------------------------------------------------------------------------------
 
 
-def test_g06_provisional_lock_is_pending_with_inventory_snapshot(world):
+def test_g06_approved_lock_rejects_a_different_inventory_with_snapshot(world):
     g = gathered(world, "G06_python_environment")
-    assert (g.state, g.reason) == ("absent", "environment_lock_not_approved")
+    assert (g.state, g.reason) == (
+        "failed",
+        "installed_environment_differs_from_approved_lock",
+    )
     assert {"python_inventory", "environment_verification", "environment_spec"} <= {
         r.kind for r in g.refs
     }
@@ -227,7 +265,7 @@ def test_g06_approved_lock_that_differs_from_the_machine_fails(world, monkeypatc
 
 def test_g07_matching_runtime_stays_pending_because_no_host_is_designated(world):
     g = gathered(world, "G07_r_analysis_environment")
-    assert (g.state, g.reason) == ("absent", "analysis_host_not_designated")
+    assert (g.state, g.reason) == ("absent", "analysis_designation_missing")
     kinds = {r.kind for r in g.refs}
     assert {"renv_lock", "analysis_sources", "r_inspection"} <= kinds
 
@@ -315,7 +353,7 @@ def test_g09_clean_tree_records_tracked_and_frozen_identities(world):
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and g.facts["head_sha"] == world.commit
     names = {r.locator for r in g.refs if r.kind == "frozen_specification"}
-    assert len(names) == 7 and all(n.startswith("repo/docs/frozen/") for n in names)
+    assert len(names) == 14 and all(n.startswith("repo/docs/frozen/") for n in names)
     assert g.subject["frozen_specifications"]["ARCHITECTURE.md"] == sha256_bytes(
         b"frozen ARCHITECTURE\n"
     )
@@ -327,6 +365,12 @@ def test_g09_frozen_specification_change_changes_the_subject_without_git_noticin
     assert git(world.repo, "status", "--porcelain") == ""
     after = subject_digest(gathered(world, "G09_scientific_source_revision"))
     assert before != after
+
+
+def test_g09_drive_amendment_change_changes_the_subject(world):
+    before = subject_digest(gathered(world, "G09_scientific_source_revision"))
+    write(world.repo / "docs/frozen/DRIVE_CAMPAIGN_CUSTODY_AMENDMENT_V1.md", "edited\n")
+    assert subject_digest(gathered(world, "G09_scientific_source_revision")) != before
 
 
 def test_g09_changed_frozen_specification_fails_a_populated_slot(world):
@@ -353,6 +397,22 @@ def test_g09_descendant_commit_with_other_content_is_a_different_identity(world)
     git(world.repo, "commit", "-qam", "change")
     g = gathered(world, "G09_scientific_source_revision")
     assert g.state == "ok" and subject_digest(g) != first and g.facts["head_sha"] != world.commit
+
+
+def test_g09_keeps_the_decision_in_its_subject_but_not_in_execution_source_identity(world):
+    before = gathered(world, "G09_scientific_source_revision")
+    before_subject = subject_digest(before)
+    before_execution = before.facts["execution_source_identity_sha256"]
+    write(world.repo / "approvals/final_test_execution.json", "{}\n")
+    git(world.repo, "add", "approvals/final_test_execution.json")
+    git(world.repo, "commit", "-qm", "decision")
+    after = gathered(world, "G09_scientific_source_revision")
+    assert subject_digest(after) != before_subject
+    assert after.facts["execution_source_identity_sha256"] == before_execution
+    assert any(
+        entry[2] == "approvals/final_test_execution.json"
+        for entry in after.subject["tracked_scope"]
+    )
 
 
 def test_g09_untracked_and_modified_scientific_source_fail(world):
@@ -384,12 +444,10 @@ def test_g09_not_a_repository_is_unavailable(world, tmp_path):
 # ---- the gates with no evidence yet -------------------------------------------------------
 
 NO_EVIDENCE = {
-    "G03_final_test_configuration_freeze": "final_test_freeze_absent",
-    "G04_generator_qualification": "independent_phase7_evidence_absent",
-    "G05_model_parser_identities": "checkpoint_and_parser_identities_not_approved",
+    "G03_final_test_configuration_freeze": "production_freeze_evidence_missing",
+    "G04_generator_qualification": "qualification_evidence_missing",
+    "G05_model_parser_identities": "model_parser_evidence_missing",
     "G10_development_restart_recovery": "official_restart_evidence_absent",
-    "G11_storage_authorization": "storage_authorization_absent",
-    "G12_shared_gpu_authorization": "gpu_authorization_absent",
 }
 
 
@@ -405,12 +463,13 @@ def test_unevidenced_gates_stay_pending_even_when_their_slot_is_populated(world,
     assert to_result(gate, g, populated).status == "pending"
 
 
-def test_local_gpu_hardware_never_approves_the_shared_gpu_gate(world):
-    from synthetic_environment import inventory
-
-    world.ctx = world.probes(inventory=lambda: inventory())  # reports a GPU
-    g = gathered(world, "G12_shared_gpu_authorization")
-    assert to_result("G12_shared_gpu_authorization", g, REAL_POLICY).status == "pending"
+def test_g11_without_approved_record_fails_closed(world):
+    policy = ApprovalPolicy(
+        policy_version="t", slots=ApprovalSlots(storage_authorization=digest("missing"))
+    )
+    gathered = evidence.storage_authorization(world.ctx, policy)
+    assert gathered.state == "failed"
+    assert to_result("G11_storage_authorization", gathered, policy).status == "failed"
 
 
 def test_g13_is_unavailable_whatever_the_data_root_contains(world, tmp_path):
@@ -432,7 +491,7 @@ def test_g03_reads_a_future_freeze_record_without_creating_one():
         policy_version="t", slots=ApprovalSlots(final_test_freeze=subject_digest(g))
     )
     assert to_result("G03_final_test_configuration_freeze", g, policy).status == "passed"
-    assert to_result("G03_final_test_configuration_freeze", g, REAL_POLICY).status == "pending"
+    assert to_result("G03_final_test_configuration_freeze", g, REAL_POLICY).status == "failed"
 
 
 @pytest.mark.parametrize(
@@ -556,4 +615,28 @@ def test_g07_recognises_the_project_library_when_the_repository_is_given_as_a_re
     ctx = world.probes(r_runtime=lambda d, p: out)
     ctx = replace(ctx, repo=pathlib.Path("."))
     g = evidence.r_environment(ctx)
-    assert g.reason == "analysis_host_not_designated", g.detail
+    assert g.reason == "analysis_designation_missing", g.detail
+
+
+def test_g09_authenticates_decision_bytes_and_execution_identity_tracks_code(world):
+    path = world.repo / "approvals/final_test_execution.json"
+    write(path, "{}\n")
+    git(world.repo, "add", "approvals/final_test_execution.json")
+    git(world.repo, "commit", "-qm", "decision")
+    first = gathered(world, "G09_scientific_source_revision")
+    write(path, '{"edited": true}\n')
+    git(world.repo, "commit", "-qam", "edit decision")
+    edited = gathered(world, "G09_scientific_source_revision")
+    assert subject_digest(edited) != subject_digest(first)
+    assert (
+        edited.facts["execution_source_identity_sha256"]
+        == first.facts["execution_source_identity_sha256"]
+    )
+    write(world.repo / "src/changed.py", "x = 1\n")
+    git(world.repo, "add", "src/changed.py")
+    git(world.repo, "commit", "-qm", "code")
+    code = gathered(world, "G09_scientific_source_revision")
+    assert (
+        code.facts["execution_source_identity_sha256"]
+        != first.facts["execution_source_identity_sha256"]
+    )

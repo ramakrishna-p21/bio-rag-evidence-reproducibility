@@ -1,5 +1,7 @@
 """Publication of checked input-selection records; no scientific transforms run here."""
 
+import json
+from contextvars import ContextVar
 from pathlib import Path
 
 from biorag_repro.core.hashing import sha256_bytes
@@ -21,6 +23,11 @@ from biorag_repro.retrieval.models import (
     RankedRetrieval,
 )
 from biorag_repro.retrieval.validation import CanonicalAuthority, load_canonical_input
+
+# Activated only by chunking.verified_once; content is checked before every reuse.
+_record_refs: ContextVar[dict[tuple[type, str], ArtifactRef] | None] = ContextVar(
+    "verified_record_references", default=None
+)
 
 
 def _inputs(value: CanonicalInput) -> list[BuildInput]:
@@ -60,6 +67,18 @@ def record_ref(
     value: Chunk | ChunkSet | Bm25Index | DenseIndex | RankedRetrieval | ContextRecord,
 ) -> ArtifactRef:
     """Identify interface records; this does not certify rendering or computation."""
+    cache = _record_refs.get()
+    key = None
+    if cache is not None:
+        fingerprint = json.dumps(
+            value.model_dump(mode="json", warnings="error"),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+        )
+        key = (type(value), fingerprint)
+        if key in cache:
+            return cache[key].model_copy(deep=True)
     content = serialize_project_json(value, type(value))
     dependencies: list[tuple[str, ArtifactRef]]
     if isinstance(value, (Chunk, ChunkSet)):
@@ -71,13 +90,11 @@ def record_ref(
                 dependencies.append(("chunks_build_manifest", value.chunks_build_manifest))
     elif isinstance(value, (Bm25Index, DenseIndex)):
         kind = "bm25_index" if isinstance(value, Bm25Index) else "dense_index"
-        dependencies = [("chunk_set", item) for item in value.chunk_sets]
-        if isinstance(value, (Bm25Index, DenseIndex)):
-            dependencies = [
-                (role, ref)
-                for pair in zip(value.chunk_sets, value.chunk_set_manifests, strict=True)
-                for role, ref in zip(("chunk_set", "chunk_set_build_manifest"), pair, strict=True)
-            ]
+        dependencies = [
+            (role, ref)
+            for pair in zip(value.chunk_sets, value.chunk_set_manifests, strict=True)
+            for role, ref in zip(("chunk_set", "chunk_set_build_manifest"), pair, strict=True)
+        ]
         if isinstance(value, DenseIndex):
             dependencies.append(("vectors", value.vectors))
             dependencies.append(("vectors_build_manifest", value.vectors_build_manifest))
@@ -100,17 +117,22 @@ def record_ref(
         output_format="json",
         serialization_version="1",
     )
-    return ArtifactRef(
+    ref = ArtifactRef(
         artifact_id=artifact_id,
         logical_ref=f"corpus/derived/phase5/{kind}/{artifact_id}.json",
         sha256=digest,
     )
+    if cache is not None:
+        cache[key] = ref.model_copy(deep=True)
+    return ref
 
 
 def publish_input(
     value: CanonicalInput,
     authority: CanonicalAuthority,
     output_root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     """Publish input validation only, with the complete manifest exposed last."""
     value = CanonicalInput.model_validate(value.model_dump())
@@ -123,6 +145,7 @@ def publish_input(
         serialize_project_json(value, CanonicalInput),
         ref.sha256,
         validate_temp=lambda path: read_project_json(path, ref.sha256, CanonicalInput),
+        reuse_identical=reuse_identical,
     )
     manifest = BuildManifest(
         schema_version="1",
@@ -140,5 +163,10 @@ def publish_input(
         status="complete",
     )
     logical_ref = f"corpus/derived/phase5_inputs/{ref.artifact_id}.build.json"
-    digest = publish_manifest(manifest, output_root / logical_ref, {ref.logical_ref: target})
+    digest = publish_manifest(
+        manifest,
+        output_root / logical_ref,
+        {ref.logical_ref: target},
+        reuse_identical=reuse_identical,
+    )
     return ref, ArtifactRef(artifact_id="build_" + digest, logical_ref=logical_ref, sha256=digest)

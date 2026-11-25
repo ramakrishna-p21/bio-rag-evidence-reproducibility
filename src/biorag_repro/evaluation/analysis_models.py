@@ -10,9 +10,10 @@ from typing import Annotated, Final, Literal, Self, get_args, get_origin
 
 from pydantic import Field, StringConstraints, field_validator, model_validator
 
-from biorag_repro.benchmark.models import AnswerClass, Record
+from biorag_repro.benchmark.models import AnswerClass
 from biorag_repro.core.hashing import validate_sha256
 from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.records import Record
 from biorag_repro.evaluation.attribution import (
     A_FAILED,
     Correct,
@@ -39,15 +40,11 @@ ContextProvenance = Literal[
     "not_applicable", "assembled_only", "generator_input_simulated", "generator_input_recorded"
 ]
 Completion = Literal["answer", "abstained", "unparseable"]
-BStatus = Literal["delivered", "not_delivered", "not_reachable_stage_a", "non_evaluable"]
+BStatus = Literal[
+    "delivered", "not_delivered", "not_reachable_stage_a", "non_evaluable", "unresolved"
+]
 Token = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:@+\-]*$")]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-
-
-def _not_missing_token(value: str | None) -> str | None:
-    if value == MISSING:
-        raise ValueError("NA is reserved for missing values")
-    return value
 
 
 class GeneratorInput(Record):
@@ -124,7 +121,9 @@ class AnalysisRow(Record):
     @field_validator("run_id", "attempt_id", "stage_c_reason", mode="after")
     @classmethod
     def not_the_missing_token(cls, value: str | None) -> str | None:
-        return _not_missing_token(value)
+        if value == MISSING:
+            raise ValueError("NA is reserved for missing values")
+        return value
 
     @model_validator(mode="after")
     def valid_row(self) -> Self:
@@ -165,7 +164,15 @@ class AnalysisRow(Record):
             stage_b=None if self.stage_b_artifact is None else self.stage_b_status,
             stage_c=self.stage_c_status,
             execution=self.execution_status,
+            retrospective_provenance_incomplete=(
+                self.evidence_reason == "retrospective_provenance_incomplete"
+            ),
         )
+        if (
+            self.evidence_reason == "retrospective_provenance_incomplete"
+            and self.phase != "development"
+        ):
+            raise ValueError("retrospective provenance exception is development-only")
         derived = (
             out.evidence_delivered,
             out.evidence_reason,
@@ -268,7 +275,7 @@ class ColumnSpec(Record):
 
 
 ItemState = Literal["included", "missing", "unresolved", "excluded"]
-Scope = Literal["complete_matrix", "partial_development"]
+Scope = Literal["complete_matrix", "partial_development", "confirmatory_only"]
 
 
 class RosterItem(Record):
@@ -312,7 +319,8 @@ class PlannedRoster(Record):
 
     Expected coordinates are the product of included items, declared arms, their
     conditions and repeats, all inside the frozen matrix. A complete_matrix roster
-    declares the whole matrix; anything narrower is partial_development.
+    declares the whole matrix; confirmatory_only declares the confirmatory arm alone;
+    anything else narrower is partial_development.
     """
 
     schema_version: Literal["1"] = "1"
@@ -347,6 +355,10 @@ class PlannedRoster(Record):
                 raise ValueError("a complete_matrix roster declares every arm in full")
             if any(i.state in {"missing", "unresolved"} for i in self.items):
                 raise ValueError("a roster with missing or unresolved items is partial")
+        if self.scope == "confirmatory_only" and [
+            (a.matrix_arm, a.conditions, a.repeats) for a in self.arms
+        ] != [("confirmatory", list(REPRESENTATIONS), [1, 2, 3])]:
+            raise ValueError("a confirmatory_only roster is the confirmatory arm in full")
         return self
 
     def coordinates(self) -> set[tuple[str, str, str, int]]:
@@ -384,6 +396,9 @@ class AnalysisInventory(Record):
     missing_token: str
     primary_repeat_index: int
     scoring_reference: dict[str, str]
+    stage_a_review_protocols: dict[str, list[str]] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
     columns: list[ColumnSpec]
     primary_selection: str
     scope: Scope

@@ -1,4 +1,4 @@
-"""Versioned Phase 5 interfaces; validation does not execute scientific transforms."""
+"""Versioned retrieval and context interfaces; validation does not execute scientific transforms."""
 
 from typing import Annotated, Literal, Self
 
@@ -12,7 +12,11 @@ Sha256 = Annotated[str, AfterValidator(lambda value: _digest(value))]
 Nonblank = Annotated[str, Field(min_length=1, pattern=r"\S")]
 Representation = Literal["JATS", "PDF_DOCLING"]
 OccurrenceField = Literal["segment", "table_cell", "native_orig", "native_marker", "nontextual"]
-ContributorUsage = Literal["content", "repeated_context", "containing_reference"]
+# content_continuation: a later sentence segment of an occurrence whose first part is the
+# content of an earlier segment. It never holds the whole occurrence on its own.
+ContributorUsage = Literal[
+    "content", "content_continuation", "repeated_context", "containing_reference"
+]
 AccountingStatus = Literal["included", "oversized", "unsupported", "nontextual"]
 PaperId = Annotated[str, Field(pattern=r"^P0(?:0[1-9]|[1-4][0-9]|50)$")]
 
@@ -63,7 +67,9 @@ class Phase5Configuration(Record):
     bge_model: Snapshot
     lexical_tokenizer: Nonblank
     scope: Literal["designated_paper", "full_corpus"]
-    unit_policy: Literal["complete_units"] = "complete_units"
+    # complete_units is the approved policy. The segmenting value is an opt-in development
+    # candidate only; it is never a default and is not approved for official runs.
+    unit_policy: Literal["complete_units", "complete_units_or_sentence_segments"] = "complete_units"
     overlap_tokens: Literal[0] = 0
     oversized_policy: Literal["diagnose_without_truncation"] = "diagnose_without_truncation"
     statistics: Literal["representation_wide"] = "representation_wide"
@@ -78,7 +84,10 @@ class Phase5Configuration(Record):
     evidence_tokens: Literal[2048] = 2048
     duplicate_policy: Literal["text_and_scientific_provenance"] = "text_and_scientific_provenance"
     stop_policy: Literal["first_nonfitting"] = "first_nonfitting"
-    chunking_algorithm: Literal["canonical_whole_units_v1"] = "canonical_whole_units_v1"
+    # v3 is an opt-in development candidate only (header-block defaults, row-local coordinates).
+    chunking_algorithm: Literal[
+        "canonical_whole_units_v1", "canonical_whole_units_v2", "canonical_whole_units_v3"
+    ] = "canonical_whole_units_v1"
     construction_counting: Literal["no_special_tokens_no_padding_no_truncation"] = (
         "no_special_tokens_no_padding_no_truncation"
     )

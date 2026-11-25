@@ -19,7 +19,7 @@ from typing import Any
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
 from biorag_repro.generation.environment import GpuDevice, system_probes, utc_now
 from biorag_repro.generation.environment_lock import capture_inventory
-from biorag_repro.readiness import evidence
+from biorag_repro.readiness import evidence, production
 from biorag_repro.readiness.decide import build_report
 from biorag_repro.readiness.evidence import Context, Probes
 from biorag_repro.readiness.files import FileProblem
@@ -33,9 +33,9 @@ from biorag_repro.readiness.models import (
     HostBinding,
     ReadinessReport,
 )
-from biorag_repro.readiness.policy import ApprovalPolicy, policy_sha256
+from biorag_repro.readiness.policy import ApprovalPolicy, policy_payload, policy_sha256
 
-EVALUATOR_VERSION = "p9d1-1"
+EVALUATOR_VERSION = "g03_g04_g05_g07_g10_g12retired_v1"
 
 
 class EvaluationError(RuntimeError):
@@ -83,26 +83,30 @@ def _host(ctx: Context) -> HostBinding:
     )
 
 
-def gather_all(ctx: Context, policy: ApprovalPolicy | None = None) -> dict[GateId, Gathered]:
+def gather_all(
+    ctx: Context, policy: ApprovalPolicy | None = None, *, g02_hash_only: bool = False
+) -> dict[GateId, Gathered]:
     problem: str | None = None
     release = release_bytes = None
     try:
         release, release_bytes = evidence.read_benchmark_record(ctx)
     except (FileProblem, ValueError) as error:
         problem = str(error)[:300]
+    source = evidence.scientific_source(ctx)
     return {
         "G01_corpus_sources": evidence.corpus_sources(ctx, release, problem),
-        "G02_benchmark_freeze": evidence.benchmark_freeze(ctx, release, release_bytes, problem),
-        "G03_final_test_configuration_freeze": evidence.final_test_freeze(),
-        "G04_generator_qualification": evidence.generator_qualification(),
-        "G05_model_parser_identities": evidence.model_parser_identities(),
+        "G02_benchmark_freeze": evidence.benchmark_freeze(
+            ctx, release, release_bytes, problem, hash_only=g02_hash_only
+        ),
+        "G03_final_test_configuration_freeze": production.production_freeze(ctx, source),
+        "G04_generator_qualification": production.qualification(ctx),
+        "G05_model_parser_identities": production.model_parser(ctx),
         "G06_python_environment": evidence.python_environment(ctx),
-        "G07_r_analysis_environment": evidence.r_environment(ctx),
+        "G07_r_analysis_environment": evidence.r_environment(ctx, source),
         "G08_seed_registry": evidence.seed_registry(ctx, release),
-        "G09_scientific_source_revision": evidence.scientific_source(ctx),
-        "G10_development_restart_recovery": evidence.restart_recovery(),
-        "G11_storage_authorization": evidence.storage_authorization(),
-        "G12_shared_gpu_authorization": evidence.shared_gpu_authorization(),
+        "G09_scientific_source_revision": source,
+        "G10_development_restart_recovery": evidence.restart_recovery(ctx),
+        "G11_storage_authorization": evidence.storage_authorization(ctx, policy),
         "G13_final_test_history_integrity": evidence.history_integrity(ctx, policy),
     }
 
@@ -118,13 +122,13 @@ def _candidate(found: dict[GateId, Gathered]) -> Candidate:
     return Candidate(
         head_sha=facts.get("head_sha"),
         scientific_source_identity_sha256=identity,
-        freeze_record_sha256=None,
-        configuration_sha256_by_arm={},
+        freeze_record_sha256=facts.get("freeze_record_sha256"),
+        configuration_sha256_by_arm=facts.get("configuration_sha256_by_arm", {}),
         benchmark_release_sha256=facts.get("benchmark_release_sha256"),
         corpus_content_sha256=facts.get("corpus_content_sha256"),
         python_lock_sha256=facts.get("python_lock_sha256"),
         renv_lock_sha256=facts.get("renv_lock_sha256"),
-        generation_seed_registry_sha256=None,
+        generation_seed_registry_sha256=facts.get("generation_seed_registry_sha256"),
         benchmark_seed_registry_sha256=facts.get("benchmark_seed_registry_sha256"),
     )
 
@@ -135,9 +139,10 @@ def evaluate(
     *,
     now: Callable[[], str] = utc_now,
     nonce: Callable[[], str] = lambda: secrets.token_hex(16),
+    g02_hash_only: bool = False,
 ) -> Evaluation:
     try:
-        found = gather_all(ctx, policy)
+        found = gather_all(ctx, policy, g02_hash_only=g02_hash_only)
         results: list[GateResult] = [to_result(g, found[g], policy) for g in MANDATORY_GATES]
         report = build_report(
             policy=policy,
@@ -154,6 +159,6 @@ def evaluate(
     snapshots: dict[str, bytes] = {}
     for gathered in found.values():
         snapshots.update(gathered.snapshots)
-    policy_bytes = canonical_json_bytes(policy.model_dump(mode="json"))
+    policy_bytes = canonical_json_bytes(policy_payload(policy))
     snapshots[policy_sha256(policy)] = policy_bytes
     return Evaluation(report, snapshots)

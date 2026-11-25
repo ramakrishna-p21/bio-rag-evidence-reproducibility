@@ -7,7 +7,7 @@ from pydantic import Field, field_validator, model_validator
 
 from biorag_repro.benchmark.discovery import CandidateLead
 from biorag_repro.benchmark.flags import ReviewFlag
-from biorag_repro.benchmark.models import Record
+from biorag_repro.core.records import Record
 
 CandidateState = Literal["lead", "proposed", "accepted", "excluded"]
 

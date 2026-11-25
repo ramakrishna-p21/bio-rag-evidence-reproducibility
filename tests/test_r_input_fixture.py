@@ -11,10 +11,15 @@ intentional change to the table or handoff contract:
 """
 
 import json
+import os
+import re
+import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
+import pytest
 from test_analysis_export import failed_for, observation, result_for, roster_of
 from test_analysis_handoff_pairing import (
     deliver,
@@ -23,7 +28,9 @@ from test_analysis_handoff_pairing import (
     worlds,
 )
 
-from biorag_repro.core.hashing import sha256_bytes
+from biorag_repro.core.hashing import sha256_bytes, sha256_file
+from biorag_repro.core.manifest import ArtifactRef
+from biorag_repro.core.storage import read_manifest
 from biorag_repro.evaluation import analysis_handoff as ah
 from biorag_repro.evaluation.analysis_models import PlannedRoster, RosterItem
 from biorag_repro.evaluation.analysis_storage import publish_table
@@ -34,6 +41,12 @@ FIXTURE_DIR = Path(__file__).resolve().parent.parent / (
     "analysis/tests/testthat/fixtures/rehearsal"
 )
 CODE = GitState(status="ok", commit="a" * 40, dirty=False, dirty_paths=0)
+ANALYSIS_DIR = Path(__file__).resolve().parent.parent / "analysis"
+SEED = "20260601"
+needs_r = pytest.mark.skipif(
+    shutil.which("Rscript") is None or not (ANALYSIS_DIR / "renv" / "library").is_dir(),
+    reason="R and the analysis renv library are needed to produce a real R result",
+)
 
 # item -> (paper, JATS cell, PDF_DOCLING cell). A cell is (evidence delivered, answer):
 # delivered True/False, or None when no Stage A/B record exists (non_evaluable);
@@ -116,6 +129,59 @@ def build_fixture(root: Path) -> dict[str, bytes]:
         "handoff.json": handoff_bytes,
         "fixture.json": (json.dumps(meta, indent=2, sort_keys=True) + "\n").encode(),
     }
+
+
+def publish_frozen_handoff(root: Path) -> ArtifactRef:
+    _csv, _inventory, build = publish_table(build_table_with_papers(), root)
+    _ref, handoff_build = ah.publish_handoff(
+        ah.build_handoff(build, root, code=CODE, rehearsal=True), root
+    )
+    return handoff_build
+
+
+def run_r(root: Path, handoff_build: ArtifactRef, command: str, out: str, *args: str) -> str:
+    """Run `run_analysis.R <command>` on a verified handoff; return its result dir under root."""
+    checked = ah.read_handoff(handoff_build, root)
+    handoff = read_manifest(root / handoff_build.logical_ref, handoff_build.sha256).outputs[0]
+    (root / out).mkdir(parents=True, exist_ok=True)
+    done = subprocess.run(
+        [
+            "Rscript",
+            "run_analysis.R",
+            command,
+            "--handoff",
+            str(root / handoff.artifact.logical_ref),
+            "--handoff-sha256",
+            handoff.artifact.sha256,
+            "--csv",
+            str(root / checked.handoff.csv.logical_ref),
+            "--out-root",
+            str(root / out),
+            *args,
+        ],
+        cwd=ANALYSIS_DIR,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    printed = re.search(r"^result directory: (.+)$", done.stdout, re.MULTILINE)
+    assert printed
+    return os.path.relpath(printed.group(1), root)
+
+
+def run_primary(root: Path, handoff_build: ArtifactRef) -> str:
+    lock = sha256_file(ANALYSIS_DIR / "renv.lock")
+    return run_r(
+        root, handoff_build, "run", "analysis/r_results",
+        "--lock-sha256", lock, "--seed", SEED, "--seed-label", "synthetic_rehearsal",
+    )  # fmt: skip
+
+
+def derive(root: Path, handoff_build: ArtifactRef, primary: str) -> str:
+    return run_r(
+        root, handoff_build, "derive", "analysis/r_secondary", "--primary", str(root / primary)
+    )
 
 
 def test_committed_r_fixture_matches_a_fresh_publication():

@@ -22,20 +22,17 @@ TIMEOUT_S = int(os.environ.get("BIORAG_SMOKE_TIMEOUT_S", "120"))
 
 
 def pytest_configure(config):
-    """Tests that start Rscript themselves get the same pinned BLAS kernel as the product code.
+    """Tests that start Rscript get the BLAS kernel the R goldens were produced with.
 
-    The pin is read when R starts, so it has to be in the environment of this process; see
-    biorag_repro.evaluation.analysis_result.R_BLAS_PIN.
+    The pin is read when R starts, and analysis/run_analysis.R refuses to run without it.
     """
-    from biorag_repro.evaluation.analysis_result import R_BLAS_PIN
-
-    os.environ.update(R_BLAS_PIN)
+    os.environ.update({"OPENBLAS_CORETYPE": "HASWELL", "OPENBLAS_NUM_THREADS": "1"})
 
 
 def pytest_sessionstart(session):
     """BIORAG_REQUIRE_R=1 makes a missing R toolchain a failure instead of silent skips.
 
-    The Python/R handoff, rehearsal, result and supplement tests skip when Rscript or the
+    The Python/R handoff, five-arm and supplement tests skip when Rscript or the
     analysis renv library is absent. CI sets this so those tests cannot disappear unnoticed.
     """
     if os.environ.get("BIORAG_REQUIRE_R") != "1":
@@ -55,6 +52,31 @@ def pytest_collection_modifyitems(config, items):
         for marker, reason in skips.items():
             if marker in item.keywords:
                 item.add_marker(pytest.mark.skip(reason=reason))
+
+
+@pytest.fixture
+def driver_clock(monkeypatch):
+    """Stamp events of stores built by the driver with a clock that never steps backwards.
+
+    The driver creates and reopens its run store with the wall clock, and the attempt log refuses
+    an event stamped earlier than its predecessor, so a host clock step fails a driver test at
+    random. Tests that go through the driver opt in with `pytestmark`; an explicit `now` still
+    wins, and the log's own refusal is untouched (see test_generation_attempts.py).
+    """
+    from generation_support import NeverBackwards
+
+    from biorag_repro.generation.attempts import RunStore
+
+    clock = NeverBackwards()
+    for name in ("create", "open"):
+        original = getattr(RunStore, name)
+
+        def with_clock(cls, *args, _original=original, **kwargs):
+            kwargs.setdefault("now", clock)
+            return _original.__func__(cls, *args, **kwargs)
+
+        monkeypatch.setattr(RunStore, name, classmethod(with_clock))
+    return clock
 
 
 @pytest.fixture(autouse=True)

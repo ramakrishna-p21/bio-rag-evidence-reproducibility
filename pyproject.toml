@@ -13,7 +13,6 @@ dependencies = ["pydantic>=2,<3", "rfc8785>=0.1,<1"]
 [project.scripts]
 biorag-context = "biorag_repro.retrieval.cli:main"
 biorag-analysis = "biorag_repro.evaluation.analysis_cli:main"
-biorag-checkpoint = "biorag_repro.generation.checkpoint:main"
 biorag-environment = "biorag_repro.generation.environment_lock:main"
 biorag-readiness = "biorag_repro.readiness.cli:main"
 
@@ -25,7 +24,7 @@ bm25 = ["rank-bm25==0.2.2"]
 chunking = ["tokenizers==0.22.2"]
 benchmark = ["PyMuPDF==1.26.5"]
 pdf = ["docling-slim==2.145.0", "docling-core==2.105.0", "docling-parse==7.24.2", "docling-ibm-models==4.0.4", "torch==2.15.0"]
-dev = ["build>=1,<2", "mypy>=1,<2", "pytest>=8,<10", "ruff>=0.8,<1"]
+dev = ["pytest>=8,<10", "ruff>=0.8,<1"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -40,11 +39,3 @@ markers = [
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-
-[tool.mypy]
-python_version = "3.11"
-strict = true
-
-[[tool.mypy.overrides]]
-module = ["docling.*", "docling_core.*", "torch.*"]
-ignore_missing_imports = true

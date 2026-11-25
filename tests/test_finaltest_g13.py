@@ -91,6 +91,15 @@ def test_verified_empty_final_test_root_passes_under_a_fixture_policy(setup, wor
     assert kinds == {"storage_authorization", "final_test_root_anchor", "final_test_inventory"}
 
 
+def test_g11_uses_the_existing_approved_storage_subject(setup, world):
+    _, policy = setup.approve()
+    gathered = evidence.storage_authorization(world.ctx, policy)
+    result = to_result("G11_storage_authorization", gathered, policy)
+    assert gathered.state == "ok"
+    assert result.status == "passed"
+    assert {ref.kind for ref in result.evidence} == {"storage_authorization", "observed_subject"}
+
+
 def test_passing_g13_report_publishes_and_reads_back(setup, world):
     auth, policy = setup.approve()
     setup.initialize(auth)
@@ -262,7 +271,10 @@ def test_production_code_cannot_initialize_a_final_test_root():
         for p in root.rglob("*.py")
         if "_initialize(" in p.read_text() or "initialize_root(" in p.read_text()
     ]
-    assert callers == ["finaltest/inventory.py"]
+    # rglob order depends on the file system; only the set of callers matters.
+    assert sorted(callers) == ["finaltest/genesis.py", "finaltest/inventory.py"]
+    # The only production caller must be gated by the full prospective preflight.
+    assert "campaign_preflight(" in (root / "finaltest/genesis.py").read_text()
 
 
 def test_g13_passes_only_with_a_named_history_class():
@@ -275,7 +287,7 @@ def test_g13_passes_only_with_a_named_history_class():
 def test_real_policy_names_the_missing_approval(setup):
     auth, _ = setup.approve()
     setup.initialize(auth)
-    assert setup.g13(REAL_POLICY).detail == "no_storage_approval"
+    assert setup.g13(REAL_POLICY).detail == "storage_approval_unusable"
     assert evidence.history_integrity(setup.world.ctx).detail == "no approval to verify against"
 
 
@@ -286,8 +298,6 @@ def test_no_execution_module_imports_the_final_test_storage_package():
     for path in root.rglob("*.py"):
         if path.relative_to(root).parts[0] in allowed:
             continue
-        if path.relative_to(root).as_posix() == "generation/finaltest_store.py":
-            continue  # the guarded store of rehearsal runs reads the run record contract
         for node in ast.walk(ast.parse(path.read_text())):
             if isinstance(node, ast.ImportFrom | ast.Import) and "finaltest" in ast.unparse(node):
                 offenders.append(str(path.relative_to(root)))
@@ -302,62 +312,32 @@ def test_run_phase_still_excludes_final_test():
     assert "final_test" not in get_args(RunPhase)
 
 
-def test_structural_batches_never_give_a_positive_g13(setup):
-    """A fully materialized batch is structurally clean, but nothing establishes the head."""
-    from finaltest_campaign_support import CONFIGS, SEEDS, population
+def _second_event(root):
+    first = (root / "registry" / "000001.json").read_bytes()
+    genesis = layout.RegistryEvent.model_validate_json(first)
+    cite = layout.EvidenceCitation
+    return layout.make_event(
+        root_id=genesis.root_id,
+        sequence=2,
+        event_type="batch_reserved",
+        previous_event_sha256=sha256_bytes(first),
+        evidence=[cite(role=r, sha256="a" * 64) for r in layout.REQUIRED_ROLES["batch_reserved"]],
+        created_utc="2026-01-02T00:00:00Z",
+    )
 
-    from biorag_repro.finaltest import registry
-    from biorag_repro.finaltest.batches import make_manifest, ownership_sha256
-    from biorag_repro.finaltest.campaign import build_plan, plan_sha256
 
+@pytest.mark.parametrize("history", ["registry_event", "batches", "runs"])
+def test_any_execution_history_fails_g13(setup, history):
+    """No execution path exists: a correctly chained later event or any batch or run entry fails."""
     auth, policy = setup.approve()
     setup.initialize(auth)
-    plan = build_plan(population(**setup.scope), CONFIGS, SEEDS)
-    root, root_id = Path(auth.authorized_root), layout.root_id_for(auth)
-    witnesses, stamp = setup.base / "witnesses", (lambda: "2026-01-02T00:00:00Z")
-    manifest = make_manifest(root_id, plan, "closed_book", stamp())
-    data = layout.serialize(manifest)
-    cite = layout.EvidenceCitation
-    registry._publish_witness(
-        root, witnesses, root_id, 1, stamp
-    )  # test seam: real roots are refused
-    registry._append(
-        root,
-        witnesses,
-        root_id,
-        "batch_reserved",
-        [
-            cite(role="campaign_plan", sha256=plan_sha256(plan)),
-            cite(role="batch_id", sha256=manifest.batch_id),
-            cite(
-                role="ownership",
-                sha256=ownership_sha256(
-                    auth.benchmark_release_sha256, "closed_book", CONFIGS["closed_book"]
-                ),
-            ),
-            cite(role="batch_manifest", sha256=sha256_bytes(data)),
-        ],
-        stamp,
-    )
-    registry._publish_manifest(root, manifest.batch_id, data)
-    reservation = sha256_bytes((root / "registry" / "000002.json").read_bytes())
-    registry._append(
-        root,
-        witnesses,
-        root_id,
-        "batch_materialized",
-        [
-            cite(role="batch_id", sha256=manifest.batch_id),
-            cite(role="batch_manifest", sha256=sha256_bytes(data)),
-            cite(role="reservation_event", sha256=reservation),
-        ],
-        stamp,
-    )
-    verdict = inventory.verify_root(root, auth, setup.anchors, witnesses)
-    assert verdict.problems == (inventory.HEAD_NOT_ESTABLISHED_TEXT,)
-    assert verdict.head_authority == "not_established"
+    root = Path(auth.authorized_root)
+    if history == "registry_event":
+        (root / "registry" / "000002.json").write_bytes(layout.serialize(_second_event(root)))
+    else:
+        (root / history).mkdir()
+    verdict = inventory.verify_root(root, auth, setup.anchors)
+    assert verdict.code == "unauthorized_final_test_artifact"
     gathered = setup.g13(policy)
-    assert (gathered.state, gathered.reason) == ("unavailable", "history_inventory_incomplete")
+    assert gathered.state == "failed" and gathered.reason == "unauthorized_final_test_artifact"
     assert to_result(G13, gathered, policy).status != "passed"
-    # the real policy stays unavailable for lack of any approved identity
-    assert setup.g13(REAL_POLICY).reason == NO_AUTHORITY

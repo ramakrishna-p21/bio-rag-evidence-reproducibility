@@ -6,8 +6,8 @@ from typing import Self
 
 from pydantic import Field, model_validator
 
-from biorag_repro.benchmark.models import Record
 from biorag_repro.core.hashing import canonical_json_bytes, sha256_bytes
+from biorag_repro.core.records import Record
 
 
 class AuditDraw(Record):

@@ -6,8 +6,8 @@ import shutil
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from generation_support import QWEN_REVISION, NeverBackwards, resolve, synthetic_settings
 from pydantic import ValidationError
-from test_generation_config import QWEN_REVISION, resolve, synthetic_settings
 from test_generation_environment import cpu_probes
 
 from biorag_repro.core.hashing import sha256_bytes
@@ -779,23 +779,6 @@ def test_non_official_completions_are_never_accepted(tmp_path, kind):
         official_completions(store)
 
 
-def test_official_run_yields_only_complete_observations(tmp_path):
-    from synthetic_environment import evidence
-
-    from biorag_repro.generation.environment_gate import publish_environment_evidence
-
-    store, _ = new_store(tmp_path, kind="official")
-    publish_environment_evidence(store.run_dir, evidence())  # an official attempt cites it
-    done = store.plan(coordinates(0))
-    finish(store, done, kind="official")
-    store.plan(coordinates(1))
-    failed = store.plan(coordinates(2))
-    a = start(store, failed, "official")
-    store.fail(failed, a, kind="invalid_prompt", detail="x", retryable=False)
-    assert store.record.official
-    assert [o.key for o in official_completions(store)] == [done]
-
-
 def test_environment_backend_must_match_the_run(tmp_path):
     store, _ = new_store(tmp_path, kind="mock")
     key = store.plan(coordinates())
@@ -1062,6 +1045,35 @@ def test_a_clock_that_moved_backwards_writes_nothing(tmp_path):
         store.complete(key, attempt, GOOD_OUTPUT)
     assert len(event_files(store, key)) == 2  # planned, running: no unreadable event is left
     assert store.observation(key).status == "running"
+
+
+def test_a_store_created_without_a_clock_uses_the_wall_clock(tmp_path):
+    # production default: this module does not opt in to the driver clock
+    before = datetime.now(UTC)
+    store = RunStore.create(
+        tmp_path,
+        config=config_for("mock"),
+        phase="development",
+        benchmark_version="synthetic-bench-0",
+        backend_kind="mock",
+    )
+    created = datetime.fromisoformat(store.record.created_utc)
+    assert abs((created - before).total_seconds()) < 60
+
+
+def test_the_driver_clock_never_goes_backwards_when_the_wall_clock_does():
+    readings = iter(
+        [
+            "2026-01-01T00:00:05.000000Z",
+            "2026-01-01T00:00:03.000000Z",  # the host stepped back
+            "2026-01-01T00:00:03.000000Z",
+            "2026-01-01T00:00:09.000000Z",
+        ]
+    )
+    clock = NeverBackwards(lambda: next(readings))
+    values = [clock() for _ in range(4)]
+    assert values == sorted(values) and len(set(values)) == 4
+    assert values[0] == "2026-01-01T00:00:05.000000Z" and values[3] == "2026-01-01T00:00:09.000000Z"
 
 
 def test_an_attempt_ended_by_interruption_gets_a_failure_reason(tmp_path):
