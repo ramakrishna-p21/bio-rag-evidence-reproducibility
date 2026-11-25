@@ -31,6 +31,8 @@ reported, such as which digital form of the paper was fed to the system, then re
 repeat or compare. This study measures how much that one choice matters, holding everything else
 fixed.
 
+<p align="center"><img src="docs/images/study_overview.png" alt="Flow diagram: the same publication and question are processed in parallel as JATS/XML and as a Docling PDF conversion through ingestion, evidence retrieval and context assembly, and answer generation, then compared on whether sufficient evidence was delivered and whether the answer is correct." width="320"></p>
+
 ## Research questions
 
 1. **Evidence delivery.** For the same paper and question, how does using JATS structured text
@@ -101,9 +103,9 @@ results.
 
 ### Historical revisions
 
-The results were not produced by the latest commit of this repository. This revision (branch
-`final/closure`) adds documentation and plotting code to the last analysis revision without changing
-`src/`, `scripts/`, `configs/`, `analysis/` or `tests/`. The execution revisions are:
+The results were not produced by the latest commit of this repository. This consolidated revision adds documentation and plotting code to the last analysis revision without changing
+`src/`, `scripts/`, `configs/` or `analysis/`, and changes `tests/` in one place only: a pinned hash in a synthetic
+regression test was updated after a documented wording change. The execution revisions are:
 
 | Step | Revision |
 | --- | --- |
@@ -178,6 +180,13 @@ generator, one corpus of 50 papers, two forms of each paper and one PDF converte
 reviewer for the human judgments; only the confirmatory arm was evaluated; an approved custody
 exception because the original external custody requirement could not be established; and numerical
 results of the final R analysis tied to one platform.
+
+## License status
+
+No software license has been selected yet, and none is granted by this repository's public
+visibility. The code is published for reading, review and checking the study; do not assume
+permission to reuse or redistribute it until a license is added. Research-data licensing is a
+separate, undecided matter.
 
 ## Citation and acknowledgments
 

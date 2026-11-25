@@ -83,9 +83,19 @@ Rendered with R 4.6.1 on Ubuntu 22.04 and the 26 package versions in `environmen
 (base packages excluded); the font is Liberation Sans, an Arial-metric font that must be installed
 for the SVG and PDF text to render as designed.
 
-`install_packages.R` installs those exact versions with `renv::install()` into `FIG_LIB`.
+`install_packages.R` installs those exact versions with `renv::install()` into `FIG_LIB`
+(`renv` itself is installed unpinned to do this).
 `FIG_PINNED=0 ./make_figures.sh` installs current CRAN versions of the six direct dependencies
-instead. The pinned installation route is a restore from the recorded inventory; it has not been
-re-run from an empty library, so it is not a verified reproduction of the original rendering
-environment. The same scripts, run against the original library, reproduced the original PNG and SVG
-files byte for byte; PDFs differ only in the embedded creation date.
+instead.
+
+Two checks have been run, on the machine that produced the original figures (same operating system
+and system libraries):
+
+- Original library: the scripts reproduced the approved PNG and SVG files byte for byte; PDFs differ
+  only in the embedded creation date.
+- Fresh restore: the pinned installation into an empty library succeeded (the 26 packages, about
+  seven minutes), and rendering with it again gave byte-identical PNG and SVG files and the same
+  numeric-check log.
+
+A restore on a different operating system or with different system libraries (fonts, graphics
+libraries) has not been tested and may render differently.
