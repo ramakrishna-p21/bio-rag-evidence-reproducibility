@@ -376,7 +376,7 @@ def official_handoff(root):
     source = ah.SourceRun(
         run_id="run_synthetic", completion=authorization, run_record_sha256="5" * 64,
         resolved_config_sha256=template.arms[0].resolved_config_sha256, raw_config_sha256="6" * 64,
-        roster_sha256="7" * 64, matrix_arm="confirmatory", backend_kind="official", observations=36,
+        roster_sha256="7" * 64, matrix_arm="confirmatory", backend_kind="official", observations=1830,
     )  # fmt: skip
     custody = {
         "status": "custody_gate_not_established_exception_v1",
@@ -448,7 +448,8 @@ def test_r_runs_the_frozen_analysis_on_an_official_final_test_handoff(tmp_path):
     proof = {
         "status": "verified_official_final_test_handoff",
         "source_verification": "fresh_python_verification",
-        "observations": 4575,
+        "observations": 1830,  # the confirmatory-only scope's count, as the handoff's source run states
+        "scope": "confirmatory_only",
         "custody": "custody_gate_not_established_exception_v1",
         "handoff": href.model_dump(),
         "csv_sha256": handoff.csv.sha256,
@@ -478,6 +479,25 @@ def test_r_runs_the_frozen_analysis_on_an_official_final_test_handoff(tmp_path):
     assert record["purpose"] == "final_test_confirmatory"
     assert record["scientific_authority"] == "frozen_confirmatory_analysis"
     assert record["seed"]["status"] == "registered_analysis_seed"
+    assert record["verification"]["official_proof"]["scope"] == "confirmatory_only"
+    # the official secondary route inherits that proof from the authenticated primary record: no
+    # --official-request or --python is given, so no Python verification can run
+    primary_sha = sha256_file(result / "run_record.json")
+    secondary_out = tmp_path / "secondary"
+    secondary_out.mkdir()
+    derive = subprocess.run(
+        ["Rscript", "run_analysis.R", "derive", "--handoff", str(root / href.logical_ref),
+         "--handoff-sha256", href.sha256, "--csv", str(root / handoff.csv.logical_ref),
+         "--primary", str(result), "--primary-record-sha256", primary_sha, "--out-root", str(secondary_out)],
+        cwd=ANALYSIS, capture_output=True, text=True, check=False, env=os.environ,
+    )  # fmt: skip
+    assert derive.returncode == 0, derive.stderr
+    assert "OFFICIAL FINAL-TEST SECONDARY DESCRIPTIVE ANALYSIS" in derive.stdout
+    (secondary,) = [p for p in secondary_out.iterdir() if p.name.startswith("secondary_")]
+    assert (
+        json.loads((secondary / "secondary_record.json").read_text())["purpose"]
+        == "final_test_secondary_exploratory"
+    )
     with (result / "coprimary_results.csv").open() as f:
         results = {r["outcome"]: r for r in csv.DictReader(f)}
     for outcome in ("evidence_delivered", "answer_correct"):

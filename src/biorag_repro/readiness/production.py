@@ -419,9 +419,9 @@ def host_designation(
     BLAS enforcement are still validated here, and the host is checked against the record.
     """
     data = read_regular(
-        ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_24.json"
+        ctx.repo, "docs/reports/g07_researcher_designation_evidence_2026_11_25.json"
     )
-    if sha256_bytes(data) != "f2959a8e02ee090d352707e60afc181ebf361cb52e6b9c1fbbdc03a29ab2f2b0":
+    if sha256_bytes(data) != "7b50f78abbb7b629787c4193b766fe547730d97a4f70319f946f166565f867f5":
         raise FileProblem("researcher host designation changed")
     value = loads_strict(data)
     if (
