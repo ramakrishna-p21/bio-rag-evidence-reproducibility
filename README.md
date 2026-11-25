@@ -1,5 +1,7 @@
 # Evaluating Reproducibility in Retrieval-Augmented Scientific Question Answering for Bioinformatics
 
+[![CI](https://github.com/ramakrishna-p21/bio-rag-evidence-reproducibility/actions/workflows/ci.yml/badge.svg)](https://github.com/ramakrishna-p21/bio-rag-evidence-reproducibility/actions/workflows/ci.yml)
+
 Code, configuration, tests and analysis programs for a master's capstone (MS Bioinformatics) that
 asks a simple question: **if the same scientific paper is given to an AI question-answering system
 in two different digital forms, does the system find the same evidence and give the same answer?**
