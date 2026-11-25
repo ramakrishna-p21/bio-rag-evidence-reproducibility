@@ -24,6 +24,7 @@ from biorag_repro.core.hashing import sha256_bytes
 from biorag_repro.core.manifest import ArtifactRef
 from biorag_repro.core.records import Record
 from biorag_repro.evaluation import stage_b, stage_c
+from biorag_repro.evaluation.answer_scoring import normalized_answer
 from biorag_repro.evaluation.stage_a import item_digest, stage_a_ref
 from biorag_repro.evaluation.stage_b_models import (
     Citation,
@@ -253,14 +254,18 @@ def review_order(keys: Iterable[str], seed: int) -> list[str]:
 # ---- Stage C ---------------------------------------------------------------------------------
 
 
-def decision_key(score: StageCScore) -> tuple[str, ...]:
-    """One reviewer decision per item, rules, automatic reason and normalized answer."""
+def decision_key(score: StageCScore, answer: Any) -> tuple[str, ...]:
+    """One reviewer decision per item, rules, automatic reason and normalized answer.
+
+    `interpreted` is empty for several adjudicable reasons, so the normalized answer is part
+    of the key itself: different answers never share a decision."""
     return (
         score.item_id,
         score.item_sha256,
         score.scoring_rules,
         score.reason or "",
         *score.interpreted,
+        json.dumps(normalized_answer(answer, score.answer_class), ensure_ascii=False),
     )
 
 
@@ -286,7 +291,7 @@ def stage_c_queue(
     grouped: dict[tuple[str, ...], list[StageCScore]] = {}
     for s in scores:
         if needs_adjudication(s):
-            grouped.setdefault(decision_key(s), []).append(s)
+            grouped.setdefault(decision_key(s, answers[s.observation_key]), []).append(s)
     keyed = {json.dumps(list(k)): k for k in grouped}
     entries, mapping = [], {}
     for n, text in enumerate(review_order(keyed, seed), 1):

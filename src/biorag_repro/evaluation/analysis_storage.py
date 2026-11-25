@@ -77,7 +77,9 @@ def _ref(kind: str, suffix: str, digest: str, table: Table) -> ArtifactRef:
     )
 
 
-def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, ArtifactRef]:
+def publish_table(
+    table: Table, root: Path, *, reuse_identical: bool = False
+) -> tuple[ArtifactRef, ArtifactRef, ArtifactRef]:
     """Publish the CSV, its inventory, the planned roster and the build manifest.
 
     Never replaces anything. Rows must be exactly the roster's planned observations.
@@ -147,18 +149,21 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
         data,
         csv_ref.sha256,
         validate_temp=lambda p: parse_csv(p.read_bytes()),
+        reuse_identical=reuse_identical,
     )
     publish_bytes(
         paths[roster_ref.logical_ref],
         roster_bytes,
         roster_ref.sha256,
         validate_temp=lambda p: read_project_json(p, roster_ref.sha256, PlannedRoster),
+        reuse_identical=reuse_identical,
     )
     publish_bytes(
         paths[inventory_ref.logical_ref],
         inventory_bytes,
         inventory_ref.sha256,
         validate_temp=lambda p: read_project_json(p, inventory_ref.sha256, AnalysisInventory),
+        reuse_identical=reuse_identical,
     )
     build_id = sha256_bytes(
         canonical_json_bytes(
@@ -167,7 +172,7 @@ def publish_table(table: Table, root: Path) -> tuple[ArtifactRef, ArtifactRef, A
     )
     logical_ref = f"analysis/build/{build_id}.build.json"
     (root / logical_ref).parent.mkdir(parents=True, exist_ok=True)
-    digest = publish_manifest(manifest, root / logical_ref, paths)
+    digest = publish_manifest(manifest, root / logical_ref, paths, reuse_identical=reuse_identical)
     return (
         csv_ref,
         inventory_ref,
@@ -183,6 +188,8 @@ def publish_derived_record(
     transformation_id: str,
     settings_sha256: str,
     root: Path,
+    *,
+    reuse_identical: bool = False,
 ) -> tuple[ArtifactRef, ArtifactRef]:
     """Write a handoff-like record and its build manifest under `analysis/<directory>/`.
 
@@ -223,11 +230,19 @@ def publish_derived_record(
     )
     target = root / ref.logical_ref
     target.parent.mkdir(parents=True, exist_ok=True)
-    publish_bytes(target, data, digest, validate_temp=lambda p: read_project_json(p, digest, model))
+    publish_bytes(
+        target,
+        data,
+        digest,
+        validate_temp=lambda p: read_project_json(p, digest, model),
+        reuse_identical=reuse_identical,
+    )
     build_ref = (
         f"analysis/{directory}/{sha256_bytes(canonical_json_bytes([artifact_id]))}.build.json"
     )
-    manifest_digest = publish_manifest(manifest, root / build_ref, {ref.logical_ref: target})
+    manifest_digest = publish_manifest(
+        manifest, root / build_ref, {ref.logical_ref: target}, reuse_identical=reuse_identical
+    )
     return ref, ArtifactRef(
         artifact_id="build_" + manifest_digest, logical_ref=build_ref, sha256=manifest_digest
     )

@@ -522,8 +522,12 @@ def _inputs(handoff: AnalysisHandoff) -> list[BuildInput]:
     ]
 
 
-def _store(handoff: AnalysisHandoff, root: Path) -> tuple[ArtifactRef, ArtifactRef]:
-    """Write a handoff and its build manifest without replacing anything or checking it."""
+def _store(
+    handoff: AnalysisHandoff, root: Path, *, reuse_identical: bool = False
+) -> tuple[ArtifactRef, ArtifactRef]:
+    """Write a handoff and its build manifest without replacing anything or checking it.
+
+    `reuse_identical` accepts an existing file only when its bytes are identical (resume)."""
     return publish_derived_record(
         handoff,
         "analysis_handoff",
@@ -532,6 +536,7 @@ def _store(handoff: AnalysisHandoff, root: Path) -> tuple[ArtifactRef, ArtifactR
         TRANSFORMATION,
         _settings_sha256(),
         root,
+        reuse_identical=reuse_identical,
     )
 
 

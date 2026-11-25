@@ -652,7 +652,7 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
     roster = planned_roster(ctx)
     table = build_table(observations, roster)
     if publish:
-        _, _, table_build = publish_table(table, root)
+        _, _, table_build = publish_table(table, root, reuse_identical=True)
     else:
         table_build = published_handoff(ctx).table_build
     batch = json.loads((out / "batch.json").read_bytes())
@@ -682,7 +682,7 @@ def evaluate(ctx: Inputs, *, publish: bool = True) -> dict[str, Any]:
         }
     )
     if publish:
-        href, hbuild = analysis_handoff._store(handoff, root)
+        href, hbuild = analysis_handoff._store(handoff, root, reuse_identical=True)
     else:
         if published_handoff(ctx) != handoff:
             raise Refused("official handoff differs from freshly verified evaluation")

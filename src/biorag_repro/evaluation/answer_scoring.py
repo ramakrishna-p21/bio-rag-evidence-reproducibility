@@ -299,6 +299,14 @@ def _score_set(gold: SetGold, answer: Answer) -> Verdict:
 # --- conclusions --------------------------------------------------------------
 
 
+def normalized_answer(answer: Answer, answer_class: str) -> str | list[str]:
+    """The answer in the scorer's own normalization (a categorical conclusion also drops one
+    final full stop); used to tell distinct answers apart, never to decide equivalence."""
+    if isinstance(answer, list):
+        return [normalized_answer(a, answer_class) for a in answer]  # type: ignore[misc]
+    return _sentence(answer) if answer_class == "categorical_conclusion" else normalize_text(answer)
+
+
 def _sentence(text: str) -> str:
     return normalize_text(text).removesuffix(".").rstrip()
 
