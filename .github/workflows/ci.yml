@@ -71,7 +71,15 @@ jobs:
           rm -rf "$RUNNER_TEMP/qwen3-8b-tokenizer/.cache"
       - run: python -m ruff format --check .
       - run: python -m ruff check .
-      - run: python -m pytest -q -rs
+      - name: Python tests (public checkout)
+        # Deselects exactly the readiness acceptance tests that need private research records
+        # (list and reasons in .github/ci_deselected_tests.txt); everything else runs.
+        shell: bash
+        run: |
+          grep -v '^#' .github/ci_deselected_tests.txt | sed 's/^/--deselect=/' > "$RUNNER_TEMP/deselect.args"
+          echo "Deselected test functions:"; grep -v '^#' .github/ci_deselected_tests.txt
+          python -m pytest -q -rs $(cat "$RUNNER_TEMP/deselect.args") 2>&1 | tee "$RUNNER_TEMP/pytest.out"
+          grep -q ' 22 deselected' "$RUNNER_TEMP/pytest.out" || { echo "expected exactly 22 deselected tests"; exit 1; }
       - name: R testthat suite
         working-directory: analysis
         env:

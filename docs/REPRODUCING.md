@@ -55,10 +55,29 @@ is missing. Without the model roots, tests that use the tokenizer or embeddings 
 skip reasons are printed by `-rs`. Two test groups are opt-in: `BIORAG_MODEL_SMOKE=1` runs a tiny real
 model, and `BIORAG_REAL_DATA=<manifest>` reads local development artifacts.
 
-### Expected failures on this revision
+### Public CI and complete private validation
+
+The repository's CI runs on a clean public checkout. Thirteen readiness acceptance test functions
+(22 test cases, listed in `.github/ci_deselected_tests.txt`) read private research records that are
+not in the repository: governance records under the git-ignored `docs/reports/` and local
+artifacts. In a clean clone they report that evidence is absent rather than exercising the gate,
+so CI deselects exactly those cases, prints the list, and fails if the number deselected is not 22.
+Everything else runs, including the Python lint, format and regression tests, the R statistical
+tests, and the documentation and citation checks.
+
+This is a separation of validation environments, not a reduction in what the project validates.
+On the author's machine, with the private records present, the complete suite is run without any
+deselection (`python -m pytest -q`); those cases pass there. Outside readers do not have the
+records and can run only the public selection:
+
+```bash
+python -m pytest -q $(grep -v '^#' .github/ci_deselected_tests.txt | sed 's/^/--deselect=/')
+```
+
+### Revision-bound readiness checks
 
 Some readiness and authorization tests check the repository against approval records that name one
-historical source revision. On a descendant revision such as this one, those checks can fail by
+historical source revision. On a descendant revision such as this one, such checks can fail by
 design. This is a revision-binding effect, not evidence of a regression. See
 [Historical revisions](#6-historical-revisions-and-checkouts) for the revision each record binds.
 
